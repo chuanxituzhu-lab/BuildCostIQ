@@ -1,0 +1,4 @@
+CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE sources (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, content_hash TEXT NOT NULL, name TEXT NOT NULL);
+CREATE TABLE evidence (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, source_id TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL);
+

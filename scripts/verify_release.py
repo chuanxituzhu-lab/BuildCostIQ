@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REQUIRED = ("core", "plugins", "adapters", "gui", "migrations", "tests", "docs", "examples", "docker")
+FORBIDDEN = ("P09",)
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not (ROOT / name).exists()]
+    if missing:
+        print(f"Missing release paths: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    for path in ROOT.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if any(token in text for token in FORBIDDEN) and path.name not in {"test_core.py", "verify_release.py"}:
+            print(f"Forbidden capability token in {path}", file=sys.stderr)
+            return 1
+    result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=ROOT)
+    return result.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "construction-cost-intelligence"
+version = "0.3.0rc1"
+description = "AI-native construction cost governance foundation"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+
+[tool.setuptools.packages.find]
+include = ["core*", "plugins*", "adapters*", "gui*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
