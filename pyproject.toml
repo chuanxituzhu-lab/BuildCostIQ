@@ -7,7 +7,7 @@ name = "buildcostiq"
 version = "0.3.0rc1"
 description = "AI-native construction cost governance foundation"
 requires-python = ">=3.11"
-license = {text = "Apache-2.0"}
+license = {text = "MIT"}
 
 [tool.setuptools.packages.find]
 include = ["core*", "plugins*", "adapters*", "gui*"]
