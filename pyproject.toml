@@ -8,6 +8,7 @@ version = "0.3.0rc1"
 description = "AI-native construction cost governance foundation"
 requires-python = ">=3.11"
 license = {text = "MIT"}
+dependencies = ["openpyxl>=3.1"]
 
 [tool.setuptools.packages.find]
 include = ["core*", "plugins*", "adapters*", "gui*"]
