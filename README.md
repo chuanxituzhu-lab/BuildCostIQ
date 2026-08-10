@@ -1,6 +1,6 @@
-# Construction Cost Intelligence System
+# BuildCostIQ
 
-Version `v0.3.0-rc1` is a minimal, executable foundation for construction-cost governance. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
+BuildCostIQ version `v0.3.0-rc1` is a minimal, executable foundation for construction-cost governance. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
 
 ## Quick verification
 
@@ -16,4 +16,3 @@ python scripts/verify_release.py
 - P09 and other capability expansion are rejected by the gateway in this release.
 
 The included demo uses sanitized identifiers and contains no real project data.
-

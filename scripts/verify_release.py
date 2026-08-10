@@ -8,12 +8,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = ("core", "plugins", "adapters", "gui", "migrations", "tests", "docs", "examples", "docker")
 FORBIDDEN = ("P09",)
+PROJECT_NAME = "BuildCostIQ"
 
 
 def main() -> int:
     missing = [name for name in REQUIRED if not (ROOT / name).exists()]
     if missing:
         print(f"Missing release paths: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    if PROJECT_NAME not in (ROOT / "README.md").read_text(encoding="utf-8"):
+        print("README project name does not match BuildCostIQ", file=sys.stderr)
         return 1
     for path in ROOT.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
