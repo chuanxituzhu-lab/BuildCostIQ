@@ -1,6 +1,6 @@
 # BuildCostIQ
 
-BuildCostIQ version `v0.5.0-rc1` is a local-first construction-cost foundation and project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
+BuildCostIQ version `v0.5.1-rc1` is a local-first construction-cost foundation and project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
 
 ## Quick verification
 
@@ -20,7 +20,7 @@ python -m gui --host 127.0.0.1 --port 8787
 
 Open `http://127.0.0.1:8787/`. The WebUI provides a user-facing project overview, resumable local project workspace, Excel/CSV data intake, project-file library for Office/PDF/CAD/image sources, local recognition and automatic archive classification, business tables, cost planning, settlement review, next-step assistance, and Word/Excel-compatible exports. Its exchange center also imports and exports a portable project ZIP containing local project state, standard tables, report output, original source files, and derived Markdown archives. It uses the frozen P01–P08 gateway and keeps all data local by default; external OCR requires explicit per-file consent and technical JSON is not shown in the normal workflow. After installation, `buildcostiq-web --port 8787` is an equivalent launcher. See [docs/WEBUI.md](docs/WEBUI.md) for the API boundary.
 
-The homepage shows the current release version and the current release highlights: file viewing with local source preservation, role-based project-manager and cost-estimator workbenches, permission-gated edits and soft deletes with audit trails, risk colors for urgent blockers and warnings, multi-file project intake, local recognition, and explicit external OCR consent.
+The homepage shows the current release version and the current release highlights: file viewing with recorded local original and recognition-copy paths, role-based project-manager and cost-estimator workbenches, permission-gated edits and soft deletes with audit trails, risk colors for urgent blockers and warnings, multi-file project intake, local recognition, and explicit external OCR consent.
 
 ## Boundaries
 

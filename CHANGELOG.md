@@ -2,6 +2,12 @@
 
 Project: BuildCostIQ
 
+## v0.5.1-rc1 — 2026-08-13
+
+- Added the absolute local storage path for every original source file to the project library metadata and intake result.
+- Added the local storage path for generated Markdown recognition copies.
+- Added visible path notes and a copy-path action in the file interface; legacy project sources are backfilled when their workspace is opened.
+
 ## v0.5.0-rc1 — 2026-08-13
 
 - Added a view action for every project source and a local recognition-derivative view when available.

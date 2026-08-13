@@ -370,6 +370,7 @@ def _boq_upload(
             "kind": "清单资料",
             "media_type": source.media_type,
             "content_hash": source.content_hash,
+            "storage_path": str(SOURCE_STORE.path_for(source)),
             "size": len(content),
         },
     )
@@ -484,6 +485,7 @@ def _source_upload(
         "kind": kind,
         "media_type": source.media_type,
         "content_hash": source.content_hash,
+        "storage_path": str(SOURCE_STORE.path_for(source)),
         "size": len(content),
     }
     state = PROJECT_WORKSPACE.add_source(project_id, metadata)
@@ -525,9 +527,14 @@ def _persist_recognition(
             "document_id": artifact.id,
             "content_hash": artifact.content_hash,
             "media_type": artifact.media_type,
+            "storage_path": str(SOURCE_STORE.path_for(artifact)),
             "size": len(artifact_content),
         }
-    updated_source = {**source, "recognition": result}
+    updated_source = {
+        **source,
+        "storage_path": str(SOURCE_STORE.path_for(document.content_hash)),
+        "recognition": result,
+    }
     state = PROJECT_WORKSPACE.add_source(project_id, updated_source)
     return result, updated_source, state
 
@@ -668,6 +675,19 @@ def _workspace(project_id: str) -> dict[str, Any]:
     state = PROJECT_WORKSPACE.load(project_id)
     if state is None:
         raise FileNotFoundError("项目尚未建立")
+    changed = False
+    for source in state.get("sources", []):
+        content_hash = source.get("content_hash")
+        if content_hash and not source.get("storage_path"):
+            source["storage_path"] = str(SOURCE_STORE.path_for(str(content_hash)))
+            changed = True
+        artifact = (source.get("recognition") or {}).get("artifact") or {}
+        artifact_hash = artifact.get("content_hash")
+        if artifact_hash and not artifact.get("storage_path"):
+            artifact["storage_path"] = str(SOURCE_STORE.path_for(str(artifact_hash)))
+            changed = True
+    if changed:
+        state = PROJECT_WORKSPACE.save(state)
     return state
 
 
@@ -841,6 +861,7 @@ def _import_project_bundle(content_type: str, body: bytes) -> dict[str, Any]:
                         "document_id": artifact.id,
                         "content_hash": artifact.content_hash,
                         "media_type": artifact.media_type,
+                        "storage_path": str(SOURCE_STORE.path_for(artifact)),
                         "size": len(artifact_raw),
                     }
                 )
@@ -853,6 +874,7 @@ def _import_project_bundle(content_type: str, body: bytes) -> dict[str, Any]:
                     "document_id": source.id,
                     "content_hash": source.content_hash,
                     "media_type": source.media_type,
+                    "storage_path": str(SOURCE_STORE.path_for(source)),
                     "size": len(raw),
                 }
             )
@@ -867,7 +889,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": ["P02", "P05", "P08"],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "文件查看、权限分级与审计留痕、项目经理和造价人员双工作台、风险颜色与预警标注",
+        "release_highlights": "资料查看、原件与识别稿保存路径、权限分级与审计留痕、双角色工作台、风险颜色与预警标注",
     }
 
 

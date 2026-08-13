@@ -4,6 +4,7 @@ import io
 import json
 import threading
 import unittest
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -288,6 +289,7 @@ class WebUiTests(unittest.TestCase):
             result = json.load(response)
         self.assertEqual(result["source"]["kind"], "Word 文档")
         self.assertEqual(result["workspace"]["sources"][0]["name"], "contract.docx")
+        self.assertTrue(Path(result["source"]["storage_path"]).is_file())
 
     def test_connector_catalog_and_bidirectional_project_exchange(self):
         with urlopen(f"{self.base_url}/api/connectors", timeout=2) as response:
@@ -380,6 +382,8 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(recognition["mode"], "local")
         self.assertEqual(recognition["status"], "completed")
         self.assertIn("artifact", recognition)
+        self.assertTrue(Path(uploaded["source"]["storage_path"]).is_file())
+        self.assertTrue(Path(recognition["artifact"]["storage_path"]).is_file())
         with urlopen(f"{self.base_url}/api/workspace/recognition-project/bundle", timeout=2) as response:
             with ZipFile(io.BytesIO(response.read())) as archive:
                 self.assertIn("sources/article.txt", archive.namelist())

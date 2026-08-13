@@ -21,6 +21,11 @@ class ImmutableSourceStore:
             target.chmod(0o444)
         return SourceDocument(name=name, content_hash=digest, media_type=media_type)
 
+    def path_for(self, source: SourceDocument | str) -> Path:
+        """Return the absolute local path for a stored source without reading it."""
+        content_hash = source.content_hash if isinstance(source, SourceDocument) else str(source)
+        return (self.root / content_hash).resolve()
+
     def read(self, source: SourceDocument) -> bytes:
         content = (self.root / source.content_hash).read_bytes()
         if sha256_bytes(content) != source.content_hash:

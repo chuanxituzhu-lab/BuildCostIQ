@@ -361,6 +361,21 @@ function viewSource(source, derived = false) {
   window.open(sourceViewUrl(source, derived), "_blank", "noopener");
 }
 
+async function copySourcePaths(source) {
+  const artifact = (source.recognition || {}).artifact || {};
+  const paths = [source.storage_path, artifact.storage_path].filter(Boolean).join("\n");
+  if (!paths) {
+    setStatus("当前资料还没有记录保存路径");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(paths);
+    setStatus("资料保存路径已复制");
+  } catch (_) {
+    window.prompt("资料保存路径", paths);
+  }
+}
+
 async function modifySource(source) {
   const nextName = window.prompt("修改资料显示名称（原始文件内容不可直接改写，修改会形成留痕）", source.name);
   if (!nextName || nextName.trim() === source.name) return;
@@ -416,7 +431,11 @@ function renderSourceList() {
     const recognitionLabel = recognition.category ? ` · ${recognition.category}` : "";
     const deleted = source.status === "deleted";
     meta.textContent = `${source.kind} · ${deleted ? "已删除（保留记录）" : recognition.status === "completed" ? "已识别归档" : "已保存"}${recognitionLabel}`;
-    info.append(name, meta);
+    const pathInfo = document.createElement("small");
+    pathInfo.className = "source-path";
+    const artifactPath = recognition.artifact?.storage_path ? `\n识别稿：${recognition.artifact.storage_path}` : "";
+    pathInfo.textContent = `原件：${source.storage_path || "路径未记录"}${artifactPath}`;
+    info.append(name, meta, pathInfo);
     const stateTag = document.createElement("span");
     stateTag.className = `source-state source-${recognition.status || "pending"}`;
     stateTag.textContent = deleted ? "已删除·留痕" : recognition.status === "completed" ? "本地完成" : recognition.status === "needs_ocr" ? "待 OCR" : recognition.status === "unavailable" || recognition.status === "error" ? "未转换" : "待识别";
@@ -429,6 +448,12 @@ function renderSourceList() {
     viewButton.textContent = "查看";
     viewButton.addEventListener("click", () => viewSource(source));
     actions.append(viewButton);
+    const copyPathButton = document.createElement("button");
+    copyPathButton.type = "button";
+    copyPathButton.className = "icon-button";
+    copyPathButton.textContent = "复制路径";
+    copyPathButton.addEventListener("click", () => copySourcePaths(source));
+    actions.append(copyPathButton);
     if (recognition.artifact) {
       const artifactButton = document.createElement("button");
       artifactButton.type = "button";
@@ -493,6 +518,12 @@ function renderIntakeReports(targetId = "boqIntakeSummary") {
     const message = document.createElement("span");
     message.textContent = report.message;
     item.append(title, message);
+    if (report.storage_path) {
+      const path = document.createElement("small");
+      path.className = "intake-path";
+      path.textContent = `保存路径：${report.storage_path}`;
+      item.append(path);
+    }
     return item;
   }));
 }
@@ -642,7 +673,15 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false) {
     return { sourceId, result, source: null, report: { status: "table", message: `已读取 ${result.item_count} 项清单，进入清单核对。` } };
   }
   const response = await apiJson("/api/source/upload", { method: "POST", body: form });
-  return { sourceId, result: null, source: response.source, report: recognitionReport(response.source) };
+  return {
+    sourceId,
+    result: null,
+    source: response.source,
+    report: {
+      ...recognitionReport(response.source),
+      storage_path: response.source.storage_path,
+    },
+  };
 }
 
 async function uploadFiles(files, { parseBoq = false } = {}) {
@@ -663,6 +702,7 @@ async function uploadFiles(files, { parseBoq = false } = {}) {
   for (const report of reports) {
     const source = sourceMap.get(report.source_id);
     const recognition = source?.recognition;
+    if (source?.storage_path) report.storage_path = source.storage_path;
     if (report.status === "table" && recognition && recognition.status !== "completed") {
       report.status = recognition.status || "unavailable";
       report.message = `${report.message} ${recognitionReport(source).message}`;
