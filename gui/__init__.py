@@ -1,2 +1,2 @@
-"""GUI integration boundary; intentionally framework-neutral in RC1."""
+"""BuildCostIQ's dependency-free local WebUI integration."""
 

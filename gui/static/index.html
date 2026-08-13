@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BuildCostIQ · 造价资料工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar user-topbar">
+      <div class="brandblock">
+        <p class="eyebrow">BUILDCOSTIQ / COST WORKSPACE</p>
+        <div class="title-row">
+          <span class="brand-mark">BC</span>
+          <div>
+            <h1>造价资料工作台</h1>
+            <p class="subtitle">把清单资料、成本计划和结算初审集中在一个工作面完成。</p>
+          </div>
+        </div>
+      </div>
+      <div class="runtime-meta">
+        <div id="health" class="health health-pending">资料服务连接中</div>
+        <div class="runtime-version"><span>当前版本</span><strong id="runtimeVersion">v0.4.0-rc1</strong></div>
+      </div>
+    </header>
+
+    <main>
+      <section class="section-shell workspace-shell">
+        <div class="workspace-head">
+          <div>
+            <span class="step">PROJECT WORKSPACE</span>
+            <h2>项目资料与工作协助</h2>
+          </div>
+          <div class="project-context">
+            <div><span>当前项目</span><strong id="projectDisplay">演示项目</strong></div>
+            <div><span>当前资料</span><strong id="sourceDisplay">等待接入</strong></div>
+            <div><span>整体状态</span><strong id="projectStatus" class="status-text">准备开始</strong></div>
+          </div>
+        </div>
+
+        <nav id="workspaceTabs" class="workspace-tabs" aria-label="工作步骤">
+          <button class="workspace-tab is-active" data-view="overview" type="button"><span>01</span>工作概览</button>
+          <button class="workspace-tab" data-view="boq" type="button"><span>02</span>清单资料</button>
+          <button class="workspace-tab" data-view="plan" type="button"><span>03</span>成本计划</button>
+          <button class="workspace-tab" data-view="review" type="button"><span>04</span>结算初审</button>
+        </nav>
+
+        <div class="workspace-grid">
+          <aside class="work-assistant">
+            <div class="assistant-heading"><span class="panel-label">WORK ASSIST</span><span class="assistant-dot"></span></div>
+            <h3>下一步做什么</h3>
+            <div id="assistList" class="assist-list"></div>
+            <div class="data-summary">
+              <span class="panel-label">DATA SUMMARY</span>
+              <div class="summary-stat"><strong id="boqCount">0</strong><span>清单项</span></div>
+              <div class="summary-stat"><strong id="planTotal">—</strong><span>合同计划</span></div>
+              <div class="summary-stat"><strong id="reviewGate">未开始</strong><span>初审结果</span></div>
+            </div>
+          </aside>
+
+          <section class="workspace-content">
+            <div id="workspaceContent"></div>
+            <p id="error" class="error" role="alert"></p>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer user-footer">
+      <span>本地资料工作台</span><span class="footer-separator">·</span><span>资料只在当前环境处理</span>
+    </footer>
+    <input id="fileInput" class="visually-hidden" type="file" multiple accept=".xlsx,.xlsm,.csv,.doc,.docx,.pdf,.pptx,.dwg,.dxf,.txt,.md,.html,.htm,.json,.xml,.zip,.jpg,.jpeg,.png,.bmp,.tif,.tiff" />
+    <input id="sourceInput" class="visually-hidden" type="file" multiple accept=".xlsx,.xlsm,.csv,.doc,.docx,.pdf,.pptx,.dwg,.dxf,.txt,.md,.html,.htm,.json,.xml,.zip,.jpg,.jpeg,.png,.bmp,.tif,.tiff" />
+    <input id="projectInfoInput" class="visually-hidden" type="file" multiple accept=".xlsx,.xlsm,.csv,.doc,.docx,.pdf,.pptx,.dwg,.dxf,.txt,.md,.html,.htm,.json,.xml,.zip,.jpg,.jpeg,.png,.bmp,.tif,.tiff" />
+    <input id="bundleInput" class="visually-hidden" type="file" accept=".zip" />
+    <script src="/app.js" defer></script>
+  </body>
+</html>

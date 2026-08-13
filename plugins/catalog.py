@@ -3,13 +3,14 @@ from __future__ import annotations
 from .base import DeclarativeCapability
 from .boq import BillOfQuantitiesCapability
 from .costplan import CostPlanCapability
+from .review import SettlementReviewCapability
 
 
 def _plugin(capability_id: str, name: str) -> type[DeclarativeCapability]:
     return type(f"{capability_id}Capability", (DeclarativeCapability,), {"capability_id": capability_id, "name": name})
 
 
-# P02 and P05 have real implementations; the rest keep the declarative
+# P02, P05 and P08 have real implementations; the rest keep the declarative
 # placeholder until each is filled in turn. The gateway still sees exactly
 # P01-P08, so the frozen boundary is unchanged.
 PLUGIN_CLASSES = (
@@ -20,7 +21,7 @@ PLUGIN_CLASSES = (
     CostPlanCapability,
     _plugin("P06", "change"),
     _plugin("P07", "evidence"),
-    _plugin("P08", "settlement-review"),
+    SettlementReviewCapability,
 )
 
 
