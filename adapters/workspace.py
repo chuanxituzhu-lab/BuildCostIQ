@@ -53,6 +53,7 @@ class LocalProjectWorkspace:
             "boq": None,
             "cost_plan": None,
             "review": None,
+            "alert_snapshots": [],
             "audit_log": [],
         }
         self.save(state)
@@ -78,6 +79,27 @@ class LocalProjectWorkspace:
     def set_stage(self, project_id: str, stage: str, result: Mapping[str, Any]) -> dict[str, Any]:
         state = self.load(project_id) or self.create(project_id, project_id)
         state[stage] = {"status": "completed", "updated_at": _now(), "result": dict(result)}
+        return self.save(state)
+
+    def record_alert_snapshot(
+        self,
+        project_id: str,
+        result: Mapping[str, Any],
+        source_id: str = "",
+    ) -> dict[str, Any]:
+        """Persist a local review snapshot for weekly/monthly issue trends."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        snapshots = list(state.get("alert_snapshots") or [])
+        snapshots.append(
+            {
+                "captured_at": _now(),
+                "source_id": source_id,
+                "risk": dict(result.get("risk") or {}),
+                "summary": dict(result.get("summary") or {}),
+                "findings": [dict(item) for item in result.get("findings") or [] if isinstance(item, Mapping)],
+            }
+        )
+        state["alert_snapshots"] = snapshots[-120:]
         return self.save(state)
 
     def add_source(self, project_id: str, source: Mapping[str, Any]) -> dict[str, Any]:

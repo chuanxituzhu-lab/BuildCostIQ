@@ -15,6 +15,7 @@ const state = {
   planDraft: [],
   planResult: null,
   reviewResult: null,
+  dashboard: null,
   sources: [],
   connectors: [],
   recognizers: [],
@@ -213,13 +214,25 @@ async function ensureProject() {
 async function loadWorkspace() {
   try {
     applyWorkspace(await apiJson(`/api/workspace?project_id=${encodeURIComponent(state.projectId)}`));
+    await refreshDashboard();
   } catch (error) {
     await ensureProject();
+    await refreshDashboard();
   }
 }
 
 async function refreshWorkspace() {
   applyWorkspace(await apiJson(`/api/workspace?project_id=${encodeURIComponent(state.projectId)}`));
+  await refreshDashboard();
+  renderDashboardIfVisible();
+}
+
+async function refreshDashboard() {
+  try {
+    state.dashboard = await apiJson(`/api/dashboard?project_id=${encodeURIComponent(state.projectId)}`);
+  } catch (_) {
+    state.dashboard = null;
+  }
 }
 
 async function loadConnectors() {
@@ -241,6 +254,9 @@ function updateContextBar() {
 
 function renderAssist() {
   const tasks = [];
+  if (state.dashboard?.alerts?.length) {
+    tasks.push({ tone: state.dashboard.alerts[0].severity === "block" ? "warn" : "next", title: `经营看板有 ${state.dashboard.alerts.length} 项自动提醒`, note: "先查看红色阻断和黄色预警，再回到对应工作步骤处理。", view: "dashboard" });
+  }
   if (!state.boqResult) {
     tasks.push({ tone: "next", title: "接入清单资料", note: "可多选 Excel、PDF、Word、图片等资料，或手工录入清单项。", view: "boq" });
   } else {
@@ -274,6 +290,182 @@ function renderAssist() {
     button.append(marker, body);
     return button;
   }));
+}
+
+function dashboardMoney(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(value);
+}
+
+function dashboardPercent(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) + "%" : String(value);
+}
+
+function dashboardStatus(status) {
+  return {
+    comparable: "口径可比",
+    undeclared: "口径未完整声明",
+    conflicted: "口径冲突",
+    missing: "尚未比对",
+  }[status] || status || "尚未比对";
+}
+
+function renderDashboardIfVisible() {
+  if (state.view === "dashboard") renderDashboard();
+}
+
+function renderDashboard() {
+  const dashboard = state.dashboard;
+  if (!dashboard) {
+    renderBlockedStep("项目经营看板", "看板数据暂时不可用，请确认已经登录并建立项目。", "回到工作概览", "overview");
+    return;
+  }
+  const comparison = dashboard.comparison || {};
+  const periods = dashboard.periods || {};
+  const week = periods.week || {};
+  const month = periods.month || {};
+  const roleTitle = isManager() ? "项目经理经营看板" : "造价/成本经理经营看板";
+  const roleNote = isManager()
+    ? "先看红色阻断、成本超限和近月重复问题，再决定项目协调和审批动作。"
+    : "先看成本基线比对、待组价项目和审查问题，再回到资料和成本计划处理。";
+  $("workspaceContent").innerHTML =
+    '<div class="surface-title"><div><span class="panel-label">PROJECT INTELLIGENCE</span><h3>' + roleTitle + '</h3></div><span class="surface-caption">本地自动汇总 · 打开看板即刷新预警</span></div>' +
+    '<div class="dashboard-intro"><strong id="dashboardProjectName"></strong><span id="dashboardRoleNote"></span><small id="dashboardGeneratedAt"></small></div>' +
+    '<section class="dashboard-alert-panel"><div class="surface-title"><div><span class="panel-label">AUTOMATED ALERTS</span><h3>需要优先处理</h3></div><span class="surface-caption">红色立即处理 · 黄色安排核对 · 蓝色关注趋势</span></div><div id="dashboardAlerts" class="dashboard-alert-list"></div></section>' +
+    '<div id="dashboardMetrics" class="dashboard-metrics"></div>' +
+    '<div class="dashboard-grid">' +
+      '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">BASELINE / COMPARISON</span><h3>成本基线与造价资料比对</h3></div><button class="button button-quiet" data-view="plan" type="button">查看成本计划</button></div><div id="dashboardComparisonSummary" class="dashboard-comparison-summary"></div><div id="dashboardComparisonTable" class="dashboard-table"></div></section>' +
+      '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">WEEKLY / MONTHLY</span><h3>问题周期趋势</h3></div><button class="button button-quiet" data-view="review" type="button">查看结算初审</button></div><div id="dashboardPeriods" class="dashboard-periods"></div><div id="dashboardRecurring" class="dashboard-recurring"></div></section>' +
+    '</div>' +
+    '<section class="dashboard-panel dashboard-issues-panel"><div class="surface-title"><div><span class="panel-label">ISSUE QUEUE</span><h3>当前问题与处理入口</h3></div><span class="surface-caption">每次运行初审会保留本地快照，支持近7天和近30天统计</span></div><div id="dashboardIssues" class="dashboard-issue-list"></div></section>';
+
+  $("dashboardProjectName").textContent = dashboard.project?.name || state.projectName || "当前项目";
+  $("dashboardRoleNote").textContent = roleNote;
+  $("dashboardGeneratedAt").textContent = "刷新时间：" + new Date(dashboard.generated_at).toLocaleString("zh-CN");
+  const metrics = [
+    ["成本基线", dashboard.baseline?.status === "ready" ? dashboardMoney(dashboard.baseline.contract_subtotal) : "未建立", "合同计划小计"],
+    ["成本超限", comparison.over_limit_amount ? dashboardMoney(comparison.over_limit_amount) : "0.00", comparison.over_limit_rate ? "偏差 " + dashboardPercent(comparison.over_limit_rate) : "当前未发现超限"],
+    ["待组价", dashboard.baseline?.pending_item_count ?? 0, "清单项目"],
+    ["本周问题", week.issue_count ?? 0, (week.review_count ?? 0) + " 次审查"],
+    ["本月问题", month.issue_count ?? 0, (month.review_count ?? 0) + " 次审查"],
+    ["初审门禁", dashboard.review?.status === "completed" ? (dashboard.review.publishable ? "可发布" : "需处理") : "未运行", "当前审查状态"],
+  ];
+  $("dashboardMetrics").replaceChildren(...metrics.map(([label, value, note]) => {
+    const item = document.createElement("div");
+    item.className = "dashboard-metric";
+    const title = document.createElement("span");
+    title.className = "dashboard-metric-label";
+    title.textContent = label;
+    const strong = document.createElement("strong");
+    strong.textContent = String(value);
+    const small = document.createElement("small");
+    small.textContent = note;
+    item.append(title, strong, small);
+    return item;
+  }));
+
+  const alerts = $("dashboardAlerts");
+  if (!dashboard.alerts?.length) {
+    alerts.textContent = "当前没有自动预警。建议按周运行一次结算初审，持续形成趋势数据。";
+  } else {
+    alerts.replaceChildren(...dashboard.alerts.map((alert) => {
+      const item = document.createElement("article");
+      item.className = "dashboard-alert risk-" + (alert.risk?.color || "blue");
+      const body = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = alert.title || "自动提醒";
+      const message = document.createElement("small");
+      message.textContent = alert.message || "请查看对应工作步骤。";
+      body.append(title, message);
+      item.append(body);
+      if (alert.view) {
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "icon-button";
+        action.textContent = alert.view === "dashboard" ? "查看趋势" : "去处理";
+        action.dataset.view = alert.view;
+        item.append(action);
+      }
+      return item;
+    }));
+  }
+
+  const comparisonSummary = $("dashboardComparisonSummary");
+  comparisonSummary.replaceChildren();
+  const comparisonState = document.createElement("div");
+  comparisonState.className = "comparison-state";
+  const comparisonTitle = document.createElement("strong");
+  comparisonTitle.textContent = dashboardStatus(comparison.status);
+  const comparisonReason = document.createElement("span");
+  comparisonReason.textContent = comparison.reason || "合同成本基线与参考价册的单项差额会在这里显示。";
+  comparisonState.append(comparisonTitle, comparisonReason);
+  const comparisonTotals = document.createElement("div");
+  comparisonTotals.className = "comparison-totals";
+  [["合同基线", comparison.baseline_total], ["参考成本", comparison.market_total], ["基线-参考价差", comparison.total_variance], ["预警线", (comparison.limits?.warn_rate ?? "—") + "% / " + (comparison.limits?.critical_rate ?? "—") + "%"]].forEach(([label, value]) => {
+    const span = document.createElement("span");
+    span.textContent = label + " ";
+    const strong = document.createElement("b");
+    strong.textContent = typeof value === "string" && value.includes("%") ? value : dashboardMoney(value);
+    span.append(strong);
+    comparisonTotals.append(span);
+  });
+  comparisonSummary.append(comparisonState, comparisonTotals);
+  renderTable($("dashboardComparisonTable"), [["code", "编码"], ["name", "项目"], ["contract_amount", "基线金额"], ["market_amount", "参考金额"], ["over_limit_amount", "超限金额"], ["over_limit_rate", "偏差率"]], (comparison.rows || []).map((row) => ({
+    code: row.code,
+    name: row.name,
+    contract_amount: dashboardMoney(row.contract_amount),
+    market_amount: dashboardMoney(row.market_amount),
+    over_limit_amount: dashboardMoney(row.over_limit_amount),
+    over_limit_rate: dashboardPercent(row.over_limit_rate),
+  })));
+
+  $("dashboardPeriods").replaceChildren(...[week, month].map((period) => {
+    const card = document.createElement("article");
+    card.className = "dashboard-period";
+    const title = document.createElement("strong");
+    title.textContent = period.label || "周期";
+    const count = document.createElement("span");
+    count.textContent = (period.review_count || 0) + " 次审查 · " + (period.issue_count || 0) + " 个问题";
+    const detail = document.createElement("small");
+    detail.textContent = "阻断 " + (period.block || 0) + " · 预警 " + (period.warn || 0) + " · 提示 " + (period.info || 0);
+    card.append(title, count, detail);
+    return card;
+  }));
+  const recurring = $("dashboardRecurring");
+  const recurringRules = [...(month.recurring_rules || [])].filter((item) => item.count > 1);
+  recurring.replaceChildren();
+  const recurringLabel = document.createElement("span");
+  recurringLabel.className = "panel-label";
+  recurringLabel.textContent = "REPEATED RULES";
+  const recurringText = document.createElement("p");
+  recurringText.textContent = recurringRules.length
+    ? "近30天重复出现：" + recurringRules.map((item) => item.rule_id + "（" + item.count + "次）").join("、")
+    : "暂未形成重复规则统计；持续运行初审后会自动归纳。";
+  recurring.append(recurringLabel, recurringText);
+
+  const issues = $("dashboardIssues");
+  if (!dashboard.recent_issues?.length) {
+    issues.textContent = dashboard.review?.status === "completed" ? "最近一次初审没有发现问题。" : "尚未形成当前问题清单。";
+  } else {
+    issues.replaceChildren(...dashboard.recent_issues.map((finding) => {
+      const item = document.createElement("article");
+      item.className = "dashboard-issue risk-" + (finding.risk?.color || (finding.severity === "block" ? "red" : finding.severity === "warn" ? "yellow" : "blue"));
+      const badge = document.createElement("span");
+      badge.textContent = finding.risk?.label || finding.severity || "提示";
+      const body = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = finding.message || "审查事项";
+      const note = document.createElement("small");
+      note.textContent = finding.row ? "第 " + finding.row + " 项 · " + (finding.rule_id || "规则") : (finding.rule_id || "全局规则");
+      body.append(title, note);
+      item.append(badge, body);
+      return item;
+    }));
+  }
+  bindViewButtons();
 }
 
 function renderOverview() {
@@ -314,6 +506,23 @@ function renderOverview() {
     <div class="tool-entry"><span class="panel-label">TOOL ENTRY</span><div id="connectorCatalog" class="tool-entry-grid"></div></div>
     <div class="export-actions"><button id="exportReport" class="button button-quiet" type="button">导出 Word 兼容报告</button><button id="exportBoq" class="button button-quiet" type="button">导出 Excel 清单</button><button id="exportPlan" class="button button-quiet" type="button">导出 Excel 成本计划</button><button id="exportBundle" class="button button-primary" type="button">导出项目交换包</button><button id="importBundle" class="button button-quiet" type="button">导入项目交换包</button></div>`;
   $("workspaceContent").append(sourcePanel);
+  const overviewCards = document.querySelector(".overview-cards");
+  if (overviewCards) {
+    overviewCards.classList.add("has-dashboard");
+    const dashboardCard = document.createElement("button");
+    dashboardCard.className = "overview-card";
+    dashboardCard.dataset.view = "dashboard";
+    dashboardCard.type = "button";
+    const label = document.createElement("span");
+    label.className = "card-label";
+    label.textContent = "项目经营看板";
+    const value = document.createElement("strong");
+    value.textContent = String(state.dashboard?.alerts?.length || 0);
+    const note = document.createElement("small");
+    note.textContent = state.dashboard?.alerts?.length ? "项自动预警待处理" : "当前没有自动预警";
+    dashboardCard.append(label, value, note);
+    overviewCards.append(dashboardCard);
+  }
   renderSourceList();
   renderIntakeReports("sourceIntakeSummary");
   renderRecognizerCatalog();
@@ -1148,6 +1357,7 @@ function setView(view) {
   if (view === "boq") renderBoq();
   if (view === "plan") renderPlan();
   if (view === "review") renderReview();
+  if (view === "dashboard") renderDashboard();
   if (view === "control") renderControl();
   renderAssist();
   updateContextBar();

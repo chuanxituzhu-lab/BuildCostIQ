@@ -37,7 +37,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn(".pdf", body)
         self.assertIn('id="loginForm"', body)
         self.assertIn("项目经理工作台", body)
-        self.assertIn("查看", body)
+        self.assertIn("经营看板", body)
 
         with urlopen(f"{self.base_url}/api/health", timeout=2) as response:
             health = json.load(response)
@@ -194,6 +194,79 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(result["capability_id"], "P05")
         self.assertEqual(result["summary"]["contract_item_count"], 1)
         self.assertEqual(result["items"][0]["status"], "contract")
+
+    def test_dashboard_summarizes_baseline_alerts_and_periods(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token=""):
+            headers = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        auth = post_json(
+            "/api/auth/register",
+            {"username": f"dashboard-{suffix}", "password": "local-pass", "role": "cost_estimator"},
+        )
+        token = auth["token"]
+        project_id = f"dashboard-project-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "看板预警测试项目"}, token)
+        rows = [["项目编码", "项目名称", "计量单位", "工程量"], ["010502001001", "矩形柱", "m3", 10]]
+        post_json("/api/boq", {"project_id": project_id, "source_id": "dashboard-source", "rows": rows}, token)
+        basis_contract = {
+            "tax_inclusion": "tax_inclusive",
+            "price_type": "winning_bid",
+            "source": "dashboard-contract",
+            "price_date": "2026-08",
+        }
+        basis_market = {
+            "tax_inclusion": "tax_inclusive",
+            "price_type": "market_quote",
+            "source": "dashboard-market",
+            "price_date": "2026-08",
+        }
+        post_json(
+            "/api/cost-plan",
+            {
+                "project_id": project_id,
+                "source_id": "dashboard-source",
+                "items": [{"code": "010502001001", "name": "矩形柱", "unit": "m3", "quantity": 10}],
+                "contract_prices": {"010502001001": 100},
+                "market_prices": {"010502001001": 120},
+                "contract_basis": basis_contract,
+                "market_basis": basis_market,
+            },
+            token,
+        )
+        post_json(
+            "/api/review",
+            {
+                "project_id": project_id,
+                "source_id": "dashboard-source",
+                "rows": [{"row": 1, "code": "010502001001", "name": "矩形柱", "unit": "m3", "quantity": 10, "price": 100, "total": 1000}],
+            },
+            token,
+        )
+        request = Request(
+            f"{self.base_url}/api/dashboard?project_id={project_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urlopen(request, timeout=2) as response:
+            dashboard = json.load(response)
+        self.assertEqual(dashboard["audience"], "cost_estimator")
+        self.assertEqual(dashboard["baseline"]["contract_subtotal"], 1000.0)
+        self.assertEqual(dashboard["comparison"]["status"], "comparable")
+        self.assertEqual(dashboard["comparison"]["over_limit_amount"], 200.0)
+        self.assertTrue(any(alert["rule_id"] == "DASH-LIMIT-02" for alert in dashboard["alerts"]))
+        self.assertEqual(dashboard["periods"]["week"]["review_count"], 1)
+        self.assertEqual(dashboard["periods"]["month"]["issue_count"], 0)
 
     def test_boq_upload_endpoint_uses_p02_gateway_for_csv(self):
         boundary = "----BuildCostIQTestBoundary"

@@ -8,6 +8,8 @@ import json
 import mimetypes
 import os
 import secrets
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -42,6 +44,11 @@ RISK_META = {
     "block": {"level": "critical", "label": "紧急阻断", "color": "red", "priority": 3},
     "warn": {"level": "warning", "label": "预警", "color": "yellow", "priority": 2},
     "info": {"level": "notice", "label": "提示", "color": "blue", "priority": 1},
+}
+
+DASHBOARD_LIMITS = {
+    "warn_rate": Decimal("0.03"),
+    "critical_rate": Decimal("0.10"),
 }
 
 ARCHITECTURE: dict[str, Any] = {
@@ -253,6 +260,11 @@ def _review(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str
     }
     result = _decorate_risk(dict(RUNTIME.gateway.execute("P08", context)))
     PROJECT_WORKSPACE.set_stage(str(context.get("project_id", "")), "review", result)
+    PROJECT_WORKSPACE.record_alert_snapshot(
+        str(context.get("project_id", "")),
+        result,
+        str(context.get("source_id", "")),
+    )
     if actor and context.get("project_id"):
         PROJECT_WORKSPACE.append_audit(
             str(context["project_id"]),
@@ -691,6 +703,202 @@ def _workspace(project_id: str) -> dict[str, Any]:
     return state
 
 
+def _dashboard_decimal(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except (TypeError, ValueError, ArithmeticError):
+        return None
+
+
+def _dashboard_number(value: Decimal | None) -> float | None:
+    return float(value) if value is not None else None
+
+
+def _dashboard_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _dashboard_period(snapshots: list[dict[str, Any]], days: int, now: datetime) -> dict[str, Any]:
+    cutoff = now - timedelta(days=days)
+    recent = [
+        snapshot
+        for snapshot in snapshots
+        if (_dashboard_datetime(snapshot.get("captured_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
+    ]
+    rule_counts: Counter[str] = Counter()
+    issue_count = 0
+    block = warn = info = 0
+    for snapshot in recent:
+        summary = snapshot.get("summary") or {}
+        issue_count += int(summary.get("finding_count", 0) or 0)
+        block += int(summary.get("block", 0) or 0)
+        warn += int(summary.get("warn", 0) or 0)
+        info += int(summary.get("info", 0) or 0)
+        for finding in snapshot.get("findings") or []:
+            rule_id = str(finding.get("rule_id", "")).strip()
+            if rule_id:
+                rule_counts[rule_id] += 1
+    return {
+        "label": f"近{days}天",
+        "days": days,
+        "review_count": len(recent),
+        "issue_count": issue_count,
+        "block": block,
+        "warn": warn,
+        "info": info,
+        "recurring_rules": [
+            {"rule_id": rule_id, "count": count}
+            for rule_id, count in rule_counts.most_common(5)
+        ],
+    }
+
+
+def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    boq = (state.get("boq") or {}).get("result") or {}
+    plan = (state.get("cost_plan") or {}).get("result") or {}
+    review = (state.get("review") or {}).get("result") or {}
+    summary = plan.get("summary") or {}
+    cost_control = plan.get("cost_control")
+    baseline_total = _dashboard_decimal(summary.get("contract_subtotal"))
+    pending_count = int(summary.get("pending_item_count", 0) or 0)
+
+    comparison_rows: list[dict[str, Any]] = []
+    plan_names = {str(item.get("code", "")): item.get("name", "") for item in plan.get("items") or []}
+    total_variance = _dashboard_decimal((cost_control or {}).get("total_variance"))
+    over_limit_amount = max(Decimal("0"), -total_variance) if total_variance is not None else None
+    comparable_count = 0
+    if isinstance(cost_control, dict):
+        for item in cost_control.get("items") or []:
+            contract_unit = _dashboard_decimal(item.get("contract_unit_price"))
+            market_unit = _dashboard_decimal(item.get("market_unit_price"))
+            quantity = _dashboard_decimal(item.get("quantity")) or Decimal("0")
+            variance = _dashboard_decimal(item.get("variance_amount"))
+            contract_amount = contract_unit * quantity if contract_unit is not None else None
+            item_over_limit = max(Decimal("0"), -variance) if variance is not None else None
+            rate = item_over_limit / contract_amount if item_over_limit and contract_amount else Decimal("0")
+            comparable_count += 1
+            comparison_rows.append(
+                {
+                    "code": item.get("code", ""),
+                    "name": plan_names.get(str(item.get("code", "")), ""),
+                    "quantity": _dashboard_number(quantity),
+                    "contract_amount": _dashboard_number(contract_amount),
+                    "market_amount": _dashboard_number(market_unit * quantity if market_unit is not None else None),
+                    "variance_amount": _dashboard_number(variance),
+                    "over_limit_amount": _dashboard_number(item_over_limit),
+                    "over_limit_rate": _dashboard_number(rate * 100),
+                }
+            )
+    comparison_rows.sort(key=lambda row: row.get("over_limit_amount") or 0, reverse=True)
+    baseline_rate = over_limit_amount / baseline_total if over_limit_amount and baseline_total else Decimal("0")
+    comparison = {
+        "status": (cost_control or {}).get("comparability") if isinstance(cost_control, dict) else "missing",
+        "reason": (cost_control or {}).get("reason", "") if isinstance(cost_control, dict) else "尚未生成可比成本控制结果",
+        "baseline_total": _dashboard_number(baseline_total),
+        "market_total": _dashboard_number(baseline_total - total_variance if baseline_total is not None and total_variance is not None else None),
+        "total_variance": _dashboard_number(total_variance),
+        "over_limit_amount": _dashboard_number(over_limit_amount),
+        "over_limit_rate": _dashboard_number(baseline_rate * 100),
+        "comparable_item_count": comparable_count,
+        "rows": comparison_rows[:12],
+        "limits": {key: float(value * 100) for key, value in DASHBOARD_LIMITS.items()},
+    }
+
+    snapshots = [item for item in state.get("alert_snapshots") or [] if isinstance(item, dict)]
+    if not snapshots and review:
+        snapshots = [{
+            "captured_at": (state.get("review") or {}).get("updated_at"),
+            "summary": review.get("summary") or {},
+            "findings": review.get("findings") or [],
+        }]
+    week = _dashboard_period(snapshots, 7, now)
+    month = _dashboard_period(snapshots, 30, now)
+    last_review_at = (state.get("review") or {}).get("updated_at")
+    last_review_dt = _dashboard_datetime(last_review_at)
+    alerts: list[dict[str, Any]] = []
+
+    def add_alert(severity: str, rule_id: str, title: str, message: str, view: str) -> None:
+        alerts.append({
+            "id": rule_id,
+            "rule_id": rule_id,
+            "severity": severity,
+            "risk": _risk_for(severity),
+            "title": title,
+            "message": message,
+            "view": view,
+        })
+
+    if not plan:
+        add_alert("warn", "DASH-BASELINE-01", "成本基线尚未建立", "请先生成成本计划，项目经理暂时无法看到可靠的成本边界。", "plan")
+    elif pending_count:
+        add_alert("warn", "DASH-BASELINE-02", "仍有待组价清单", f"还有 {pending_count} 个清单项目没有合同单价，成本基线尚未完整。", "plan")
+
+    if cost_control is None:
+        if plan:
+            add_alert("warn", "DASH-COMPARE-01", "尚未形成成本比对", "请录入市场参考价并声明价格口径，系统才能判断成本是否超出基线。", "plan")
+    elif comparison["status"] == "conflicted":
+        add_alert("block", "DASH-COMPARE-02", "价格口径冲突", str(comparison["reason"] or "合同基线与参考价不能直接比较。"), "plan")
+    elif comparison["status"] != "comparable":
+        add_alert("warn", "DASH-COMPARE-03", "成本比对仅供参考", str(comparison["reason"] or "价格口径声明不完整，偏差数不能作为结论。"), "plan")
+    elif over_limit_amount and baseline_rate >= DASHBOARD_LIMITS["critical_rate"]:
+        add_alert("block", "DASH-LIMIT-02", "成本超限需立即处理", f"参考成本高于合同基线 {float(over_limit_amount):,.2f}，偏差约 {float(baseline_rate * 100):.2f}%。", "plan")
+    elif over_limit_amount and baseline_rate >= DASHBOARD_LIMITS["warn_rate"]:
+        add_alert("warn", "DASH-LIMIT-01", "成本接近或超过预警线", f"参考成本高于合同基线 {float(over_limit_amount):,.2f}，偏差约 {float(baseline_rate * 100):.2f}%。", "plan")
+
+    if not review:
+        add_alert("warn", "DASH-REVIEW-01", "尚未完成结算初审", "问题清单、口径冲突和发布门禁还没有形成，请运行结算初审。", "review")
+    else:
+        for finding in (review.get("findings") or [])[:5]:
+            severity = str(finding.get("severity", "info"))
+            add_alert(
+                severity,
+                f"REVIEW-{finding.get('rule_id', 'ITEM')}-{finding.get('row', 'ALL')}",
+                finding.get("risk", {}).get("label", "审查事项"),
+                str(finding.get("message", "请查看结算初审结果。")),
+                "review",
+            )
+    if plan and week["review_count"] == 0:
+        add_alert("warn", "DASH-CADENCE-01", "近7天没有审查记录", "建议每周至少运行一次初审，及时发现清单、价格和资料变化。", "review")
+    elif last_review_dt and now - last_review_dt > timedelta(days=7):
+        add_alert("warn", "DASH-CADENCE-02", "初审记录已超过7天", "请重新接入最新资料并运行初审，避免沿用过期判断。", "review")
+    if month["issue_count"] and month["issue_count"] > week["issue_count"]:
+        add_alert("info", "DASH-TREND-01", "月度问题多于本周", f"近30天累计 {month['issue_count']} 个问题，本周为 {week['issue_count']} 个；请关注重复问题。", "dashboard")
+
+    alerts.sort(key=lambda item: item["risk"]["priority"], reverse=True)
+    return {
+        "project": state.get("project") or {},
+        "audience": "project_manager" if (actor or {}).get("role") == ROLE_PROJECT_MANAGER else "cost_estimator",
+        "generated_at": now.isoformat(),
+        "baseline": {
+            "status": "ready" if plan else "missing",
+            "source": "P05 cost plan",
+            "boq_item_count": int(boq.get("item_count", len(boq.get("items") or [])) or 0),
+            "contract_item_count": int(summary.get("contract_item_count", 0) or 0),
+            "contract_subtotal": _dashboard_number(baseline_total),
+            "pending_item_count": pending_count,
+        },
+        "comparison": comparison,
+        "review": {
+            "status": "completed" if review else "missing",
+            "last_review_at": last_review_at,
+            "publishable": review.get("publishable") if review else None,
+            "current_summary": review.get("summary") or {},
+        },
+        "periods": {"week": week, "month": month},
+        "alerts": alerts[:12],
+        "recent_issues": (review.get("findings") or [])[:12],
+    }
+
+
 def _report_html(state: dict[str, Any]) -> bytes:
     project = state["project"]
     boq = (state.get("boq") or {}).get("result") or {}
@@ -889,7 +1097,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": ["P02", "P05", "P08"],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "资料查看、原件与识别稿保存路径、权限分级与审计留痕、双角色工作台、风险颜色与预警标注",
+        "release_highlights": "经营看板、成本基线比对、成本超限预警、周月问题趋势、资料查看与权限审计",
     }
 
 
@@ -1007,6 +1215,15 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 project_id = parse_qs(parsed.query).get("project_id", [""])[0]
                 state = _workspace(project_id)
                 self._write_json({"audit_log": state.get("audit_log") or []})
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 401)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+        elif path == "/api/dashboard":
+            try:
+                actor = _require_actor(self.headers, "view_audit")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                self._write_json(_build_dashboard(_workspace(project_id), actor))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 401)
             except FileNotFoundError as exc:

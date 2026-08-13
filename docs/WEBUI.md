@@ -19,7 +19,9 @@ buildcostiq-web --port 8787
 
 Open `http://127.0.0.1:8787/`. The workbench starts at a project overview, saves a local project workspace, and provides a project file library for Excel, Word, PDF, CAD, image, and other source files. Every uploaded source is stored locally first and sent through local recognition when a local extractor is available. The recognizer creates a category, tags, confidence, text preview, and a Markdown derivative while preserving the original bytes. Scanned PDFs and images are marked as needing OCR when local extraction finds no text. The BOQ step provides Excel/CSV intake or a user-facing table. Continue the checked items into contract-based cost planning, then send the priced rows into settlement review. The left-side work assistant shows the next action and outstanding items. The overview also contains an exchange center: Excel/CSV and Word-compatible paths are direct, while CAD and budget-software files are shared through the portable project exchange package. The UI only assembles capability context; business decisions remain in the Gateway path.
 
-The current `v0.5.1-rc1` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
+The current `v0.6.0-rc1` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
+
+The “经营看板” is available to both roles. Project managers see project-level decisions, risk priority, cost-over-limit alerts, and review cadence; cost/estimating staff see the baseline comparison rows, pending pricing, and issue queue. P05 contract-vs-market comparison remains isolated from the external cost-plan total. Default local alert lines are 3% for yellow warning and 10% for red critical over-limit; these are presentation thresholds and can be made project-configurable later. Each P08 run stores a local review snapshot, allowing near-7-day and near-30-day issue counts and repeated-rule summaries without external transfer.
 
 ## v0.5.0-rc1 workflow controls
 
@@ -46,6 +48,7 @@ The current `v0.5.1-rc1` intake flow accepts multiple files in one selection. In
 - `GET /api/workspace?project_id=...` — resumes the saved project state.
 - `POST /api/source/upload` — saves a generic project source in the immutable source store and project library.
 - `POST /api/source/recognize` — reruns local recognition or requests an explicitly authorized external recognition call for one source.
+- `GET /api/dashboard?project_id=...` — authenticated role-aware baseline, comparison, alert, review-cadence, and weekly/monthly issue summary.
 - `POST /api/workspace/import` — imports a versioned local project exchange ZIP and restores project state and available source files.
 - `POST /api/boq` — executes P02 through `Runtime.gateway` with standard table rows.
 - `POST /api/boq/upload` — accepts a local `.xlsx`, `.xlsm`, or `.csv` file and executes P02 through `Runtime.gateway`.

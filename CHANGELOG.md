@@ -2,6 +2,12 @@
 
 Project: BuildCostIQ
 
+## v0.6.0-rc1 — 2026-08-13
+
+- Added a role-aware project intelligence dashboard for project managers and cost/estimating staff.
+- Added local baseline comparison, cost-over-limit alerts, pending-pricing alerts, review cadence alerts, and repeated-issue summaries.
+- Added local review snapshots so the dashboard can show near-7-day and near-30-day issue counts without sending project data externally.
+
 ## v0.5.1-rc1 — 2026-08-13
 
 - Added the absolute local storage path for every original source file to the project library metadata and intake result.
