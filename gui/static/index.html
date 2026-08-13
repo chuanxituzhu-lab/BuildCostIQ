@@ -15,21 +15,43 @@
           <div>
             <h1>造价资料工作台</h1>
             <p class="subtitle">把清单资料、成本计划和结算初审集中在一个工作面完成。</p>
+            <p id="releaseHighlights" class="release-highlights">v0.5.0-rc1：文件查看、权限留痕、双角色工作台与风险分级。</p>
           </div>
         </div>
       </div>
       <div class="runtime-meta">
         <div id="health" class="health health-pending">资料服务连接中</div>
-        <div class="runtime-version"><span>当前版本</span><strong id="runtimeVersion">v0.4.0-rc1</strong></div>
+        <div class="runtime-version"><span>当前版本</span><strong id="runtimeVersion">v0.5.0-rc1</strong></div>
+        <div id="userSession" class="user-session" hidden><span id="userRole"></span><button id="logoutButton" class="icon-button" type="button">退出登录</button></div>
       </div>
     </header>
 
     <main>
-      <section class="section-shell workspace-shell">
+      <section id="authShell" class="auth-shell">
+        <div class="auth-intro"><span class="panel-label">LOCAL ACCESS</span><h2>登录本地工作台</h2><p>人员注册后按角色进入项目经理台或造价工作台。账号、项目资料和操作记录均保存在当前环境。</p></div>
+        <div class="auth-grid">
+          <form id="loginForm" class="auth-card">
+            <span class="panel-label">SIGN IN</span><h3>人员登录</h3>
+            <label>用户名<input id="loginUsername" autocomplete="username" required /></label>
+            <label>密码<input id="loginPassword" type="password" autocomplete="current-password" required /></label>
+            <button class="button button-primary" type="submit">登录</button>
+          </form>
+          <form id="registerForm" class="auth-card">
+            <span class="panel-label">REGISTER</span><h3>注册人员</h3>
+            <label>用户名<input id="registerUsername" autocomplete="username" required /></label>
+            <label>密码（至少 6 位）<input id="registerPassword" type="password" autocomplete="new-password" required /></label>
+            <label>工作台角色<select id="registerRole"><option value="cost_estimator">造价人员工作台</option><option value="project_manager">项目经理工作台</option></select></label>
+            <button class="button button-quiet" type="submit">注册并进入</button>
+          </form>
+        </div>
+        <p id="authMessage" class="auth-message" role="alert"></p>
+      </section>
+
+      <section id="workspaceShell" class="section-shell workspace-shell" hidden>
         <div class="workspace-head">
           <div>
             <span class="step">PROJECT WORKSPACE</span>
-            <h2>项目资料与工作协助</h2>
+            <h2 id="workspaceTitle">项目资料与工作协助</h2>
           </div>
           <div class="project-context">
             <div><span>当前项目</span><strong id="projectDisplay">演示项目</strong></div>
@@ -43,6 +65,7 @@
           <button class="workspace-tab" data-view="boq" type="button"><span>02</span>清单资料</button>
           <button class="workspace-tab" data-view="plan" type="button"><span>03</span>成本计划</button>
           <button class="workspace-tab" data-view="review" type="button"><span>04</span>结算初审</button>
+          <button id="controlTab" class="workspace-tab" data-view="control" type="button" hidden><span>05</span>项目控制</button>
         </nav>
 
         <div class="workspace-grid">

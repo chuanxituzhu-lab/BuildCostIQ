@@ -2,6 +2,15 @@
 
 Project: BuildCostIQ
 
+## v0.5.0-rc1 — 2026-08-13
+
+- Added a view action for every project source and a local recognition-derivative view when available.
+- Added local registration and login with separate project-manager and cost-estimator workbench roles.
+- Added permission levels: source metadata and business edits are auditable; source deletion is a project-manager-only soft delete that preserves original bytes and the audit trail.
+- Added project-manager control view with permission policy, audit events, and risk-color legend.
+- Added red urgent-blocker, yellow warning, and blue notice presentation for workflow findings.
+- Added release highlights to the homepage and versioned release metadata for the v0.5.0-rc1 GitHub tag.
+
 ## v0.4.0-rc1 — 2026-08-13
 
 - Extended the workbench intake control to accept multiple files in one selection, including PDF, Word, PowerPoint, images, CAD, Excel, CSV, and project documents.

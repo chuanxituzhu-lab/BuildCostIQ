@@ -7,15 +7,22 @@ import io
 import json
 import mimetypes
 import os
+import secrets
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 import re
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 from zipfile import BadZipFile, ZipFile
 
-from adapters import ImmutableSourceStore, LocalProjectWorkspace
+from adapters import (
+    ImmutableSourceStore,
+    LocalAuthStore,
+    LocalProjectWorkspace,
+    ROLE_PERMISSIONS,
+    ROLE_PROJECT_MANAGER,
+)
 from adapters.connectors import build_project_bundle, connector_catalog
 from adapters.recognition import RecognitionError, recognition_catalog, recognize_source
 from core import Runtime
@@ -28,6 +35,14 @@ RUNTIME = Runtime(build_default_plugins())
 MAX_BODY_BYTES = 50_000_000
 PROJECT_WORKSPACE = LocalProjectWorkspace(os.environ.get("BUILDCOSTIQ_WORKSPACE", "runtime/projects"))
 SOURCE_STORE = ImmutableSourceStore(Path(os.environ.get("BUILDCOSTIQ_SOURCE_STORE", "runtime/sources")))
+AUTH_STORE = LocalAuthStore(os.environ.get("BUILDCOSTIQ_AUTH", "runtime/auth"))
+SESSIONS: dict[str, dict[str, Any]] = {}
+
+RISK_META = {
+    "block": {"level": "critical", "label": "紧急阻断", "color": "red", "priority": 3},
+    "warn": {"level": "warning", "label": "预警", "color": "yellow", "priority": 2},
+    "info": {"level": "notice", "label": "提示", "color": "blue", "priority": 1},
+}
 
 ARCHITECTURE: dict[str, Any] = {
     "layers": [
@@ -177,7 +192,43 @@ def _json_bytes(payload: object) -> bytes:
     ).encode("utf-8")
 
 
-def _review(payload: object) -> dict[str, Any]:
+def _optional_actor(headers: Mapping[str, str] | None = None) -> dict[str, Any] | None:
+    if not headers:
+        return None
+    raw = headers.get("Authorization", "")
+    token = raw.removeprefix("Bearer ").strip()
+    return SESSIONS.get(token)
+
+
+def _require_actor(headers: Mapping[str, str], permission: str | None = None) -> dict[str, Any]:
+    actor = _optional_actor(headers)
+    if actor is None:
+        raise PermissionError("请先登录后再进行此操作")
+    if permission and permission not in set(actor.get("permissions", [])):
+        raise PermissionError(f"当前角色没有“{permission}”权限")
+    return actor
+
+
+def _risk_for(severity: str) -> dict[str, Any]:
+    return dict(RISK_META.get(severity, RISK_META["info"]))
+
+
+def _decorate_risk(result: dict[str, Any]) -> dict[str, Any]:
+    findings = []
+    highest = RISK_META["info"]
+    for raw in result.get("findings", []):
+        finding = dict(raw)
+        risk = _risk_for(str(finding.get("severity", "info")))
+        finding["risk"] = risk
+        if risk["priority"] > highest["priority"]:
+            highest = risk
+        findings.append(finding)
+    result["findings"] = findings
+    result["risk"] = dict(highest if findings else {**RISK_META["info"], "label": "无风险事项"})
+    return result
+
+
+def _review(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
     rows = payload.get("rows", [])
@@ -200,12 +251,20 @@ def _review(payload: object) -> dict[str, Any]:
         )
         if key in payload
     }
-    result = dict(RUNTIME.gateway.execute("P08", context))
+    result = _decorate_risk(dict(RUNTIME.gateway.execute("P08", context)))
     PROJECT_WORKSPACE.set_stage(str(context.get("project_id", "")), "review", result)
+    if actor and context.get("project_id"):
+        PROJECT_WORKSPACE.append_audit(
+            str(context["project_id"]),
+            "review.run",
+            actor,
+            str(context.get("source_id", "")),
+            {"risk": result.get("risk"), "finding_count": result.get("summary", {}).get("finding_count", 0)},
+        )
     return result
 
 
-def _boq(payload: object) -> dict[str, Any]:
+def _boq(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
     rows = payload.get("rows", [])
@@ -221,6 +280,14 @@ def _boq(payload: object) -> dict[str, Any]:
     }
     result = dict(RUNTIME.gateway.execute("P02", context))
     PROJECT_WORKSPACE.set_stage(str(context.get("project_id", "")), "boq", result)
+    if actor and context.get("project_id"):
+        PROJECT_WORKSPACE.append_audit(
+            str(context["project_id"]),
+            "boq.modified",
+            actor,
+            str(context.get("source_id", "")),
+            {"item_count": result.get("item_count", 0)},
+        )
     return result
 
 
@@ -259,7 +326,11 @@ def _multipart_fields(content_type: str, body: bytes) -> dict[str, tuple[str, by
     return fields
 
 
-def _boq_upload(content_type: str, body: bytes) -> dict[str, Any]:
+def _boq_upload(
+    content_type: str,
+    body: bytes,
+    actor: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if not content_type.startswith("multipart/form-data"):
         raise ValueError("资料上传需要 multipart/form-data")
     fields = _multipart_fields(content_type, body)
@@ -305,10 +376,18 @@ def _boq_upload(content_type: str, body: bytes) -> dict[str, Any]:
     source_metadata = PROJECT_WORKSPACE.load(project_id)["sources"][-1]
     _auto_recognize_source(project_id, source_metadata)
     PROJECT_WORKSPACE.set_stage(project_id, "boq", result)
+    if actor:
+        PROJECT_WORKSPACE.append_audit(
+            project_id,
+            "source.uploaded",
+            actor,
+            source_id,
+            {"name": filename, "kind": "清单资料", "item_count": result.get("item_count", 0)},
+        )
     return result
 
 
-def _cost_plan(payload: object) -> dict[str, Any]:
+def _cost_plan(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
     items = payload.get("items", [])
@@ -332,20 +411,36 @@ def _cost_plan(payload: object) -> dict[str, Any]:
     }
     result = dict(RUNTIME.gateway.execute("P05", context))
     PROJECT_WORKSPACE.set_stage(str(context.get("project_id", "")), "cost_plan", result)
+    if actor and context.get("project_id"):
+        PROJECT_WORKSPACE.append_audit(
+            str(context["project_id"]),
+            "cost_plan.modified",
+            actor,
+            str(context.get("source_id", "")),
+            {"item_count": len(result.get("items", []))},
+        )
     return result
 
 
-def _project(payload: object) -> dict[str, Any]:
+def _project(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
     project_id = str(payload.get("project_id", "")).strip()
     name = str(payload.get("name", "")).strip()
     if not project_id or not name:
         raise ValueError("项目需要名称")
-    return PROJECT_WORKSPACE.create(project_id, name)
+    existed = PROJECT_WORKSPACE.load(project_id) is not None
+    state = PROJECT_WORKSPACE.create(project_id, name)
+    if actor and not existed:
+        state = PROJECT_WORKSPACE.append_audit(project_id, "project.created", actor, project_id, {"name": name})
+    return state
 
 
-def _source_upload(content_type: str, body: bytes) -> dict[str, Any]:
+def _source_upload(
+    content_type: str,
+    body: bytes,
+    actor: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if not content_type.startswith("multipart/form-data"):
         raise ValueError("资料上传需要 multipart/form-data")
     fields = _multipart_fields(content_type, body)
@@ -393,6 +488,14 @@ def _source_upload(content_type: str, body: bytes) -> dict[str, Any]:
     }
     state = PROJECT_WORKSPACE.add_source(project_id, metadata)
     metadata, state = _auto_recognize_source(project_id, metadata)
+    if actor:
+        state = PROJECT_WORKSPACE.append_audit(
+            project_id,
+            "source.uploaded",
+            actor,
+            source_id,
+            {"name": filename, "kind": kind, "recognition": (metadata.get("recognition") or {}).get("status")},
+        )
     return {"source": metadata, "workspace": state}
 
 
@@ -449,7 +552,7 @@ def _auto_recognize_source(project_id: str, source: dict[str, Any]) -> tuple[dic
     return updated, state
 
 
-def _recognize_source(payload: object) -> dict[str, Any]:
+def _recognize_source(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
     project_id = str(payload.get("project_id", "")).strip()
@@ -470,7 +573,95 @@ def _recognize_source(payload: object) -> dict[str, Any]:
     )
     if result.get("status") == "consent_required":
         return {"recognition": result, "source": source, "workspace": state}
+    if actor:
+        updated_state = PROJECT_WORKSPACE.append_audit(
+            project_id,
+            "source.recognized",
+            actor,
+            source_id,
+            {"connector_id": connector_id, "status": result.get("status"), "mode": result.get("mode")},
+        )
+        return {"recognition": result, "source": updated_source, "workspace": updated_state}
     return {"recognition": result, "source": updated_source, "workspace": updated_state}
+
+
+def _auth_register(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    user = AUTH_STORE.register(
+        str(payload.get("username", "")),
+        str(payload.get("password", "")),
+        str(payload.get("role", "")),
+    )
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = user
+    return {"token": token, "user": user}
+
+
+def _auth_login(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    user = AUTH_STORE.authenticate(str(payload.get("username", "")), str(payload.get("password", "")))
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = user
+    return {"token": token, "user": user}
+
+
+def _source_for(state: dict[str, Any], source_id: str) -> dict[str, Any]:
+    source = next((item for item in state.get("sources", []) if item.get("source_id") == source_id), None)
+    if source is None:
+        raise FileNotFoundError("项目资料不存在")
+    return source
+
+
+def _source_view(project_id: str, source_id: str, derived: bool, actor: Mapping[str, Any]) -> tuple[bytes, str, str]:
+    state = _workspace(project_id)
+    source = _source_for(state, source_id)
+    selected = source
+    if derived:
+        selected = dict((source.get("recognition") or {}).get("artifact") or {})
+        if not selected:
+            raise FileNotFoundError("该资料没有本地识别副本")
+    document = SourceDocument(
+        name=str(selected.get("name", source.get("name", "source.bin"))),
+        content_hash=str(selected.get("content_hash", source.get("content_hash", ""))),
+        media_type=str(selected.get("media_type", source.get("media_type", "application/octet-stream"))),
+    )
+    content = SOURCE_STORE.read(document)
+    PROJECT_WORKSPACE.append_audit(
+        project_id,
+        "source.viewed",
+        actor,
+        source_id,
+        {"derived": derived, "name": document.name},
+    )
+    content_type = document.media_type
+    if document.name.lower().endswith((".md", ".html", ".htm")):
+        content_type = "text/plain; charset=utf-8"
+    return content, content_type, Path(document.name).name
+
+
+def _source_modify(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    project_id = str(payload.get("project_id", "")).strip()
+    source_id = str(payload.get("source_id", "")).strip()
+    changes = payload.get("changes")
+    if not project_id or not source_id or not isinstance(changes, dict):
+        raise ValueError("资料修改请求不完整")
+    state = PROJECT_WORKSPACE.modify_source(project_id, source_id, changes, actor)
+    return {"source": _source_for(state, source_id), "workspace": state}
+
+
+def _source_delete(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    project_id = str(payload.get("project_id", "")).strip()
+    source_id = str(payload.get("source_id", "")).strip()
+    if not project_id or not source_id:
+        raise ValueError("资料删除请求不完整")
+    state = PROJECT_WORKSPACE.soft_delete_source(project_id, source_id, actor)
+    return {"source": _source_for(state, source_id), "workspace": state}
 
 
 def _workspace(project_id: str) -> dict[str, Any]:
@@ -676,6 +867,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": ["P02", "P05", "P08"],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
+        "release_highlights": "文件查看、权限分级与审计留痕、项目经理和造价人员双工作台、风险颜色与预警标注",
     }
 
 
@@ -722,6 +914,17 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _write_inline(self, body: bytes, content_type: str, filename: str) -> None:
+        safe_name = Path(filename).name.replace('"', "") or "source.bin"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def _read_json(self) -> object:
         length = int(self.headers.get("Content-Length", "0"))
         if length > MAX_BODY_BYTES:
@@ -746,7 +949,27 @@ class BuildCostHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         parsed = urlsplit(self.path)
         path = parsed.path
-        if path == "/api/health":
+        if path == "/api/auth/me":
+            try:
+                self._write_json({"user": _require_actor(self.headers)})
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 401)
+        elif path == "/api/source/view":
+            try:
+                actor = _require_actor(self.headers, "view_source")
+                query = parse_qs(parsed.query)
+                content, content_type, filename = _source_view(
+                    query.get("project_id", [""])[0],
+                    query.get("source_id", [""])[0],
+                    query.get("derived", ["0"])[0] == "1",
+                    actor,
+                )
+                self._write_inline(content, content_type, filename)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 401)
+            except (FileNotFoundError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 404)
+        elif path == "/api/health":
             self._write_json(_health())
         elif path == "/api/architecture":
             self._write_json(_architecture())
@@ -756,6 +979,16 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             self._write_json({"connectors": connector_catalog()})
         elif path == "/api/recognition/catalog":
             self._write_json({"recognizers": recognition_catalog()})
+        elif path == "/api/audit":
+            try:
+                _require_actor(self.headers, "view_audit")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                state = _workspace(project_id)
+                self._write_json({"audit_log": state.get("audit_log") or []})
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 401)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
         elif path == "/api/workspace":
             project_id = parse_qs(parsed.query).get("project_id", [""])[0]
             try:
@@ -803,15 +1036,54 @@ class BuildCostHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
         path = urlsplit(self.path).path
+        if path == "/api/auth/register":
+            try:
+                self._write_json(_auth_register(self._read_json()))
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/auth/login":
+            try:
+                self._write_json(_auth_login(self._read_json()))
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 401)
+            return
+        if path == "/api/auth/logout":
+            token = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            SESSIONS.pop(token, None)
+            self._write_json({"ok": True})
+            return
+        if path == "/api/source/modify":
+            try:
+                actor = _require_actor(self.headers, "modify_source")
+                self._write_json(_source_modify(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/source/delete":
+            try:
+                actor = _require_actor(self.headers, "delete_source")
+                self._write_json(_source_delete(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
         if path == "/api/project":
             try:
-                self._write_json(_project(self._read_json()))
+                self._write_json(_project(self._read_json(), _optional_actor(self.headers)))
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             return
         if path == "/api/source/upload":
             try:
-                self._write_json(_source_upload(self.headers.get("Content-Type", ""), self._read_body()))
+                self._write_json(_source_upload(self.headers.get("Content-Type", ""), self._read_body(), _optional_actor(self.headers)))
             except (UnicodeDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
@@ -819,7 +1091,7 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/source/recognize":
             try:
-                self._write_json(_recognize_source(self._read_json()))
+                self._write_json(_recognize_source(self._read_json(), _optional_actor(self.headers)))
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             except FileNotFoundError as exc:
@@ -837,7 +1109,7 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/boq/upload":
             try:
-                result = _boq_upload(self.headers.get("Content-Type", ""), self._read_body())
+                result = _boq_upload(self.headers.get("Content-Type", ""), self._read_body(), _optional_actor(self.headers))
             except (UnicodeDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
                 return
@@ -847,10 +1119,11 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             self._write_json(result)
             return
 
+        actor = _optional_actor(self.headers)
         handlers = {
-            "/api/boq": _boq,
-            "/api/cost-plan": _cost_plan,
-            "/api/review": _review,
+            "/api/boq": lambda payload: _boq(payload, actor),
+            "/api/cost-plan": lambda payload: _cost_plan(payload, actor),
+            "/api/review": lambda payload: _review(payload, actor),
         }
         handler = handlers.get(urlsplit(self.path).path)
         if handler is None:

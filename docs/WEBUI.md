@@ -19,7 +19,14 @@ buildcostiq-web --port 8787
 
 Open `http://127.0.0.1:8787/`. The workbench starts at a project overview, saves a local project workspace, and provides a project file library for Excel, Word, PDF, CAD, image, and other source files. Every uploaded source is stored locally first and sent through local recognition when a local extractor is available. The recognizer creates a category, tags, confidence, text preview, and a Markdown derivative while preserving the original bytes. Scanned PDFs and images are marked as needing OCR when local extraction finds no text. The BOQ step provides Excel/CSV intake or a user-facing table. Continue the checked items into contract-based cost planning, then send the priced rows into settlement review. The left-side work assistant shows the next action and outstanding items. The overview also contains an exchange center: Excel/CSV and Word-compatible paths are direct, while CAD and budget-software files are shared through the portable project exchange package. The UI only assembles capability context; business decisions remain in the Gateway path.
 
-The current `v0.4.0-rc1` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
+The current `v0.5.0-rc1` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
+
+## v0.5.0-rc1 workflow controls
+
+- Every project source has a `查看` action. The original bytes remain in the immutable local source store; a generated Markdown recognition copy can be opened separately when available.
+- The first screen is a local registration/login surface. `项目经理` sees the control console and can perform soft deletion; `造价人员` can intake, recognize, modify metadata, and edit business data but cannot delete sources.
+- Source metadata edits, BOQ edits, cost-plan generation, recognition, review runs, views, uploads, and soft deletes append an audit event containing actor, time, target, and relevant details.
+- Review findings use red for urgent blockers, yellow for warnings, and blue for notices. The colors are a presentation of the existing rule severity and do not replace evidence.
 
 ## API surface
 
@@ -28,6 +35,12 @@ The current `v0.4.0-rc1` intake flow accepts multiple files in one selection. In
 - `GET /api/sample` — sanitized seed data used by the user-facing demo screen.
 - `GET /api/connectors` — the external-tool connector catalog and supported directions/formats.
 - `GET /api/recognition/catalog` — local recognizers and external providers, including whether explicit consent is required.
+- `POST /api/auth/register` and `POST /api/auth/login` — local role registration and login; the returned bearer token is held in the browser session.
+- `GET /api/auth/me` — current local role and permissions.
+- `GET /api/source/view?project_id=...&source_id=...` — authenticated inline view of an original source; add `derived=1` for a Markdown recognition copy.
+- `POST /api/source/modify` — authenticated metadata revision; requires `modify_source` and appends an audit event.
+- `POST /api/source/delete` — project-manager-only soft deletion; original bytes remain and the event is auditable.
+- `GET /api/audit?project_id=...` — authenticated project audit trail.
 - `POST /api/project` — creates or updates a local project workspace.
 - `GET /api/workspace?project_id=...` — resumes the saved project state.
 - `POST /api/source/upload` — saves a generic project source in the immutable source store and project library.

@@ -11,7 +11,7 @@
 | P07 | Evidence linkage | declarative |
 | P08 | Settlement review | implemented |
 
-No additional plugin capability is part of v0.4.0-rc1. New integrations must be adapters and must not modify Core or create a new business capability.
+No additional plugin capability is part of v0.5.0-rc1. New integrations must be adapters and must not modify Core or create a new business capability.
 
 
 ## Shared plugin modules (not capabilities)

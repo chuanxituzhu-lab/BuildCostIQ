@@ -1,4 +1,4 @@
-# v0.4.0-rc1 Release Checklist
+# v0.5.0-rc1 Release Checklist
 
 - [x] Core runtime and data model present
 - [x] Capability gateway restricts registration to P01–P08

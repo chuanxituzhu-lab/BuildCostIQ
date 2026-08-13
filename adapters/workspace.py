@@ -11,6 +11,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import uuid4
 
 
 def _now() -> str:
@@ -52,6 +53,7 @@ class LocalProjectWorkspace:
             "boq": None,
             "cost_plan": None,
             "review": None,
+            "audit_log": [],
         }
         self.save(state)
         return state
@@ -84,4 +86,93 @@ class LocalProjectWorkspace:
         sources = [item for item in sources if item.get("source_id") != source.get("source_id")]
         sources.append(dict(source))
         state["sources"] = sources
+        return self.save(state)
+
+    def append_audit(
+        self,
+        project_id: str,
+        action: str,
+        actor: Mapping[str, Any] | str,
+        target: str,
+        details: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Append an immutable user-facing audit event to the project state."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        actor_payload = dict(actor) if isinstance(actor, Mapping) else {"id": str(actor)}
+        event = {
+            "id": str(uuid4()),
+            "timestamp": _now(),
+            "action": action,
+            "actor": actor_payload,
+            "target": target,
+            "details": dict(details or {}),
+        }
+        state["audit_log"] = [*(state.get("audit_log") or []), event]
+        return self.save(state)
+
+    def modify_source(
+        self,
+        project_id: str,
+        source_id: str,
+        changes: Mapping[str, Any],
+        actor: Mapping[str, Any] | str,
+    ) -> dict[str, Any]:
+        """Change source metadata only; original content remains content-addressed."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        sources = list(state.get("sources") or [])
+        source = next((item for item in sources if item.get("source_id") == source_id), None)
+        if source is None:
+            raise FileNotFoundError("project source does not exist")
+        if source.get("status") == "deleted":
+            raise ValueError("deleted source metadata cannot be modified")
+        allowed = {"name", "kind", "description", "category"}
+        clean_changes = {key: value for key, value in changes.items() if key in allowed and str(value).strip()}
+        if not clean_changes:
+            raise ValueError("no editable source metadata was supplied")
+        before = {key: source.get(key) for key in clean_changes}
+        source.update(clean_changes)
+        source["metadata_revision"] = int(source.get("metadata_revision", 0)) + 1
+        source["metadata_updated_at"] = _now()
+        actor_payload = dict(actor) if isinstance(actor, Mapping) else {"id": str(actor)}
+        event = {
+            "id": str(uuid4()),
+            "timestamp": _now(),
+            "action": "source.modified",
+            "actor": actor_payload,
+            "target": source_id,
+            "details": {"before": before, "after": {key: source.get(key) for key in clean_changes}},
+        }
+        state["sources"] = sources
+        state["audit_log"] = [*(state.get("audit_log") or []), event]
+        return self.save(state)
+
+    def soft_delete_source(
+        self,
+        project_id: str,
+        source_id: str,
+        actor: Mapping[str, Any] | str,
+    ) -> dict[str, Any]:
+        """Hide a source from active work while retaining its bytes and audit trail."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        sources = list(state.get("sources") or [])
+        source = next((item for item in sources if item.get("source_id") == source_id), None)
+        if source is None:
+            raise FileNotFoundError("project source does not exist")
+        if source.get("status") == "deleted":
+            return state
+        actor_payload = dict(actor) if isinstance(actor, Mapping) else {"id": str(actor)}
+        stamp = _now()
+        source["status"] = "deleted"
+        source["deleted_at"] = stamp
+        source["deleted_by"] = actor_payload
+        event = {
+            "id": str(uuid4()),
+            "timestamp": stamp,
+            "action": "source.deleted",
+            "actor": actor_payload,
+            "target": source_id,
+            "details": {"name": source.get("name"), "content_hash": source.get("content_hash"), "soft_delete": True},
+        }
+        state["sources"] = sources
+        state["audit_log"] = [*(state.get("audit_log") or []), event]
         return self.save(state)

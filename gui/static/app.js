@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 
 const state = {
+  auth: { token: sessionStorage.getItem("buildcostiq_token") || "", user: null },
   sample: null,
   workspace: null,
   view: "overview",
@@ -21,7 +22,9 @@ const state = {
 };
 
 async function apiJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const headers = new Headers(options.headers || {});
+  if (state.auth.token) headers.set("Authorization", `Bearer ${state.auth.token}`);
+  const response = await fetch(url, { ...options, headers });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `请求失败（${response.status}）`);
   return data;
@@ -29,6 +32,93 @@ async function apiJson(url, options = {}) {
 
 function setError(message = "") {
   $("error").textContent = message;
+}
+
+function setAuthMessage(message = "") {
+  $("authMessage").textContent = message;
+}
+
+function isManager() {
+  return state.auth.user?.role === "project_manager";
+}
+
+function showAuth(message = "") {
+  $("authShell").hidden = false;
+  $("workspaceShell").hidden = true;
+  $("userSession").hidden = true;
+  setAuthMessage(message);
+}
+
+function showWorkspace(user) {
+  state.auth.user = user;
+  $("authShell").hidden = true;
+  $("workspaceShell").hidden = false;
+  $("userSession").hidden = false;
+  $("userRole").textContent = `${user.role_label} · ${user.username}`;
+  $("controlTab").hidden = !isManager();
+  $("workspaceTitle").textContent = isManager() ? "项目经理工作台" : "造价人员工作台";
+}
+
+async function finishAuth(response) {
+  state.auth.token = response.token;
+  state.auth.user = response.user;
+  sessionStorage.setItem("buildcostiq_token", response.token);
+  showWorkspace(response.user);
+  setAuthMessage("");
+  await loadDemo();
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  try {
+    const response = await apiJson("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("loginUsername").value, password: $("loginPassword").value }),
+    });
+    await finishAuth(response);
+  } catch (error) {
+    setAuthMessage(error.message);
+  }
+}
+
+async function submitRegister(event) {
+  event.preventDefault();
+  try {
+    const response = await apiJson("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: $("registerUsername").value,
+        password: $("registerPassword").value,
+        role: $("registerRole").value,
+      }),
+    });
+    await finishAuth(response);
+  } catch (error) {
+    setAuthMessage(error.message);
+  }
+}
+
+async function logout() {
+  try { await apiJson("/api/auth/logout", { method: "POST" }); } catch (_) { /* local session cleanup still wins */ }
+  state.auth = { token: "", user: null };
+  sessionStorage.removeItem("buildcostiq_token");
+  showAuth("已退出登录");
+}
+
+async function restoreSession() {
+  if (!state.auth.token) return false;
+  try {
+    const response = await apiJson("/api/auth/me");
+    showWorkspace(response.user);
+    await loadDemo();
+    return true;
+  } catch (_) {
+    state.auth = { token: "", user: null };
+    sessionStorage.removeItem("buildcostiq_token");
+    return false;
+  }
 }
 
 function draftFromSample(rows) {
@@ -263,6 +353,49 @@ function renderConnectorCatalog() {
   }));
 }
 
+function sourceViewUrl(source, derived = false) {
+  return `/api/source/view?project_id=${encodeURIComponent(state.projectId)}&source_id=${encodeURIComponent(source.source_id)}${derived ? "&derived=1" : ""}`;
+}
+
+function viewSource(source, derived = false) {
+  window.open(sourceViewUrl(source, derived), "_blank", "noopener");
+}
+
+async function modifySource(source) {
+  const nextName = window.prompt("修改资料显示名称（原始文件内容不可直接改写，修改会形成留痕）", source.name);
+  if (!nextName || nextName.trim() === source.name) return;
+  try {
+    const response = await apiJson("/api/source/modify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: state.projectId, source_id: source.source_id, changes: { name: nextName.trim() } }),
+    });
+    applyWorkspace(response.workspace);
+    renderSourceList();
+    renderControlIfVisible();
+    setStatus("资料名称已修改，操作已留痕");
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+async function deleteSource(source) {
+  if (!isManager() || !window.confirm("仅项目经理可执行。资料将软删除并保留原文件与操作记录，确认继续？")) return;
+  try {
+    const response = await apiJson("/api/source/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: state.projectId, source_id: source.source_id }),
+    });
+    applyWorkspace(response.workspace);
+    renderSourceList();
+    renderControlIfVisible();
+    setStatus("资料已软删除，原文件和操作痕迹仍保留");
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
 function renderSourceList() {
   const list = $("sourceList");
   if (!list) return;
@@ -281,27 +414,63 @@ function renderSourceList() {
     const meta = document.createElement("small");
     const recognition = source.recognition || {};
     const recognitionLabel = recognition.category ? ` · ${recognition.category}` : "";
-    meta.textContent = `${source.kind} · ${recognition.status === "completed" ? "已识别归档" : "已保存"}${recognitionLabel}`;
+    const deleted = source.status === "deleted";
+    meta.textContent = `${source.kind} · ${deleted ? "已删除（保留记录）" : recognition.status === "completed" ? "已识别归档" : "已保存"}${recognitionLabel}`;
     info.append(name, meta);
     const stateTag = document.createElement("span");
     stateTag.className = `source-state source-${recognition.status || "pending"}`;
-    stateTag.textContent = recognition.status === "completed" ? "本地完成" : recognition.status === "needs_ocr" ? "待 OCR" : recognition.status === "unavailable" || recognition.status === "error" ? "未转换" : "待识别";
+    stateTag.textContent = deleted ? "已删除·留痕" : recognition.status === "completed" ? "本地完成" : recognition.status === "needs_ocr" ? "待 OCR" : recognition.status === "unavailable" || recognition.status === "error" ? "未转换" : "待识别";
     if (recognition.message) item.title = recognition.message;
     const actions = document.createElement("div");
     actions.className = "source-actions";
+    const viewButton = document.createElement("button");
+    viewButton.type = "button";
+    viewButton.className = "icon-button source-view-button";
+    viewButton.textContent = "查看";
+    viewButton.addEventListener("click", () => viewSource(source));
+    actions.append(viewButton);
+    if (recognition.artifact) {
+      const artifactButton = document.createElement("button");
+      artifactButton.type = "button";
+      artifactButton.className = "icon-button";
+      artifactButton.textContent = "查看识别稿";
+      artifactButton.addEventListener("click", () => viewSource(source, true));
+      actions.append(artifactButton);
+    }
+    if (!deleted) {
+      const modifyButton = document.createElement("button");
+      modifyButton.type = "button";
+      modifyButton.className = "icon-button";
+      modifyButton.textContent = "修改信息";
+      modifyButton.addEventListener("click", () => modifySource(source));
+      actions.append(modifyButton);
+    }
     const localButton = document.createElement("button");
     localButton.type = "button";
     localButton.className = "icon-button";
     localButton.textContent = "本地识别";
     localButton.addEventListener("click", () => recognizeSource(source.source_id, "local-auto"));
-    actions.append(localButton);
-    if (recognition.status === "needs_ocr") {
+    if (!deleted) actions.append(localButton);
+    if (!deleted && recognition.status === "needs_ocr") {
       const externalButton = document.createElement("button");
       externalButton.type = "button";
       externalButton.className = "icon-button external-action";
       externalButton.textContent = "外部 OCR";
       externalButton.addEventListener("click", () => requestExternalOcr(source.source_id));
       actions.append(externalButton);
+    }
+    if (!deleted && isManager()) {
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "icon-button danger-action";
+      deleteButton.textContent = "删除（留痕）";
+      deleteButton.addEventListener("click", () => deleteSource(source));
+      actions.append(deleteButton);
+    } else if (!deleted) {
+      const permission = document.createElement("small");
+      permission.className = "permission-note";
+      permission.textContent = "删除需项目经理";
+      actions.append(permission);
     }
     item.append(info, stateTag, actions);
     return item;
@@ -326,6 +495,55 @@ function renderIntakeReports(targetId = "boqIntakeSummary") {
     item.append(title, message);
     return item;
   }));
+}
+
+function renderAuditLog(target, entries) {
+  if (!target) return;
+  if (!entries?.length) {
+    target.textContent = "当前项目还没有操作记录。";
+    return;
+  }
+  target.replaceChildren(...entries.slice().reverse().map((entry) => {
+    const row = document.createElement("div");
+    row.className = "audit-row";
+    const action = document.createElement("strong");
+    action.textContent = entry.action || "项目操作";
+    const actor = document.createElement("span");
+    actor.textContent = `${entry.actor?.role_label || entry.actor?.role || "本地人员"} · ${entry.actor?.username || entry.actor?.id || "未知"}`;
+    const time = document.createElement("small");
+    time.textContent = (entry.timestamp || "") + " · " + (entry.target || "");
+    row.append(action, actor, time);
+    return row;
+  }));
+}
+
+function renderControlIfVisible() {
+  if (state.view === "control") renderControl();
+}
+
+async function renderControl() {
+  if (!isManager()) {
+    setView("overview");
+    return;
+  }
+  $("workspaceContent").innerHTML =
+    '<div class="surface-title"><div><span class="panel-label">PROJECT CONTROL</span><h3>项目经理控制台</h3></div><span class="surface-caption">权限、文件状态、风险分级与全部操作留痕</span></div>' +
+    '<div class="control-grid">' +
+    '<section class="control-panel"><span class="panel-label">PERMISSION POLICY</span><h3>角色权限</h3>' +
+    '<div class="policy-row"><strong>项目经理</strong><span>查看、录入、修改、删除（软删除）、查看审计</span></div>' +
+    '<div class="policy-row"><strong>造价人员</strong><span>查看、录入、修改、识别、业务数据编辑；删除需项目经理</span></div>' +
+    '<div class="policy-row"><strong>原始文件</strong><span>内容地址化保存，不直接覆盖；修改只产生元数据版本，删除保留原文件和痕迹</span></div></section>' +
+    '<section class="control-panel"><span class="panel-label">RISK COLORS</span><h3>风险颜色</h3>' +
+    '<div class="risk-legend"><span class="risk-chip risk-red">红色 · 紧急阻断</span><span class="risk-chip risk-yellow">黄色 · 预警</span><span class="risk-chip risk-blue">蓝色 · 一般提示</span></div>' +
+    '<p class="business-note">颜色来自工作流输出的审查严重级别；不会用颜色替代证据和规则。</p></section></div>' +
+    '<section class="control-panel audit-panel"><div class="surface-title"><div><span class="panel-label">AUDIT TRAIL</span><h3>项目操作记录</h3></div><span class="surface-caption">修改和删除均保留操作者、时间、对象及前后值</span></div><div id="auditLog" class="audit-list"></div></section>';
+  renderAuditLog($("auditLog"), state.workspace?.audit_log || []);
+  try {
+    const response = await apiJson(`/api/audit?project_id=${encodeURIComponent(state.projectId)}`);
+    renderAuditLog($("auditLog"), response.audit_log || []);
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
 function renderRecognizerCatalog() {
@@ -822,6 +1040,15 @@ function renderReviewOutput(result) {
   const output = $("reviewOutput");
   if (!output) return;
   output.innerHTML = `<div class="metric-row"><div><strong>${summary.row_count}</strong><span>待审项目</span></div><div><strong>${summary.finding_count}</strong><span>审查事项</span></div><div><strong>${summary.block}</strong><span>阻断</span></div><div><strong>${summary.warn}</strong><span>提醒</span></div></div>`;
+  const risk = result.risk || { label: result.publishable ? "无风险事项" : "需要处理", color: result.publishable ? "blue" : "red" };
+  const riskStrip = document.createElement("div");
+  riskStrip.className = `risk-strip risk-${risk.color || "blue"}`;
+  riskStrip.textContent = `当前最高风险：${risk.label}`;
+  output.append(riskStrip);
+  const legend = document.createElement("div");
+  legend.className = "risk-legend review-risk-legend";
+  legend.innerHTML = '<span class="risk-chip risk-red">红色 · 紧急阻断</span><span class="risk-chip risk-yellow">黄色 · 预警</span><span class="risk-chip risk-blue">蓝色 · 一般提示</span>';
+  output.append(legend);
   const gate = document.createElement("div");
   gate.className = `result-strip ${result.publishable ? "result-ok" : "result-warn"}`;
   const title = document.createElement("strong");
@@ -832,10 +1059,10 @@ function renderReviewOutput(result) {
   list.className = "finding-list";
   (result.findings || []).forEach((finding) => {
     const item = document.createElement("article");
-    item.className = `finding finding-${finding.severity}`;
+    item.className = `finding finding-${finding.severity} finding-risk-${finding.risk?.color || (finding.severity === "block" ? "red" : finding.severity === "warn" ? "yellow" : "blue")}`;
     const badge = document.createElement("span");
     badge.className = "finding-badge";
-    badge.textContent = finding.severity === "block" ? "需处理" : "提醒";
+    badge.textContent = finding.risk?.label || (finding.severity === "block" ? "紧急阻断" : finding.severity === "warn" ? "预警" : "提示");
     const body = document.createElement("div");
     const title = document.createElement("strong");
     title.textContent = String(finding.message || "").replaceAll("tax_exclusive", "未含税").replaceAll("tax_inclusive", "含税");
@@ -881,6 +1108,7 @@ function setView(view) {
   if (view === "boq") renderBoq();
   if (view === "plan") renderPlan();
   if (view === "review") renderReview();
+  if (view === "control") renderControl();
   renderAssist();
   updateContextBar();
 }
@@ -889,6 +1117,7 @@ async function loadHealth() {
   try {
     const health = await apiJson("/api/health");
     $("runtimeVersion").textContent = `v${health.runtime.version}`;
+    $("releaseHighlights").textContent = `${health.runtime.version}：${health.release_highlights || "本次迭代已完成"}`;
     $("health").className = "health health-ok";
     $("health").textContent = "资料服务就绪";
   } catch (error) {
@@ -916,4 +1145,13 @@ $("workspaceTabs").addEventListener("click", (event) => {
   if (tab) setView(tab.dataset.view);
 });
 
-Promise.all([loadHealth(), loadDemo()]).catch((error) => setError(error.message));
+$("loginForm").addEventListener("submit", submitLogin);
+$("registerForm").addEventListener("submit", submitRegister);
+$("logoutButton").addEventListener("click", logout);
+
+async function boot() {
+  await loadHealth();
+  if (!(await restoreSession())) showAuth();
+}
+
+boot().catch((error) => setAuthMessage(error.message));

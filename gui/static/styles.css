@@ -16,6 +16,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; min-width: 320px; color: var(--ink); background: var(--canvas); font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 button, input, textarea { font: inherit; }
 .topbar, main, .footer { max-width: 1480px; margin: 0 auto; }
@@ -29,7 +30,9 @@ h1 { margin: 0 0 4px; font-size: clamp(28px, 4vw, 44px); line-height: 1; letter-
 h2 { margin: 5px 0 0; font-size: 20px; letter-spacing: -.025em; }
 h3 { margin: 5px 0 0; font-size: 16px; }
 .subtitle { margin: 0; color: var(--muted); }
+.release-highlights { margin: 7px 0 0; color: var(--amber-bright); font-size: 11px; }
 .runtime-meta { display: flex; align-items: flex-end; gap: 18px; }
+.user-session { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; }
 .runtime-version { display: grid; gap: 2px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 .runtime-version strong { color: var(--ink); font-size: 12px; letter-spacing: 0; text-transform: none; }
 .health, .gate { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; white-space: nowrap; }
@@ -267,6 +270,38 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .finding small { margin-top: 3px; color: var(--muted); font-size: 10px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
 .user-footer { padding-top: 18px; }
+.auth-shell { margin: 48px 32px 0; padding: 28px; border: 1px solid var(--line); background: var(--surface); }
+.auth-intro { max-width: 680px; }
+.auth-intro h2 { margin-top: 9px; font-size: 28px; }
+.auth-intro p { color: var(--muted); }
+.auth-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 24px; }
+.auth-card { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--line); background: #0d141d; }
+.auth-card h3 { margin: -2px 0 5px; }
+.auth-card label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+.auth-card input, .auth-card select { min-height: 36px; padding: 7px 9px; border: 1px solid var(--line); color: var(--ink); background: var(--surface-alt); }
+.auth-message { min-height: 20px; margin: 15px 0 0; color: var(--red); font-size: 12px; }
+.source-view-button { color: var(--blue); border-color: #38516d; }
+.danger-action { color: var(--red); border-color: #693b39; }
+.permission-note { align-self: center; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.source-deleted { color: var(--muted); }
+.control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.control-panel { padding: 16px; border: 1px solid var(--line); background: #0d141d; }
+.control-panel h3 { margin: 6px 0 13px; }
+.policy-row { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
+.policy-row strong { color: var(--ink); }
+.risk-legend { display: flex; flex-wrap: wrap; gap: 7px; }
+.risk-chip { display: inline-flex; padding: 5px 8px; border: 1px solid var(--line); font-size: 10px; }
+.risk-red { color: var(--red); border-color: #693b39; background: #321b1d; }
+.risk-yellow { color: var(--yellow); border-color: #6b5730; background: #322a18; }
+.risk-blue { color: var(--blue); border-color: #38516d; background: #1a2638; }
+.audit-panel { margin-top: 14px; }
+.audit-list { display: grid; gap: 6px; margin-top: 12px; }
+.audit-row { display: grid; grid-template-columns: 150px 180px minmax(0, 1fr); gap: 10px; padding: 8px 10px; border-left: 2px solid var(--blue); background: var(--surface-alt); font-size: 10px; }
+.audit-row span, .audit-row small { color: var(--muted); }
+.risk-strip { margin-top: 14px; padding: 9px 11px; border-left: 2px solid var(--blue); color: var(--blue); background: #1a2638; font-size: 11px; }
+.risk-strip.risk-red { border-left-color: var(--red); }
+.risk-strip.risk-yellow { border-left-color: var(--yellow); }
+.review-risk-legend { margin-top: 9px; }
 @media (max-width: 900px) {
   .workspace-grid { grid-template-columns: 1fr; }
   .work-assistant { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -333,4 +368,7 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 @media (max-width: 760px) {
   .tool-entry-grid { grid-template-columns: repeat(2, 1fr); }
   .recognizer-list { grid-template-columns: 1fr; }
+  .auth-shell { margin: 28px 16px 0; padding: 20px; }
+  .auth-grid, .control-grid { grid-template-columns: 1fr; }
+  .audit-row { grid-template-columns: 1fr; gap: 2px; }
 }

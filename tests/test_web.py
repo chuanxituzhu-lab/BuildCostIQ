@@ -4,7 +4,9 @@ import io
 import json
 import threading
 import unittest
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from uuid import uuid4
 from zipfile import ZipFile
 
 from gui.server import create_server
@@ -32,6 +34,9 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('id="projectInfoInput"', body)
         self.assertIn("multiple", body)
         self.assertIn(".pdf", body)
+        self.assertIn('id="loginForm"', body)
+        self.assertIn("项目经理工作台", body)
+        self.assertIn("查看", body)
 
         with urlopen(f"{self.base_url}/api/health", timeout=2) as response:
             health = json.load(response)
@@ -44,6 +49,79 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(architecture["capabilities"][-1]["id"], "P08")
         self.assertEqual(architecture["capabilities"][-1]["status"], "implemented")
         self.assertTrue(any(layer["id"] == "gateway" for layer in architecture["layers"]))
+
+    def test_local_roles_control_source_lifecycle_and_audit(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token=""):
+            headers = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        estimator = post_json("/api/auth/register", {"username": f"est-{suffix}", "password": "local-pass", "role": "cost_estimator"})
+        manager = post_json("/api/auth/register", {"username": f"mgr-{suffix}", "password": "local-pass", "role": "project_manager"})
+        estimator_token = estimator["token"]
+        manager_token = manager["token"]
+        project_id = f"audit-project-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "审计权限测试项目"}, estimator_token)
+
+        boundary = f"----BuildCostIQAudit{suffix}"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="project_id"\r\n\r\n'
+            f"{project_id}\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="source_id"\r\n\r\nsource-audit\r\n'
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="ledger.txt"\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+            "local ledger\r\n"
+            f"--{boundary}--\r\n"
+        ).encode("utf-8")
+        upload_request = Request(
+            f"{self.base_url}/api/source/upload",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Authorization": f"Bearer {estimator_token}"},
+            method="POST",
+        )
+        with urlopen(upload_request, timeout=2) as response:
+            uploaded = json.load(response)
+        self.assertEqual(uploaded["source"]["source_id"], "source-audit")
+
+        view_request = Request(
+            f"{self.base_url}/api/source/view?project_id={project_id}&source_id=source-audit",
+            headers={"Authorization": f"Bearer {estimator_token}"},
+        )
+        with urlopen(view_request, timeout=2) as response:
+            self.assertEqual(response.read(), b"local ledger")
+
+        modified = post_json(
+            "/api/source/modify",
+            {"project_id": project_id, "source_id": "source-audit", "changes": {"name": "ledger-renamed.txt"}},
+            estimator_token,
+        )
+        self.assertEqual(modified["source"]["name"], "ledger-renamed.txt")
+        with self.assertRaises(HTTPError) as denied:
+            post_json("/api/source/delete", {"project_id": project_id, "source_id": "source-audit"}, estimator_token)
+        self.assertEqual(denied.exception.code, 403)
+
+        deleted = post_json("/api/source/delete", {"project_id": project_id, "source_id": "source-audit"}, manager_token)
+        self.assertEqual(deleted["source"]["status"], "deleted")
+        audit_request = Request(
+            f"{self.base_url}/api/audit?project_id={project_id}",
+            headers={"Authorization": f"Bearer {manager_token}"},
+        )
+        with urlopen(audit_request, timeout=2) as response:
+            actions = [event["action"] for event in json.load(response)["audit_log"]]
+        self.assertTrue({"source.uploaded", "source.viewed", "source.modified", "source.deleted"}.issubset(actions))
 
     def test_review_endpoint_uses_frozen_gateway(self):
         payload = {
