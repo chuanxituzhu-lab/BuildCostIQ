@@ -50,8 +50,32 @@ function setAuthMessage(message = "") {
   $("authMessage").textContent = message;
 }
 
+function currentRole() {
+  return state.auth.user?.role || "";
+}
+
+function isProjectManager() {
+  return currentRole() === "project_manager";
+}
+
+function isCostManager() {
+  return currentRole() === "cost_manager";
+}
+
+function isEstimator() {
+  return currentRole() === "cost_estimator";
+}
+
 function isManager() {
-  return state.auth.user?.role === "project_manager";
+  return isCostManager();
+}
+
+function canViewCostDetail() {
+  return Boolean(state.auth.user?.can_view_cost_detail);
+}
+
+function isKpiOnly() {
+  return isProjectManager();
 }
 
 function showAuth(message = "") {
@@ -67,8 +91,16 @@ function showWorkspace(user) {
   $("workspaceShell").hidden = false;
   $("userSession").hidden = false;
   $("userRole").textContent = `${user.role_label} · ${user.username}`;
-  $("controlTab").hidden = !isManager();
-  $("workspaceTitle").textContent = isManager() ? "项目经理工作台" : "造价人员工作台";
+  $("controlTab").hidden = !isCostManager();
+  $("workspaceTitle").textContent = isProjectManager()
+    ? "项目经理指标台"
+    : isCostManager() ? "造价经理全权限工作台" : "造价员操作工作台";
+  document.querySelectorAll("#workspaceTabs .workspace-tab").forEach((tab) => {
+    const view = tab.dataset.view;
+    tab.hidden = view === "control"
+      ? !isCostManager()
+      : isKpiOnly() && !["overview", "dashboard"].includes(view);
+  });
 }
 
 async function finishAuth(response) {
@@ -278,6 +310,26 @@ function updateContextBar() {
 
 function renderAssist() {
   const tasks = [];
+  if (isKpiOnly()) {
+    tasks.push({ tone: "next", title: "查看项目经营看板", note: "项目经理仅显示重要指标、风险预警和经营趋势。", view: "dashboard" });
+    $("assistList").replaceChildren(...tasks.map((task) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `assist-item assist-${task.tone}`;
+      button.dataset.view = task.view;
+      const marker = document.createElement("span");
+      marker.className = "assist-marker";
+      const body = document.createElement("span");
+      const title = document.createElement("strong");
+      title.textContent = task.title;
+      const note = document.createElement("small");
+      note.textContent = task.note;
+      body.append(title, note);
+      button.append(marker, body);
+      return button;
+    }));
+    return;
+  }
   const structuredStages = [
     ["contract", "P01 合同资料", state.contractResult, "补充合同主数据和履约义务"],
     ["drawings", "P03 图纸登记", state.drawingsResult, "登记图号、版本和审阅状态"],
@@ -361,18 +413,22 @@ function renderDashboard() {
   const periods = dashboard.periods || {};
   const week = periods.week || {};
   const month = periods.month || {};
-  const roleTitle = isManager() ? "项目经理经营看板" : "造价/成本经理经营看板";
-  const roleNote = isManager()
-    ? "先看红色阻断、成本超限和近月重复问题，再决定项目协调和审批动作。"
-    : "先看成本基线比对、待组价项目和审查问题，再回到资料和成本计划处理。";
+  const roleTitle = isProjectManager() ? "项目经理经营看板" : isCostManager() ? "造价经理经营看板" : "造价员操作看板";
+  const roleNote = isProjectManager()
+    ? "仅保留项目经理需要的关键指标、风险预警和周期趋势。"
+    : isCostManager()
+      ? "查看全部成本明细、基线比对、变更、证据链和审查结果。"
+      : "负责资料录入和业务操作；敏感价格与成本明细按权限隐藏。";
+  const planAction = isProjectManager() ? "" : '<button class="button button-quiet" data-view="plan" type="button">查看成本计划</button>';
+  const reviewAction = isCostManager() ? '<button class="button button-quiet" data-view="review" type="button">查看结算初审</button>' : "";
   $("workspaceContent").innerHTML =
     '<div class="surface-title"><div><span class="panel-label">PROJECT INTELLIGENCE</span><h3>' + roleTitle + '</h3></div><span class="surface-caption">本地自动汇总 · 打开看板即刷新预警</span></div>' +
     '<div class="dashboard-intro"><strong id="dashboardProjectName"></strong><span id="dashboardRoleNote"></span><small id="dashboardGeneratedAt"></small></div>' +
     '<section class="dashboard-alert-panel"><div class="surface-title"><div><span class="panel-label">AUTOMATED ALERTS</span><h3>需要优先处理</h3></div><span class="surface-caption">红色立即处理 · 黄色安排核对 · 蓝色关注趋势</span></div><div id="dashboardAlerts" class="dashboard-alert-list"></div></section>' +
     '<div id="dashboardMetrics" class="dashboard-metrics"></div>' +
     '<div class="dashboard-grid">' +
-      '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">BASELINE / COMPARISON</span><h3>成本基线与造价资料比对</h3></div><button class="button button-quiet" data-view="plan" type="button">查看成本计划</button></div><div id="dashboardComparisonSummary" class="dashboard-comparison-summary"></div><div id="dashboardComparisonTable" class="dashboard-table"></div></section>' +
-      '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">WEEKLY / MONTHLY</span><h3>问题周期趋势</h3></div><button class="button button-quiet" data-view="review" type="button">查看结算初审</button></div><div id="dashboardPeriods" class="dashboard-periods"></div><div id="dashboardRecurring" class="dashboard-recurring"></div></section>' +
+      '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">BASELINE / COMPARISON</span><h3>成本基线与造价资料比对</h3></div>' + planAction + '</div><div id="dashboardComparisonSummary" class="dashboard-comparison-summary"></div><div id="dashboardComparisonTable" class="dashboard-table"></div></section>' +
+      '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">WEEKLY / MONTHLY</span><h3>问题周期趋势</h3></div>' + reviewAction + '</div><div id="dashboardPeriods" class="dashboard-periods"></div><div id="dashboardRecurring" class="dashboard-recurring"></div></section>' +
     '</div>' +
     '<section class="dashboard-panel dashboard-capability-panel"><div class="surface-title"><div><span class="panel-label">P01 — P08 COVERAGE</span><h3>全能力工作面状态</h3></div><span class="surface-caption">汇总不替代业务页面，点击后进入对应能力工作台</span></div><div id="dashboardCapabilities" class="dashboard-capability-grid"></div></section>' +
     '<section class="dashboard-panel dashboard-issues-panel"><div class="surface-title"><div><span class="panel-label">ISSUE QUEUE</span><h3>当前问题与处理入口</h3></div><span class="surface-caption">每次运行初审会保留本地快照，支持近7天和近30天统计</span></div><div id="dashboardIssues" class="dashboard-issue-list"></div></section>';
@@ -382,10 +438,10 @@ function renderDashboard() {
   $("dashboardGeneratedAt").textContent = "刷新时间：" + new Date(dashboard.generated_at).toLocaleString("zh-CN");
   const capabilityViews = [["P01", "合同资料", "contract"], ["P02", "清单资料", "boq"], ["P03", "图纸资料", "drawings"], ["P04", "零号台账", "baseline"], ["P05", "成本计划", "plan"], ["P06", "变更管理", "changes"], ["P07", "证据关联", "evidence"], ["P08", "结算初审", "review"]];
   $("dashboardCapabilities").replaceChildren(...capabilityViews.map(([id, label, view]) => {
-    const item = document.createElement("button");
-    item.type = "button";
+    const item = document.createElement(isKpiOnly() ? "div" : "button");
+    if (!isKpiOnly()) item.type = "button";
     item.className = "dashboard-capability-item";
-    item.dataset.view = view;
+    if (!isKpiOnly()) item.dataset.view = view;
     const code = document.createElement("span"); code.className = "capability-id"; code.textContent = id;
     const title = document.createElement("strong"); title.textContent = label;
     const details = dashboard.capabilities?.[id] || {};
@@ -461,14 +517,18 @@ function renderDashboard() {
     comparisonTotals.append(span);
   });
   comparisonSummary.append(comparisonState, comparisonTotals);
-  renderTable($("dashboardComparisonTable"), [["code", "编码"], ["name", "项目"], ["contract_amount", "基线金额"], ["market_amount", "参考金额"], ["over_limit_amount", "超限金额"], ["over_limit_rate", "偏差率"]], (comparison.rows || []).map((row) => ({
-    code: row.code,
-    name: row.name,
-    contract_amount: dashboardMoney(row.contract_amount),
-    market_amount: dashboardMoney(row.market_amount),
-    over_limit_amount: dashboardMoney(row.over_limit_amount),
-    over_limit_rate: dashboardPercent(row.over_limit_rate),
-  })));
+  if (!canViewCostDetail()) {
+    $("dashboardComparisonTable").textContent = "成本明细按角色权限隐藏，仅保留指标汇总。";
+  } else {
+    renderTable($("dashboardComparisonTable"), [["code", "编码"], ["name", "项目"], ["contract_amount", "基线金额"], ["market_amount", "参考金额"], ["over_limit_amount", "超限金额"], ["over_limit_rate", "偏差率"]], (comparison.rows || []).map((row) => ({
+      code: row.code,
+      name: row.name,
+      contract_amount: dashboardMoney(row.contract_amount),
+      market_amount: dashboardMoney(row.market_amount),
+      over_limit_amount: dashboardMoney(row.over_limit_amount),
+      over_limit_rate: dashboardPercent(row.over_limit_rate),
+    })));
+  }
 
   $("dashboardPeriods").replaceChildren(...[week, month].map((period) => {
     const card = document.createElement("article");
@@ -517,6 +577,10 @@ function renderDashboard() {
 }
 
 function renderOverview() {
+  if (isKpiOnly()) {
+    renderDashboard();
+    return;
+  }
   const items = state.boqResult?.items || [];
   const review = state.reviewResult;
   $("workspaceContent").innerHTML = `
@@ -554,6 +618,9 @@ function renderOverview() {
     <div class="tool-entry"><span class="panel-label">TOOL ENTRY</span><div id="connectorCatalog" class="tool-entry-grid"></div></div>
     <div class="export-actions"><button id="exportReport" class="button button-quiet" type="button">导出 Word 兼容报告</button><button id="exportBoq" class="button button-quiet" type="button">导出 Excel 清单</button><button id="exportPlan" class="button button-quiet" type="button">导出 Excel 成本计划</button><button id="exportBundle" class="button button-primary" type="button">导出项目交换包</button><button id="importBundle" class="button button-quiet" type="button">导入项目交换包</button></div>`;
   $("workspaceContent").append(sourcePanel);
+  if (!canViewCostDetail()) {
+    ["exportReport", "exportPlan", "exportBundle"].forEach((id) => { if ($(id)) $(id).hidden = true; });
+  }
   const overviewCards = document.querySelector(".overview-cards");
   if (overviewCards) {
     overviewCards.classList.add("has-dashboard");
@@ -634,8 +701,18 @@ function sourceViewUrl(source, derived = false) {
   return `/api/source/view?project_id=${encodeURIComponent(state.projectId)}&source_id=${encodeURIComponent(source.source_id)}${derived ? "&derived=1" : ""}`;
 }
 
-function viewSource(source, derived = false) {
-  window.open(sourceViewUrl(source, derived), "_blank", "noopener");
+async function viewSource(source, derived = false) {
+  const popup = window.open("about:blank", "_blank", "noopener");
+  try {
+    const response = await fetch(sourceViewUrl(source, derived), { headers: { Authorization: `Bearer ${state.auth.token}` } });
+    if (!response.ok) throw new Error(`资料查看失败（${response.status}）`);
+    const objectUrl = URL.createObjectURL(await response.blob());
+    if (popup) popup.location.href = objectUrl;
+    else window.open(objectUrl, "_blank", "noopener");
+  } catch (error) {
+    if (popup) popup.close();
+    setError(error.message);
+  }
 }
 
 async function copySourcePaths(source) {
@@ -672,7 +749,7 @@ async function modifySource(source) {
 }
 
 async function deleteSource(source) {
-  if (!isManager() || !window.confirm("仅项目经理可执行。资料将软删除并保留原文件与操作记录，确认继续？")) return;
+  if (!isManager() || !window.confirm("仅造价经理可执行。资料将软删除并保留原文件与操作记录，确认继续？")) return;
   try {
     const response = await apiJson("/api/source/delete", {
       method: "POST",
@@ -771,7 +848,7 @@ function renderSourceList() {
     } else if (!deleted) {
       const permission = document.createElement("small");
       permission.className = "permission-note";
-      permission.textContent = "删除需项目经理";
+      permission.textContent = "删除需造价经理";
       actions.append(permission);
     }
     item.append(info, stateTag, actions);
@@ -835,11 +912,12 @@ async function renderControl() {
     return;
   }
   $("workspaceContent").innerHTML =
-    '<div class="surface-title"><div><span class="panel-label">PROJECT CONTROL</span><h3>项目经理控制台</h3></div><span class="surface-caption">权限、文件状态、风险分级与全部操作留痕</span></div>' +
+    '<div class="surface-title"><div><span class="panel-label">PROJECT CONTROL</span><h3>造价经理项目控制台</h3></div><span class="surface-caption">权限、文件状态、风险分级与全部操作留痕</span></div>' +
     '<div class="control-grid">' +
     '<section class="control-panel"><span class="panel-label">PERMISSION POLICY</span><h3>角色权限</h3>' +
-    '<div class="policy-row"><strong>项目经理</strong><span>查看、录入、修改、删除（软删除）、查看审计</span></div>' +
-    '<div class="policy-row"><strong>造价人员</strong><span>查看、录入、修改、识别、业务数据编辑；删除需项目经理</span></div>' +
+    '<div class="policy-row"><strong>项目经理（一级）</strong><span>仅查看重要指标、风险预警、成本超限和周期趋势</span></div>' +
+    '<div class="policy-row"><strong>造价经理（一级）</strong><span>全部 P01–P08、资料、成本、导出、删除和审计权限</span></div>' +
+    '<div class="policy-row"><strong>造价员（二级）</strong><span>资料录入、识别、业务操作；敏感价格与成本明细不回显</span></div>' +
     '<div class="policy-row"><strong>原始文件</strong><span>内容地址化保存，不直接覆盖；修改只产生元数据版本，删除保留原文件和痕迹</span></div></section>' +
     '<section class="control-panel"><span class="panel-label">RISK COLORS</span><h3>风险颜色</h3>' +
     '<div class="risk-legend"><span class="risk-chip risk-red">红色 · 紧急阻断</span><span class="risk-chip risk-yellow">黄色 · 预警</span><span class="risk-chip risk-blue">蓝色 · 一般提示</span></div>' +
@@ -1061,12 +1139,25 @@ async function handleBundleImport(event) {
   }
 }
 
-function downloadProjectFile(kind) {
+async function downloadProjectFile(kind) {
   if (!state.workspace) {
     setError("请先保存项目");
     return;
   }
-  window.location.href = `/api/workspace/${encodeURIComponent(state.projectId)}/${kind}`;
+  try {
+    const response = await fetch(`/api/workspace/${encodeURIComponent(state.projectId)}/${kind}`, { headers: { Authorization: `Bearer ${state.auth.token}` } });
+    if (!response.ok) throw new Error(`文件导出失败（${response.status}）`);
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `${state.projectId}-${kind.replaceAll("/", "-")}`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
 function renderBoq() {
@@ -1398,7 +1489,7 @@ function renderChanges() {
     <div class="field-grid capability-fields">${stageSourceField()}</div>
     <div class="data-entry-heading"><div><span class="panel-label">CHANGE REGISTER</span><h3>变更清单</h3></div><button id="addChange" class="button button-quiet" type="button">＋新增变更</button></div>
     <div id="changeEditor" class="editable-table"></div>
-    <div class="action-row"><button id="saveChanges" class="button button-primary" type="button">保存变更清单</button><span class="request-status">批准或实施前，项目经理可在项目控制台复核。</span></div>
+    <div class="action-row"><button id="saveChanges" class="button button-primary" type="button">保存变更清单</button><span class="request-status">批准或实施前，造价经理可在项目控制台复核。</span></div>
     <div id="changesOutput" class="inline-output"></div>`;
   $("stageSourceId").value = state.sourceId || "local-source";
   renderRowEditor("changeEditor", state.changesDraft, [
@@ -1471,12 +1562,13 @@ function renderPlan() {
     return;
   }
   syncPlanDraft();
+  const planNote = canViewCostDetail() ? "计划金额、组价状态和成本控制结果可查看。" : "可录入价格口径；保存后价格与成本金额不回显，由造价经理负责复核。";
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">COST PLANNING</span><h3>编制成本计划</h3></div><span class="surface-caption">合同单价进入计划；市场单价仅用于内部成本参考</span></div>
     <div class="notice-line"><strong>当前资料：${state.fileName || state.sourceName}</strong><span>${state.boqResult.item_count} 项清单已带入。</span></div>
     <div class="data-entry-heading"><div><span class="panel-label">PRICE BOOK</span><h3>补充单价</h3></div><span class="input-note">没有合同单价的项目会保留为待组价。</span></div>
     <div id="planEditor" class="editable-table"></div>
-    <div class="action-row"><button id="runPlan" class="button button-primary" type="button">生成成本计划</button><span class="request-status">计划金额和待组价项目会显示在下方。</span></div>
+    <div class="action-row"><button id="runPlan" class="button button-primary" type="button">生成成本计划</button><span class="request-status">${planNote}</span></div>
     <div id="planOutput" class="inline-output"></div>`;
   renderPlanEditor();
   $("runPlan").addEventListener("click", runCostPlan);
@@ -1486,7 +1578,9 @@ function renderPlan() {
 function renderPlanEditor() {
   const wrap = $("planEditor");
   const table = document.createElement("table");
-  table.innerHTML = `<thead><tr><th>项目</th><th>单位</th><th>工程量</th><th>合同单价</th><th>市场参考价</th></tr></thead>`;
+  const contractPriceLabel = canViewCostDetail() ? "合同单价" : "合同单价（录入后隐藏）";
+  const marketPriceLabel = canViewCostDetail() ? "市场参考价" : "市场参考价（录入后隐藏）";
+  table.innerHTML = `<thead><tr><th>项目</th><th>单位</th><th>工程量</th><th>${contractPriceLabel}</th><th>${marketPriceLabel}</th></tr></thead>`;
   const body = document.createElement("tbody");
   state.planDraft.forEach((row, index) => {
     const tr = document.createElement("tr");
@@ -1502,7 +1596,7 @@ function renderPlanEditor() {
       input.min = "0";
       input.step = "0.01";
       input.placeholder = "未填写";
-      input.value = state.planDraft[index][key] ?? "";
+      input.value = canViewCostDetail() ? (state.planDraft[index][key] ?? "") : "";
       input.addEventListener("input", () => { state.planDraft[index][key] = input.value; });
       td.append(input);
       tr.append(td);
@@ -1551,10 +1645,14 @@ function renderPlanOutput(result) {
   const summary = result.summary || {};
   const output = $("planOutput");
   if (!output) return;
+  const protectedMoney = canViewCostDetail() ? (summary.contract_subtotal ?? "—") : "受权限保护";
+  const reviewEntry = canViewCostDetail()
+    ? '<button id="toReview" class="button button-quiet" type="button">进入结算初审 →</button>'
+    : '<span class="request-status">结算初审由造价经理查看和执行</span>';
   output.innerHTML = `
-    <div class="metric-row"><div><strong>${summary.contract_subtotal}</strong><span>合同计划小计</span></div><div><strong>${summary.contract_item_count}</strong><span>已定价项目</span></div><div><strong>${summary.pending_item_count}</strong><span>待组价项目</span></div></div>
-    <div class="result-strip ${summary.pending_item_count ? "result-warn" : "result-ok"}"><strong>${summary.pending_item_count ? `有 ${summary.pending_item_count} 项需要补充合同单价` : "成本计划已完整生成"}</strong><span>${result.cost_control ? "市场参考价已单独保留为内部成本控制信息。" : "未提供市场参考价。"}</span><button id="toReview" class="button button-quiet" type="button">进入结算初审 →</button></div>`;
-  $("toReview").addEventListener("click", () => setView("review"));
+    <div class="metric-row"><div><strong>${protectedMoney}</strong><span>合同计划小计</span></div><div><strong>${summary.contract_item_count}</strong><span>已定价项目</span></div><div><strong>${summary.pending_item_count}</strong><span>待组价项目</span></div></div>
+    <div class="result-strip ${summary.pending_item_count ? "result-warn" : "result-ok"}"><strong>${summary.pending_item_count ? `有 ${summary.pending_item_count} 项需要补充合同单价` : "成本计划已完整生成"}</strong><span>${result.cost_control ? "市场参考价已单独保留为内部成本控制信息。" : "未提供市场参考价。"}</span>${reviewEntry}</div>`;
+  if ($("toReview")) $("toReview").addEventListener("click", () => setView("review"));
 }
 
 function displayPlanStatus(status) {
@@ -1578,6 +1676,11 @@ function reviewRows() {
 }
 
 function renderReview() {
+  if (!canViewCostDetail()) {
+    $("workspaceContent").innerHTML = '<div class="blocked-step"><span class="panel-label">ROLE CONTROL</span><h3>结算初审</h3><p>结算初审包含单价、金额和成本判断，仅造价经理可以查看和执行。</p><button class="button button-primary" type="button" data-view="dashboard">返回操作看板</button></div>';
+    bindViewButtons();
+    return;
+  }
   if (!state.planResult) {
     renderBlockedStep("结算初审", "请先生成成本计划。", "去做成本计划", "plan");
     return;
@@ -1690,6 +1793,7 @@ function bindViewButtons() {
 }
 
 function setView(view) {
+  if (isKpiOnly() && !["overview", "dashboard"].includes(view)) view = "dashboard";
   state.view = view;
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
   if (view === "overview") renderOverview();
@@ -1730,7 +1834,7 @@ async function loadDemo() {
   state.sourceName = state.sample.source_name || "示例清单资料";
   state.boqRows = draftFromSample(state.sample.boq_rows);
   await loadWorkspace();
-  setView("overview");
+  setView(isKpiOnly() ? "dashboard" : "overview");
   setStatus(restoredStatus());
 }
 

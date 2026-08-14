@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import html
 import io
@@ -22,6 +23,7 @@ from adapters import (
     ImmutableSourceStore,
     LocalAuthStore,
     LocalProjectWorkspace,
+    ROLE_COST_MANAGER,
     ROLE_PERMISSIONS,
     ROLE_PROJECT_MANAGER,
 )
@@ -214,6 +216,56 @@ def _require_actor(headers: Mapping[str, str], permission: str | None = None) ->
     if permission and permission not in set(actor.get("permissions", [])):
         raise PermissionError(f"当前角色没有“{permission}”权限")
     return actor
+
+
+_COST_DETAIL_KEYS = {
+    "amount",
+    "contract_amount",
+    "contract_subtotal",
+    "contract_unit_price",
+    "market_amount",
+    "market_total",
+    "market_unit_price",
+    "net_amount",
+    "over_limit_amount",
+    "over_limit_rate",
+    "total_variance",
+    "unit_price",
+    "variance_amount",
+    "zero_ledger_total",
+}
+
+
+def _can(actor: Mapping[str, Any] | None, permission: str) -> bool:
+    return permission in set((actor or {}).get("permissions", []))
+
+
+def _redact_sensitive(value: Any, actor: Mapping[str, Any] | None) -> Any:
+    """Keep operational records usable while removing sensitive cost details."""
+    if _can(actor, "view_cost_detail"):
+        return copy.deepcopy(value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): (None if str(key) in _COST_DETAIL_KEYS else _redact_sensitive(item, actor))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive(item, actor) for item in value]
+    return copy.deepcopy(value)
+
+
+def _visible_workspace(state: dict[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
+    if (actor or {}).get("role") == ROLE_PROJECT_MANAGER:
+        return {
+            "project": copy.deepcopy(state.get("project") or {}),
+            "sources": [],
+            "access": "kpi_only",
+            "role_description": "仅显示项目重要指标、风险预警与经营趋势",
+        }
+    visible = _redact_sensitive(state, actor)
+    visible["access"] = "full" if _can(actor, "view_cost_detail") else "operational_redacted"
+    visible["role_description"] = "完整成本明细" if _can(actor, "view_cost_detail") else "操作数据可见，敏感价格与成本已隐藏"
+    return visible
 
 
 def _risk_for(severity: str) -> dict[str, Any]:
@@ -949,9 +1001,9 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
         add_alert("info", "DASH-P07-01", "存在待核验证据关联", f"有 {evidence_summary.get('unverified_count')} 条证据关联尚未核验。", "evidence")
 
     alerts.sort(key=lambda item: item["risk"]["priority"], reverse=True)
-    return {
+    dashboard = {
         "project": state.get("project") or {},
-        "audience": "project_manager" if (actor or {}).get("role") == ROLE_PROJECT_MANAGER else "cost_estimator",
+        "audience": (actor or {}).get("role", "cost_manager"),
         "generated_at": now.isoformat(),
         "baseline": {
             "status": "ready" if plan or ledger else "missing",
@@ -983,6 +1035,25 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
         "alerts": alerts[:12],
         "recent_issues": (review.get("findings") or [])[:12],
     }
+    if (actor or {}).get("role") == ROLE_PROJECT_MANAGER:
+        dashboard["access"] = "kpi_only"
+        dashboard["capabilities"] = {
+            capability_id: {"status": "已建立" if details else "待建立"}
+            for capability_id, details in dashboard["capabilities"].items()
+        }
+        dashboard["comparison"]["rows"] = []
+        dashboard["recent_issues"] = []
+    elif not _can(actor, "view_cost_detail"):
+        dashboard = _redact_sensitive(dashboard, actor)
+        dashboard["access"] = "operational_redacted"
+        dashboard["comparison"]["rows"] = []
+        dashboard["recent_issues"] = []
+        for alert in dashboard.get("alerts", []):
+            if alert.get("rule_id") == "DASH-P06-01":
+                alert["message"] = "存在待审批变更，金额影响已按角色权限隐藏。"
+    else:
+        dashboard["access"] = "full"
+    return dashboard
 
 
 def _report_html(state: dict[str, Any]) -> bytes:
@@ -1317,37 +1388,47 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             self._write_json({"recognizers": recognition_catalog()})
         elif path == "/api/audit":
             try:
-                _require_actor(self.headers, "view_audit")
+                actor = _require_actor(self.headers, "view_audit")
                 project_id = parse_qs(parsed.query).get("project_id", [""])[0]
                 state = _workspace(project_id)
-                self._write_json({"audit_log": state.get("audit_log") or []})
+                self._write_json({"audit_log": _redact_sensitive(state.get("audit_log") or [], actor)})
             except PermissionError as exc:
-                self._write_json({"error": str(exc)}, 401)
+                self._write_json({"error": str(exc)}, 403)
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
         elif path == "/api/dashboard":
             try:
-                actor = _require_actor(self.headers, "view_audit")
+                actor = _require_actor(self.headers, "view_dashboard")
                 project_id = parse_qs(parsed.query).get("project_id", [""])[0]
                 self._write_json(_build_dashboard(_workspace(project_id), actor))
             except PermissionError as exc:
-                self._write_json({"error": str(exc)}, 401)
+                self._write_json({"error": str(exc)}, 403)
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
         elif path == "/api/workspace":
-            project_id = parse_qs(parsed.query).get("project_id", [""])[0]
             try:
-                self._write_json(_workspace(project_id))
+                actor = _require_actor(self.headers, "view_workspace")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                self._write_json(_visible_workspace(_workspace(project_id), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
         elif path.startswith("/api/workspace/"):
             project_id = unquote(path.removeprefix("/api/workspace/").split("/", 1)[0])
             try:
+                actor = _require_actor(self.headers, "view_workspace")
                 state = _workspace(project_id)
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
                 return
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+                return
             if path.endswith("/report"):
+                if not _can(actor, "view_cost_detail"):
+                    self._write_json({"error": "当前角色不能导出成本明细报告"}, 403)
+                    return
                 self._write_download(_report_html(state), "text/html; charset=utf-8", "buildcostiq-report.html")
             elif path.endswith("/boq.csv"):
                 self._write_download(_boq_csv(state), "text/csv; charset=utf-8", "boq.csv")
@@ -1358,21 +1439,30 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                     "boq.xlsx",
                 )
             elif path.endswith("/cost-plan.csv"):
+                if not _can(actor, "view_cost_detail"):
+                    self._write_json({"error": "当前角色不能导出成本明细"}, 403)
+                    return
                 self._write_download(_cost_plan_csv(state), "text/csv; charset=utf-8", "cost-plan.csv")
             elif path.endswith("/cost-plan.xlsx"):
+                if not _can(actor, "view_cost_detail"):
+                    self._write_json({"error": "当前角色不能导出成本明细"}, 403)
+                    return
                 self._write_download(
                     _cost_plan_xlsx(state),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     "cost-plan.xlsx",
                 )
             elif path.endswith("/bundle"):
+                if not _can(actor, "view_cost_detail"):
+                    self._write_json({"error": "当前角色不能导出包含成本明细的项目交换包"}, 403)
+                    return
                 self._write_download(
                     _project_bundle(state),
                     "application/zip",
                     f"{state['project']['id']}-buildcostiq.zip",
                 )
             else:
-                self._write_json(state)
+                self._write_json(_visible_workspace(state, actor))
         else:
             self._serve_static(path)
 
@@ -1422,13 +1512,19 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/project":
             try:
-                self._write_json(_project(self._read_json(), _optional_actor(self.headers)))
+                actor = _require_actor(self.headers, "view_workspace")
+                self._write_json(_visible_workspace(_project(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             return
         if path == "/api/source/upload":
             try:
-                self._write_json(_source_upload(self.headers.get("Content-Type", ""), self._read_body(), _optional_actor(self.headers)))
+                actor = _require_actor(self.headers, "upload_source")
+                self._write_json(_redact_sensitive(_source_upload(self.headers.get("Content-Type", ""), self._read_body(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
@@ -1436,7 +1532,10 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/source/recognize":
             try:
-                self._write_json(_recognize_source(self._read_json(), _optional_actor(self.headers)))
+                actor = _require_actor(self.headers, "recognize_source")
+                self._write_json(_redact_sensitive(_recognize_source(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             except FileNotFoundError as exc:
@@ -1446,7 +1545,10 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/workspace/import":
             try:
-                self._write_json(_import_project_bundle(self.headers.get("Content-Type", ""), self._read_body()))
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_import_project_bundle(self.headers.get("Content-Type", ""), self._read_body()), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
@@ -1454,17 +1556,28 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/boq/upload":
             try:
-                result = _boq_upload(self.headers.get("Content-Type", ""), self._read_body(), _optional_actor(self.headers))
+                actor = _require_actor(self.headers, "edit_business_data")
+                result = _boq_upload(self.headers.get("Content-Type", ""), self._read_body(), actor)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+                return
             except (UnicodeDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
                 return
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
                 self._write_json({"error": str(exc)}, 500)
                 return
-            self._write_json(result)
+            self._write_json(_redact_sensitive(result, actor))
             return
 
-        actor = _optional_actor(self.headers)
+        try:
+            actor = _require_actor(self.headers, "edit_business_data")
+        except PermissionError as exc:
+            self._write_json({"error": str(exc)}, 403)
+            return
+        if path == "/api/review" and not _can(actor, "view_cost_detail"):
+            self._write_json({"error": "结算初审包含敏感成本明细，仅造价经理可执行"}, 403)
+            return
         handlers = {
             "/api/contract": lambda payload: _contract(payload, actor),
             "/api/boq": lambda payload: _boq(payload, actor),
@@ -1481,13 +1594,16 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             return
         try:
             result = handler(self._read_json())
+        except PermissionError as exc:
+            self._write_json({"error": str(exc)}, 403)
+            return
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             self._write_json({"error": str(exc)}, 422)
             return
         except Exception as exc:  # pragma: no cover - defensive HTTP boundary
             self._write_json({"error": str(exc)}, 500)
             return
-        self._write_json(result)
+        self._write_json(_redact_sensitive(result, actor))
 
     def log_message(self, format: str, *args: object) -> None:
         print(f"[webui] {self.address_string()} - {format % args}")

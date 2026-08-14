@@ -13,15 +13,39 @@ from uuid import uuid4
 
 
 ROLE_PROJECT_MANAGER = "project_manager"
+ROLE_COST_MANAGER = "cost_manager"
 ROLE_COST_ESTIMATOR = "cost_estimator"
 
 ROLE_LABELS = {
     ROLE_PROJECT_MANAGER: "项目经理",
-    ROLE_COST_ESTIMATOR: "造价人员",
+    ROLE_COST_MANAGER: "造价经理",
+    ROLE_COST_ESTIMATOR: "造价员",
+}
+
+# 项目经理与造价经理同属一级；造价员是二级操作角色。
+ROLE_LEVELS = {
+    ROLE_PROJECT_MANAGER: 1,
+    ROLE_COST_MANAGER: 1,
+    ROLE_COST_ESTIMATOR: 2,
+}
+
+ROLE_DESCRIPTIONS = {
+    ROLE_PROJECT_MANAGER: "只看项目重要指标、风险预警与经营趋势",
+    ROLE_COST_MANAGER: "完整业务权限，负责造价资料、成本与审计管理",
+    ROLE_COST_ESTIMATOR: "负责资料录入和业务操作，敏感价格与成本脱敏",
 }
 
 ROLE_PERMISSIONS = {
     ROLE_PROJECT_MANAGER: {
+        "view_workspace",
+        "view_dashboard",
+        "view_kpi",
+    },
+    ROLE_COST_MANAGER: {
+        "view_workspace",
+        "view_dashboard",
+        "view_kpi",
+        "view_cost_detail",
         "view_source",
         "upload_source",
         "recognize_source",
@@ -29,8 +53,12 @@ ROLE_PERMISSIONS = {
         "delete_source",
         "edit_business_data",
         "view_audit",
+        "manage_project",
+        "export_cost",
     },
     ROLE_COST_ESTIMATOR: {
+        "view_workspace",
+        "view_dashboard",
         "view_source",
         "upload_source",
         "recognize_source",
@@ -51,6 +79,9 @@ def _public_user(user: dict[str, Any]) -> dict[str, Any]:
         "username": user["username"],
         "role": user["role"],
         "role_label": ROLE_LABELS[user["role"]],
+        "role_level": ROLE_LEVELS[user["role"]],
+        "role_description": ROLE_DESCRIPTIONS[user["role"]],
+        "can_view_cost_detail": "view_cost_detail" in ROLE_PERMISSIONS[user["role"]],
         "permissions": sorted(ROLE_PERMISSIONS[user["role"]]),
     }
 
@@ -97,7 +128,7 @@ class LocalAuthStore:
         if len(username) < 2 or len(username) > 64:
             raise ValueError("用户名需要是 2 到 64 个字符")
         if role not in ROLE_LABELS:
-            raise ValueError("请选择项目经理或造价人员角色")
+            raise ValueError("请选择项目经理、造价经理或造价员角色")
         users = self._load()
         if any(user.get("username", "").lower() == username.lower() for user in users):
             raise ValueError("该用户名已经注册")
@@ -118,4 +149,3 @@ class LocalAuthStore:
         if user is None or not self._verify_password(password, user.get("password", {})):
             raise ValueError("用户名或密码不正确")
         return _public_user(user)
-

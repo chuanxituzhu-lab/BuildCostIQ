@@ -1,8 +1,11 @@
 from .auth import (
     ROLE_COST_ESTIMATOR,
+    ROLE_COST_MANAGER,
     ROLE_LABELS,
     ROLE_PERMISSIONS,
     ROLE_PROJECT_MANAGER,
+    ROLE_DESCRIPTIONS,
+    ROLE_LEVELS,
     LocalAuthStore,
 )
 from .connectors import ConnectorDescriptor, build_project_bundle, connector_catalog
@@ -16,6 +19,9 @@ __all__ = [
     "LocalProjectWorkspace",
     "LocalAuthStore",
     "ROLE_COST_ESTIMATOR",
+    "ROLE_COST_MANAGER",
+    "ROLE_DESCRIPTIONS",
+    "ROLE_LEVELS",
     "ROLE_LABELS",
     "ROLE_PERMISSIONS",
     "ROLE_PROJECT_MANAGER",

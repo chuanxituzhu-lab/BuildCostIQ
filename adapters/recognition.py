@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 import base64
 import html
+from importlib.util import find_spec
 import json
 import os
 from pathlib import Path
@@ -92,11 +93,9 @@ def recognition_catalog() -> list[dict[str, Any]]:
 
 
 def _markitdown_is_available() -> bool:
-    try:
-        from markitdown import MarkItDown, StreamInfo  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    # Catalog reads must stay fast; importing MarkItDown can load optional
+    # Office/PDF dependencies. The actual converter path still imports it.
+    return find_spec("markitdown") is not None
 
 
 def _now() -> str:

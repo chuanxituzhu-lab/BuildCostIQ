@@ -19,6 +19,24 @@ class WebUiTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        suffix = uuid4().hex[:10]
+        request = Request(
+            f"{self.base_url}/api/auth/register",
+            data=json.dumps({"username": f"cost-manager-{suffix}", "password": "local-pass", "role": "cost_manager"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2) as response:
+            self.manager_token = json.load(response)["token"]
+
+    def auth_headers(self, content_type: str | None = None, token: str | None = None) -> dict[str, str]:
+        headers = {"Authorization": f"Bearer {token or self.manager_token}"}
+        if content_type:
+            headers["Content-Type"] = content_type
+        return headers
+
+    def auth_request(self, path: str, token: str | None = None) -> Request:
+        return Request(f"{self.base_url}{path}", headers=self.auth_headers(token=token))
 
     def tearDown(self) -> None:
         self.server.shutdown()
@@ -68,7 +86,7 @@ class WebUiTests(unittest.TestCase):
                 return json.load(response)
 
         estimator = post_json("/api/auth/register", {"username": f"est-{suffix}", "password": "local-pass", "role": "cost_estimator"})
-        manager = post_json("/api/auth/register", {"username": f"mgr-{suffix}", "password": "local-pass", "role": "project_manager"})
+        manager = post_json("/api/auth/register", {"username": f"mgr-{suffix}", "password": "local-pass", "role": "cost_manager"})
         estimator_token = estimator["token"]
         manager_token = manager["token"]
         project_id = f"audit-project-{suffix}"
@@ -124,6 +142,66 @@ class WebUiTests(unittest.TestCase):
             actions = [event["action"] for event in json.load(response)["audit_log"]]
         self.assertTrue({"source.uploaded", "source.viewed", "source.modified", "source.deleted"}.issubset(actions))
 
+    def test_three_role_scopes_hide_sensitive_costs_at_api_boundary(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        def register(role):
+            return post_json("/api/auth/register", {"username": f"{role}-{suffix}", "password": "local-pass", "role": role}, self.manager_token)["token"]
+
+        project_id = f"role-scope-{suffix}"
+        manager_token = self.manager_token
+        estimator_token = register("cost_estimator")
+        project_manager_token = register("project_manager")
+        post_json("/api/project", {"project_id": project_id, "name": "角色范围测试项目"}, manager_token)
+        post_json(
+            "/api/boq",
+            {"project_id": project_id, "source_id": "role-source", "rows": [["项目编码", "项目名称", "计量单位", "工程量"], ["0101", "土方", "m3", 10]]},
+            manager_token,
+        )
+        post_json(
+            "/api/cost-plan",
+            {"project_id": project_id, "source_id": "role-source", "items": [{"code": "0101", "name": "土方", "unit": "m3", "quantity": 10}], "contract_prices": {"0101": 100}},
+            manager_token,
+        )
+
+        with urlopen(self.auth_request(f"/api/dashboard?project_id={project_id}", project_manager_token), timeout=2) as response:
+            project_dashboard = json.load(response)
+        self.assertEqual(project_dashboard["audience"], "project_manager")
+        self.assertEqual(project_dashboard["access"], "kpi_only")
+        self.assertEqual(project_dashboard["comparison"]["rows"], [])
+        self.assertEqual(project_dashboard["baseline"]["contract_subtotal"], 1000.0)
+
+        with urlopen(self.auth_request(f"/api/workspace?project_id={project_id}", estimator_token), timeout=2) as response:
+            estimator_workspace = json.load(response)
+        self.assertEqual(estimator_workspace["access"], "operational_redacted")
+        self.assertIsNone(estimator_workspace["cost_plan"]["result"]["summary"]["contract_subtotal"])
+        self.assertIsNone(estimator_workspace["cost_plan"]["result"]["items"][0]["unit_price"])
+
+        with self.assertRaises(HTTPError) as denied:
+            request = Request(
+                f"{self.base_url}/api/review",
+                data=json.dumps({"project_id": project_id, "source_id": "role-source", "rows": []}).encode("utf-8"),
+                headers=self.auth_headers("application/json", estimator_token),
+                method="POST",
+            )
+            urlopen(request, timeout=2)
+        self.assertEqual(denied.exception.code, 403)
+
+        with urlopen(self.auth_request(f"/api/workspace?project_id={project_id}", manager_token), timeout=2) as response:
+            manager_workspace = json.load(response)
+        self.assertEqual(manager_workspace["access"], "full")
+        self.assertEqual(manager_workspace["cost_plan"]["result"]["summary"]["contract_subtotal"], 1000.0)
+
     def test_review_endpoint_uses_frozen_gateway(self):
         payload = {
             "project_id": "web-test",
@@ -141,7 +219,7 @@ class WebUiTests(unittest.TestCase):
         request = Request(
             f"{self.base_url}/api/review",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(request, timeout=2) as response:
@@ -162,7 +240,7 @@ class WebUiTests(unittest.TestCase):
         request = Request(
             f"{self.base_url}/api/boq",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(request, timeout=2) as response:
@@ -186,7 +264,7 @@ class WebUiTests(unittest.TestCase):
         request = Request(
             f"{self.base_url}/api/cost-plan",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(request, timeout=2) as response:
@@ -202,7 +280,7 @@ class WebUiTests(unittest.TestCase):
             request = Request(
                 f"{self.base_url}{path}",
                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers=self.auth_headers("application/json"),
                 method="POST",
             )
             with urlopen(request, timeout=2) as response:
@@ -214,7 +292,7 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(post("/api/baseline", {**common, "entries": [{"name": "土方", "quantity": 10, "unit_price": 2}]} )["capability_id"], "P04")
         self.assertEqual(post("/api/changes", {**common, "changes": [{"title": "材料调整", "amount": 20}]} )["capability_id"], "P06")
         self.assertEqual(post("/api/evidence", {**common, "links": [{"target_type": "change", "target_id": "CH-001"}]} )["capability_id"], "P07")
-        with urlopen(f"{self.base_url}/api/workspace?project_id={project_id}", timeout=2) as response:
+        with urlopen(self.auth_request(f"/api/workspace?project_id={project_id}"), timeout=2) as response:
             workspace = json.load(response)
         self.assertEqual(workspace["contract"]["result"]["capability_id"], "P01")
         self.assertEqual(workspace["drawings"]["result"]["capability_id"], "P03")
@@ -240,7 +318,7 @@ class WebUiTests(unittest.TestCase):
 
         auth = post_json(
             "/api/auth/register",
-            {"username": f"dashboard-{suffix}", "password": "local-pass", "role": "cost_estimator"},
+            {"username": f"dashboard-{suffix}", "password": "local-pass", "role": "cost_manager"},
         )
         token = auth["token"]
         project_id = f"dashboard-project-{suffix}"
@@ -287,7 +365,7 @@ class WebUiTests(unittest.TestCase):
         )
         with urlopen(request, timeout=2) as response:
             dashboard = json.load(response)
-        self.assertEqual(dashboard["audience"], "cost_estimator")
+        self.assertEqual(dashboard["audience"], "cost_manager")
         self.assertEqual(dashboard["baseline"]["contract_subtotal"], 1000.0)
         self.assertEqual(dashboard["comparison"]["status"], "comparable")
         self.assertEqual(dashboard["comparison"]["over_limit_amount"], 200.0)
@@ -316,7 +394,7 @@ class WebUiTests(unittest.TestCase):
         request = Request(
             f"{self.base_url}/api/boq/upload",
             data=b"".join(chunks),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            headers=self.auth_headers(f"multipart/form-data; boundary={boundary}"),
             method="POST",
         )
         with urlopen(request, timeout=2) as response:
@@ -330,7 +408,7 @@ class WebUiTests(unittest.TestCase):
         project_request = Request(
             f"{self.base_url}/api/project",
             data=json.dumps({"project_id": project_id, "name": "工作区测试项目"}, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(project_request, timeout=2) as response:
@@ -344,20 +422,20 @@ class WebUiTests(unittest.TestCase):
                 "source_id": "workspace-boq",
                 "rows": [["项目编码", "项目名称", "计量单位", "工程量"], ["010502001001", "矩形柱", "m3", 2]],
             }, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(boq_request, timeout=2):
             pass
-        with urlopen(f"{self.base_url}/api/workspace?project_id={project_id}", timeout=2) as response:
+        with urlopen(self.auth_request(f"/api/workspace?project_id={project_id}"), timeout=2) as response:
             workspace = json.load(response)
         self.assertEqual(workspace["project"]["name"], "工作区测试项目")
         self.assertEqual(workspace["boq"]["result"]["item_count"], 1)
 
-        with urlopen(f"{self.base_url}/api/workspace/{project_id}/report", timeout=2) as response:
+        with urlopen(self.auth_request(f"/api/workspace/{project_id}/report"), timeout=2) as response:
             report = response.read().decode("utf-8")
         self.assertIn("工作区测试项目", report)
-        with urlopen(f"{self.base_url}/api/workspace/{project_id}/cost-plan.csv", timeout=2) as response:
+        with urlopen(self.auth_request(f"/api/workspace/{project_id}/cost-plan.csv"), timeout=2) as response:
             csv_body = response.read().decode("utf-8-sig")
         self.assertIn("项目编码", csv_body)
 
@@ -382,7 +460,7 @@ class WebUiTests(unittest.TestCase):
         request = Request(
             f"{self.base_url}/api/source/upload",
             data=b"".join(chunks),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            headers=self.auth_headers(f"multipart/form-data; boundary={boundary}"),
             method="POST",
         )
         with urlopen(request, timeout=2) as response:
@@ -400,7 +478,7 @@ class WebUiTests(unittest.TestCase):
         project_request = Request(
             f"{self.base_url}/api/project",
             data=json.dumps({"project_id": project_id, "name": "交换测试项目"}, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(project_request, timeout=2):
@@ -412,17 +490,17 @@ class WebUiTests(unittest.TestCase):
                 "source_id": "exchange-boq",
                 "rows": [["项目编码", "项目名称", "计量单位", "工程量"], ["010502001001", "矩形柱", "m3", 2]],
             }, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(boq_request, timeout=2):
             pass
 
         for suffix in ("boq.xlsx", "cost-plan.xlsx"):
-            with urlopen(f"{self.base_url}/api/workspace/{project_id}/{suffix}", timeout=2) as response:
+            with urlopen(self.auth_request(f"/api/workspace/{project_id}/{suffix}"), timeout=2) as response:
                 self.assertEqual(response.read(2), b"PK")
 
-        with urlopen(f"{self.base_url}/api/workspace/{project_id}/bundle", timeout=2) as response:
+        with urlopen(self.auth_request(f"/api/workspace/{project_id}/bundle"), timeout=2) as response:
             bundle = response.read()
         with ZipFile(io.BytesIO(bundle)) as archive:
             names = set(archive.namelist())
@@ -439,7 +517,7 @@ class WebUiTests(unittest.TestCase):
         import_request = Request(
             f"{self.base_url}/api/workspace/import",
             data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            headers=self.auth_headers(f"multipart/form-data; boundary={boundary}"),
             method="POST",
         )
         with urlopen(import_request, timeout=2) as response:
@@ -473,7 +551,7 @@ class WebUiTests(unittest.TestCase):
         upload_request = Request(
             f"{self.base_url}/api/source/upload",
             data=b"".join(chunks),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            headers=self.auth_headers(f"multipart/form-data; boundary={boundary}"),
             method="POST",
         )
         with urlopen(upload_request, timeout=2) as response:
@@ -484,7 +562,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("artifact", recognition)
         self.assertTrue(Path(uploaded["source"]["storage_path"]).is_file())
         self.assertTrue(Path(recognition["artifact"]["storage_path"]).is_file())
-        with urlopen(f"{self.base_url}/api/workspace/recognition-project/bundle", timeout=2) as response:
+        with urlopen(self.auth_request("/api/workspace/recognition-project/bundle"), timeout=2) as response:
             with ZipFile(io.BytesIO(response.read())) as archive:
                 self.assertIn("sources/article.txt", archive.namelist())
                 self.assertIn("derived/article.md", archive.namelist())
@@ -496,7 +574,7 @@ class WebUiTests(unittest.TestCase):
                 "source_id": "article-source",
                 "connector_id": "baidu-ocr",
             }).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=self.auth_headers("application/json"),
             method="POST",
         )
         with urlopen(consent_request, timeout=2) as response:

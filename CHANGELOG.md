@@ -2,6 +2,13 @@
 
 Project: BuildCostIQ
 
+## v0.7.1-rc1 — 2026-08-14
+
+- Added three role scopes: project manager KPI-only view, cost manager full permissions, and cost estimator operational access at level two.
+- Added API-level authorization for workspace, P01–P08 operations, exports, source actions, and settlement review.
+- Added cost-detail redaction for estimator responses and KPI-only workspace/dashboard responses for project managers.
+- Updated the WebUI registration, navigation, cost-plan inputs, review gate, project-control policy, and export actions to match the three roles.
+
 ## v0.7.0-rc1 — 2026-08-14
 
 - Implemented all eight frozen capabilities as usable Gateway-backed workbench stages.
