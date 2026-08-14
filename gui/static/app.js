@@ -773,8 +773,8 @@ async function deleteSource(source) {
   }
 }
 
-function renderSourceList() {
-  const list = $("sourceList");
+function renderSourceList(targetId = "sourceList") {
+  const list = $(targetId);
   if (!list) return;
   if (!state.sources.length) {
     list.className = "source-list empty-state";
@@ -1214,6 +1214,24 @@ async function handleSourceFile(event) {
   }
 }
 
+async function handleContractSourceFiles(event) {
+  const files = [...(event.target.files || [])];
+  if (!files.length) return;
+  setError("");
+  try {
+    await uploadFiles(files);
+    renderSourceList("contractSourceList");
+    renderIntakeReports("contractIntakeSummary");
+    updateContextBar();
+    setStatus(`${files.length} 个合同资料文件已保存并完成本地识别`);
+    renderAssist();
+  } catch (error) {
+    setError(error.message);
+  } finally {
+    event.target.value = "";
+  }
+}
+
 async function handleProjectInfoFiles(event) {
   const files = [...(event.target.files || [])];
   if (!files.length) return;
@@ -1487,6 +1505,12 @@ function renderContract() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">P01 CONTRACT INTAKE</span><h3>合同资料台</h3></div><span class="surface-caption">记录合同主数据、关键日期、金额和履约义务；解释结果保留来源编号</span></div>
     <div class="capability-intro"><strong>合同是项目成本和履约判断的第一来源。</strong><span>系统只整理已确认资料，不替代合同法律解释。</span></div>
+    <section class="source-panel contract-source-panel">
+      <div class="surface-title"><div><span class="panel-label">CONTRACT FILE INTAKE</span><h3>合同资料录入</h3></div><button id="uploadContractSource" class="button button-quiet" type="button">＋录入合同资料</button></div>
+      <p class="business-note">可多选合同正文、补充协议、清单、附件等文件；原件保存在本地资料库并自动识别，合同主数据仍需人工核对后保存。</p>
+      <div id="contractSourceList" class="source-list"></div>
+      <div id="contractIntakeSummary" class="intake-report-list"></div>
+    </section>
     <div class="field-grid capability-fields">
       <label>合同编号<input id="contractNo" /></label><label>合同名称<input id="contractTitle" /></label>
       <label>建设单位<input id="contractOwner" /></label><label>施工单位<input id="contractor" /></label>
@@ -1504,6 +1528,10 @@ function renderContract() {
     { key: "name", label: "义务/节点" }, { key: "owner", label: "责任方" }, { key: "due_date", label: "截止日期", type: "date" },
     { key: "status", label: "状态", options: [["pending", "待办"], ["active", "进行中"], ["done", "已完成"]] }, { key: "amount", label: "金额", type: "number" },
   ], () => ({ name: "", owner: "", due_date: "", status: "pending", amount: "" }));
+  renderSourceList("contractSourceList");
+  renderIntakeReports("contractIntakeSummary");
+  $("uploadContractSource").addEventListener("click", () => $("contractSourceInput").click());
+  $("contractSourceInput").onchange = handleContractSourceFiles;
   $("addObligation").addEventListener("click", () => { state.obligationsDraft.push({ name: "", owner: "", due_date: "", status: "pending", amount: "" }); renderContract(); });
   $("saveContract").addEventListener("click", saveContract);
   if (result) {

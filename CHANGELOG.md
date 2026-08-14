@@ -2,6 +2,12 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc3 — 2026-08-14
+
+- Added a dedicated P01 contract-material intake entry with multi-file selection.
+- Reused the local source archive and recognition flow so contract originals, storage paths, recognition status, and derived artifacts remain viewable in the contract workspace.
+- Kept contract master data confirmation separate from file intake; Core and the CapabilityGateway remain unchanged.
+
 ## v0.7.2-rc2 — 2026-08-14
 
 - Fixed the left-side P01–P08 work-assist entries so they navigate to the same workbench views as the top menu.
