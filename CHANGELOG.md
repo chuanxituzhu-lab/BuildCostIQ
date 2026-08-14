@@ -2,6 +2,14 @@
 
 Project: BuildCostIQ
 
+## v0.7.0-rc1 — 2026-08-14
+
+- Implemented all eight frozen capabilities as usable Gateway-backed workbench stages.
+- Added P01 contract register, P03 drawing register, P04 zero ledger, P06 change register, and P07 evidence linkage with local persistence and audit events.
+- Added direct WebUI tabs and editable tables for P01–P08, plus a project overview coverage panel and assistant links.
+- Extended the local dashboard with contract completeness, drawing review, pending-change, evidence-verification, and zero-ledger alerts.
+- Kept Core and the P01–P08 boundary frozen; external CAD, Office, and OCR integrations remain adapter boundaries.
+
 ## v0.6.0-rc1 — 2026-08-13
 
 - Added a role-aware project intelligence dashboard for project managers and cost/estimating staff.

@@ -212,6 +212,17 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .summary-stat strong { color: var(--amber-bright); font-size: 17px; }
 .summary-stat span { color: var(--muted); font-size: 11px; }
 .workspace-content { min-width: 0; padding: 22px; }
+.capability-intro { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 18px; padding: 11px 13px; border-left: 2px solid var(--amber); color: var(--muted); background: #322a181f; font-size: 11px; }
+.capability-intro strong { color: var(--amber-bright); }
+.capability-fields { margin-top: 14px; }
+.capability-metrics { margin-top: 0; }
+.capability-coverage { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.coverage-item { display: grid; gap: 3px; min-height: 80px; padding: 10px; border: 1px solid var(--line); color: var(--ink); background: var(--surface-alt); cursor: pointer; text-align: left; }
+.coverage-item:hover { border-color: var(--amber); background: #e7ad5e0b; }
+.coverage-item strong { font-size: 12px; }
+.coverage-item small { color: var(--muted); font-size: 10px; }
+.coverage-item .capability-id { font-size: 10px; }
+.editable-table select { min-height: 34px; min-width: 100px; padding: 6px 8px; color: var(--ink); background: #0b1118; border: 1px solid var(--line); border-radius: 2px; }
 .surface-title, .data-entry-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .surface-title h3, .data-entry-heading h3 { margin: 5px 0 0; font-size: 20px; }
 .surface-caption { color: var(--muted); font-size: 11px; }
@@ -316,6 +327,12 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .dashboard-issue.risk-red > span { color: var(--red); }
 .dashboard-issue.risk-yellow { border-left-color: var(--yellow); }
 .dashboard-issue.risk-yellow > span { color: var(--yellow); }
+.dashboard-capability-panel { margin-top: 14px; }
+.dashboard-capability-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 13px; }
+.dashboard-capability-item { display: grid; gap: 3px; min-height: 72px; padding: 9px; border: 1px solid var(--line-soft); color: var(--ink); background: var(--surface-alt); cursor: pointer; text-align: left; }
+.dashboard-capability-item:hover { border-color: var(--amber); }
+.dashboard-capability-item strong { font-size: 11px; }
+.dashboard-capability-item small { color: var(--muted); font-size: 10px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
 .user-footer { padding-top: 18px; }
 .auth-shell { margin: 48px 32px 0; padding: 28px; border: 1px solid var(--line); background: var(--surface); }
@@ -358,6 +375,8 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
   .data-summary .panel-label { flex-basis: 100%; }
   .overview-cards.has-dashboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-grid { grid-template-columns: 1fr; }
+  .capability-coverage { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-capability-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
   .workspace-head { flex-direction: column; }
@@ -366,6 +385,8 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
   .overview-cards { grid-template-columns: 1fr; }
   .overview-cards.has-dashboard { grid-template-columns: 1fr; }
   .assist-list { grid-template-columns: 1fr; }
+  .capability-coverage { grid-template-columns: 1fr; }
+  .dashboard-capability-grid { grid-template-columns: 1fr; }
   .metric-row { grid-template-columns: repeat(2, 1fr); }
   .metric-row > div:nth-child(2) { border-right: 0; }
   .metric-row > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }

@@ -195,6 +195,33 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(result["summary"]["contract_item_count"], 1)
         self.assertEqual(result["items"][0]["status"], "contract")
 
+    def test_p01_p03_p04_p06_p07_endpoints_persist_full_workbench(self):
+        project_id = f"full-workbench-{uuid4().hex[:10]}"
+
+        def post(path, payload):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        common = {"project_id": project_id, "source_id": "full-source"}
+        self.assertEqual(post("/api/contract", {**common, "contract": {"contract_no": "HT-01", "title": "道路施工", "contract_amount": 1000}, "obligations": [{"name": "提交进度款"}]} )["capability_id"], "P01")
+        self.assertEqual(post("/api/drawings", {**common, "drawings": [{"drawing_no": "A-01", "name": "总平面图"}]} )["capability_id"], "P03")
+        self.assertEqual(post("/api/baseline", {**common, "entries": [{"name": "土方", "quantity": 10, "unit_price": 2}]} )["capability_id"], "P04")
+        self.assertEqual(post("/api/changes", {**common, "changes": [{"title": "材料调整", "amount": 20}]} )["capability_id"], "P06")
+        self.assertEqual(post("/api/evidence", {**common, "links": [{"target_type": "change", "target_id": "CH-001"}]} )["capability_id"], "P07")
+        with urlopen(f"{self.base_url}/api/workspace?project_id={project_id}", timeout=2) as response:
+            workspace = json.load(response)
+        self.assertEqual(workspace["contract"]["result"]["capability_id"], "P01")
+        self.assertEqual(workspace["drawings"]["result"]["capability_id"], "P03")
+        self.assertEqual(workspace["baseline"]["result"]["summary"]["baseline_total"], 20.0)
+        self.assertEqual(workspace["changes"]["result"]["summary"]["pending_count"], 1)
+        self.assertEqual(workspace["evidence"]["result"]["summary"]["unverified_count"], 1)
+
     def test_dashboard_summarizes_baseline_alerts_and_periods(self):
         suffix = uuid4().hex[:10]
 

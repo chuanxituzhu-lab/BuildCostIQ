@@ -199,7 +199,8 @@ def _markitdown_text(name: str, content: bytes) -> str:
 
 def _local_text(name: str, content: bytes, connector_id: str) -> tuple[str, str]:
     suffix = Path(name).suffix.lower()
-    if connector_id == "microsoft-markitdown" or (connector_id == "local-auto" and suffix in MARKITDOWN_SUFFIXES and suffix not in {".pdf", ".docx", ".xlsx"}):
+    simple_local_suffixes = {".txt", ".md", ".csv", ".html", ".htm", ".json", ".xml", ".log"}
+    if connector_id == "microsoft-markitdown" or (connector_id == "local-auto" and suffix in MARKITDOWN_SUFFIXES and suffix not in {".pdf", ".docx", ".xlsx", *simple_local_suffixes}):
         try:
             text = _markitdown_text(name, content)
             if text:

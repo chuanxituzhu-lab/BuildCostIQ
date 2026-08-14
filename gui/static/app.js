@@ -12,8 +12,19 @@ const state = {
   fileName: "",
   boqRows: [],
   boqResult: null,
+  contractResult: null,
+  drawingsResult: null,
+  baselineResult: null,
+  contractDraft: { contract_no: "", title: "", owner: "", contractor: "", contract_amount: "", tax_mode: "", signed_date: "", start_date: "", end_date: "" },
+  obligationsDraft: [],
+  drawingsDraft: [],
+  baselineDraft: [],
   planDraft: [],
   planResult: null,
+  changesResult: null,
+  evidenceResult: null,
+  changesDraft: [],
+  evidenceDraft: [],
   reviewResult: null,
   dashboard: null,
   sources: [],
@@ -171,8 +182,11 @@ function setStatus(text) {
 
 function restoredStatus() {
   if (state.reviewResult) return state.reviewResult.publishable ? "初审通过" : "初审发现需处理事项";
+  if (state.changesResult?.summary?.pending_count) return "存在待审批变更";
   if (state.planResult) return "成本计划已生成";
+  if (state.baselineResult) return "零号台账已建立";
   if (state.boqResult) return "清单资料已接入";
+  if (state.contractResult || state.drawingsResult || state.evidenceResult) return "项目资料已建立";
   return "准备开始";
 }
 
@@ -183,12 +197,20 @@ function applyWorkspace(workspace) {
   state.sources = workspace.sources || [];
   if (state.sources.length && !state.fileName) state.sourceName = state.sources[state.sources.length - 1].name;
   const boq = workspace.boq?.result;
+  const contract = workspace.contract?.result;
+  const drawings = workspace.drawings?.result;
+  const baseline = workspace.baseline?.result;
   const plan = workspace.cost_plan?.result;
+  const changes = workspace.changes?.result;
+  const evidence = workspace.evidence?.result;
   const review = workspace.review?.result;
+  if (contract) state.contractResult = contract;
   if (boq) {
     state.boqResult = boq;
     state.boqRows = draftFromItems(boq.items);
   }
+  if (drawings) state.drawingsResult = drawings;
+  if (baseline) state.baselineResult = baseline;
   if (plan) {
     state.planResult = plan;
     state.planDraft = (plan.items || []).map((item) => ({
@@ -197,6 +219,8 @@ function applyWorkspace(workspace) {
       marketPrice: "",
     }));
   }
+  if (changes) state.changesResult = changes;
+  if (evidence) state.evidenceResult = evidence;
   if (review) state.reviewResult = review;
 }
 
@@ -254,6 +278,16 @@ function updateContextBar() {
 
 function renderAssist() {
   const tasks = [];
+  const structuredStages = [
+    ["contract", "P01 合同资料", state.contractResult, "补充合同主数据和履约义务"],
+    ["drawings", "P03 图纸登记", state.drawingsResult, "登记图号、版本和审阅状态"],
+    ["baseline", "P04 零号台账", state.baselineResult, "建立项目开局成本基线"],
+    ["changes", "P06 变更管理", state.changesResult, "登记变更影响并等待决策"],
+    ["evidence", "P07 证据关联", state.evidenceResult, "把来源与业务记录关联起来"],
+  ];
+  structuredStages.forEach(([view, title, result, note]) => {
+    tasks.push({ tone: result ? "done" : "next", title: result ? `${title}已保存` : title, note: result ? "可继续查看、修改并保留版本痕迹" : note, view });
+  });
   if (state.dashboard?.alerts?.length) {
     tasks.push({ tone: state.dashboard.alerts[0].severity === "block" ? "warn" : "next", title: `经营看板有 ${state.dashboard.alerts.length} 项自动提醒`, note: "先查看红色阻断和黄色预警，再回到对应工作步骤处理。", view: "dashboard" });
   }
@@ -340,11 +374,25 @@ function renderDashboard() {
       '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">BASELINE / COMPARISON</span><h3>成本基线与造价资料比对</h3></div><button class="button button-quiet" data-view="plan" type="button">查看成本计划</button></div><div id="dashboardComparisonSummary" class="dashboard-comparison-summary"></div><div id="dashboardComparisonTable" class="dashboard-table"></div></section>' +
       '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">WEEKLY / MONTHLY</span><h3>问题周期趋势</h3></div><button class="button button-quiet" data-view="review" type="button">查看结算初审</button></div><div id="dashboardPeriods" class="dashboard-periods"></div><div id="dashboardRecurring" class="dashboard-recurring"></div></section>' +
     '</div>' +
+    '<section class="dashboard-panel dashboard-capability-panel"><div class="surface-title"><div><span class="panel-label">P01 — P08 COVERAGE</span><h3>全能力工作面状态</h3></div><span class="surface-caption">汇总不替代业务页面，点击后进入对应能力工作台</span></div><div id="dashboardCapabilities" class="dashboard-capability-grid"></div></section>' +
     '<section class="dashboard-panel dashboard-issues-panel"><div class="surface-title"><div><span class="panel-label">ISSUE QUEUE</span><h3>当前问题与处理入口</h3></div><span class="surface-caption">每次运行初审会保留本地快照，支持近7天和近30天统计</span></div><div id="dashboardIssues" class="dashboard-issue-list"></div></section>';
 
   $("dashboardProjectName").textContent = dashboard.project?.name || state.projectName || "当前项目";
   $("dashboardRoleNote").textContent = roleNote;
   $("dashboardGeneratedAt").textContent = "刷新时间：" + new Date(dashboard.generated_at).toLocaleString("zh-CN");
+  const capabilityViews = [["P01", "合同资料", "contract"], ["P02", "清单资料", "boq"], ["P03", "图纸资料", "drawings"], ["P04", "零号台账", "baseline"], ["P05", "成本计划", "plan"], ["P06", "变更管理", "changes"], ["P07", "证据关联", "evidence"], ["P08", "结算初审", "review"]];
+  $("dashboardCapabilities").replaceChildren(...capabilityViews.map(([id, label, view]) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "dashboard-capability-item";
+    item.dataset.view = view;
+    const code = document.createElement("span"); code.className = "capability-id"; code.textContent = id;
+    const title = document.createElement("strong"); title.textContent = label;
+    const details = dashboard.capabilities?.[id] || {};
+    const status = document.createElement("small"); status.textContent = Object.keys(details).length ? "已有本地数据" : "待建立";
+    item.append(code, title, status);
+    return item;
+  }));
   const metrics = [
     ["成本基线", dashboard.baseline?.status === "ready" ? dashboardMoney(dashboard.baseline.contract_subtotal) : "未建立", "合同计划小计"],
     ["成本超限", comparison.over_limit_amount ? dashboardMoney(comparison.over_limit_amount) : "0.00", comparison.over_limit_rate ? "偏差 " + dashboardPercent(comparison.over_limit_rate) : "当前未发现超限"],
@@ -524,6 +572,26 @@ function renderOverview() {
     overviewCards.append(dashboardCard);
   }
   renderSourceList();
+  const capabilityPanel = document.createElement("div");
+  capabilityPanel.className = "overview-panel capability-coverage-panel";
+  capabilityPanel.innerHTML = '<div class="surface-title"><div><span class="panel-label">P01 — P08 WORKBENCH</span><h3>八项能力入口</h3></div><span class="surface-caption">每项能力都有独立工作面，结果统一回到当前项目</span></div><div id="capabilityCoverage" class="capability-coverage"></div>';
+  $("workspaceContent").append(capabilityPanel);
+  const coverage = [
+    ["contract", "P01", "合同资料", state.contractResult], ["boq", "P02", "清单资料", state.boqResult], ["drawings", "P03", "图纸资料", state.drawingsResult], ["baseline", "P04", "零号台账", state.baselineResult],
+    ["plan", "P05", "成本计划", state.planResult], ["changes", "P06", "变更管理", state.changesResult], ["evidence", "P07", "证据关联", state.evidenceResult], ["review", "P08", "结算初审", state.reviewResult],
+  ];
+  $("capabilityCoverage").replaceChildren(...coverage.map(([view, id, label, result]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "coverage-item";
+    button.dataset.view = view;
+    const code = document.createElement("span"); code.className = "capability-id"; code.textContent = id;
+    const name = document.createElement("strong"); name.textContent = label;
+    const status = document.createElement("small"); status.textContent = result ? "已建立，可继续处理" : "待建立";
+    button.append(code, name, status);
+    button.addEventListener("click", () => setView(view));
+    return button;
+  }));
   renderIntakeReports("sourceIntakeSummary");
   renderRecognizerCatalog();
   renderConnectorCatalog();
@@ -1119,6 +1187,277 @@ async function handleFile(event) {
   }
 }
 
+function stageContext(sourceInputId) {
+  const context = projectContext();
+  const source = $(sourceInputId)?.value.trim() || state.sourceId || "local-source";
+  state.sourceId = source;
+  return { project_id: context.project_id, source_id: source };
+}
+
+function stageSourceField(id = "stageSourceId") {
+  return `<label>关联资料编号<input id="${id}" value="${state.sourceId || "local-source"}" /></label>`;
+}
+
+function renderRowEditor(containerId, rows, columns, emptyRow) {
+  const container = $(containerId);
+  if (!container) return;
+  if (!rows.length) rows.push(emptyRow());
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  columns.forEach((column) => {
+    const cell = document.createElement("th");
+    cell.textContent = column.label;
+    headRow.append(cell);
+  });
+  const actionHead = document.createElement("th");
+  actionHead.textContent = "操作";
+  headRow.append(actionHead);
+  head.append(headRow);
+  const body = document.createElement("tbody");
+  rows.forEach((row, index) => {
+    const tableRow = document.createElement("tr");
+    columns.forEach((column) => {
+      const cell = document.createElement("td");
+      let input;
+      if (column.options) {
+        input = document.createElement("select");
+        column.options.forEach(([value, label]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          input.append(option);
+        });
+      } else {
+        input = document.createElement("input");
+        input.type = column.type || "text";
+      }
+      input.value = row[column.key] ?? "";
+      input.placeholder = column.placeholder || "请输入";
+      input.addEventListener("input", () => { row[column.key] = input.value; });
+      input.addEventListener("change", () => { row[column.key] = input.value; });
+      cell.append(input);
+      tableRow.append(cell);
+    });
+    const actionCell = document.createElement("td");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-button";
+    remove.textContent = "移除";
+    remove.addEventListener("click", () => {
+      rows.splice(index, 1);
+      renderRowEditor(containerId, rows, columns, emptyRow);
+    });
+    actionCell.append(remove);
+    tableRow.append(actionCell);
+    body.append(tableRow);
+  });
+  table.append(head, body);
+  container.replaceChildren(table);
+}
+
+function renderCapabilitySummary(targetId, result, metrics) {
+  const target = $(targetId);
+  if (!target || !result) return;
+  target.replaceChildren();
+  const row = document.createElement("div");
+  row.className = "metric-row capability-metrics";
+  metrics.forEach(([label, value]) => {
+    const item = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = String(value ?? "—");
+    const small = document.createElement("span");
+    small.textContent = label;
+    item.append(strong, small);
+    row.append(item);
+  });
+  target.append(row);
+}
+
+function renderContract() {
+  const result = state.contractResult;
+  const contract = result?.contract || state.contractDraft;
+  const obligations = result?.obligations || state.obligationsDraft;
+  state.contractDraft = { ...state.contractDraft, ...contract };
+  state.obligationsDraft = obligations.length ? obligations.map((item) => ({ ...item })) : [{ name: "", owner: "", due_date: "", status: "pending", amount: "" }];
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">P01 CONTRACT INTAKE</span><h3>合同资料台</h3></div><span class="surface-caption">记录合同主数据、关键日期、金额和履约义务；解释结果保留来源编号</span></div>
+    <div class="capability-intro"><strong>合同是项目成本和履约判断的第一来源。</strong><span>系统只整理已确认资料，不替代合同法律解释。</span></div>
+    <div class="field-grid capability-fields">
+      <label>合同编号<input id="contractNo" /></label><label>合同名称<input id="contractTitle" /></label>
+      <label>建设单位<input id="contractOwner" /></label><label>施工单位<input id="contractor" /></label>
+      <label>合同金额<input id="contractAmount" type="number" min="0" step="0.01" /></label><label>计税口径<input id="taxMode" placeholder="含税/不含税" /></label>
+      <label>签订日期<input id="signedDate" type="date" /></label><label>开工日期<input id="startDate" type="date" /></label><label>完工日期<input id="endDate" type="date" /></label>
+      ${stageSourceField()}
+    </div>
+    <div class="data-entry-heading"><div><span class="panel-label">OBLIGATIONS</span><h3>合同义务与节点</h3></div><button id="addObligation" class="button button-quiet" type="button">＋新增义务</button></div>
+    <div id="obligationEditor" class="editable-table"></div>
+    <div class="action-row"><button id="saveContract" class="button button-primary" type="button">保存合同资料</button><span class="request-status">保存后会写入本地工作区并留下审计记录。</span></div>
+    <div id="contractOutput" class="inline-output"></div>`;
+  const fields = { contractNo: "contract_no", contractTitle: "title", contractOwner: "owner", contractor: "contractor", contractAmount: "contract_amount", taxMode: "tax_mode", signedDate: "signed_date", startDate: "start_date", endDate: "end_date" };
+  Object.entries(fields).forEach(([id, key]) => { $(id).value = state.contractDraft[key] ?? ""; });
+  renderRowEditor("obligationEditor", state.obligationsDraft, [
+    { key: "name", label: "义务/节点" }, { key: "owner", label: "责任方" }, { key: "due_date", label: "截止日期", type: "date" },
+    { key: "status", label: "状态", options: [["pending", "待办"], ["active", "进行中"], ["done", "已完成"]] }, { key: "amount", label: "金额", type: "number" },
+  ], () => ({ name: "", owner: "", due_date: "", status: "pending", amount: "" }));
+  $("addObligation").addEventListener("click", () => { state.obligationsDraft.push({ name: "", owner: "", due_date: "", status: "pending", amount: "" }); renderContract(); });
+  $("saveContract").addEventListener("click", saveContract);
+  if (result) {
+    renderCapabilitySummary("contractOutput", result, [["合同义务", result.summary?.obligation_count], ["待补字段", result.summary?.missing_field_count], ["资料已整理", result.summary?.interpreted ? "是" : "否"]]);
+  }
+}
+
+async function saveContract() {
+  setError("");
+  try {
+    const context = stageContext("stageSourceId");
+    const contract = { contract_no: $("contractNo").value, title: $("contractTitle").value, owner: $("contractOwner").value, contractor: $("contractor").value, contract_amount: $("contractAmount").value, tax_mode: $("taxMode").value, signed_date: $("signedDate").value, start_date: $("startDate").value, end_date: $("endDate").value };
+    const result = await apiJson("/api/contract", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...context, contract, obligations: state.obligationsDraft.filter((item) => item.name?.trim()) }) });
+    state.contractResult = result;
+    await refreshWorkspace();
+    setStatus("合同资料已保存");
+    renderContract();
+    renderAssist();
+  } catch (error) { setError(error.message); }
+}
+
+function renderDrawings() {
+  const result = state.drawingsResult;
+  state.drawingsDraft = result?.drawings?.length ? result.drawings.map((item) => ({ ...item })) : (state.drawingsDraft.length ? state.drawingsDraft : [{ drawing_no: "", name: "", discipline: "general", revision: "A", status: "received", source_id: "", review_note: "" }]);
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">P03 DRAWINGS INTAKE</span><h3>图纸登记台</h3></div><span class="surface-caption">登记图号、专业、版本和审阅状态；原始 CAD/PDF 文件保留在资料库</span></div>
+    <div class="capability-intro"><strong>图纸先形成可追踪的登记册。</strong><span>几何算量或外部 CAD 工具通过适配器交换，不改变 Core。</span></div>
+    <div class="field-grid capability-fields">${stageSourceField()}</div>
+    <div class="data-entry-heading"><div><span class="panel-label">DRAWING REGISTER</span><h3>图纸与版本</h3></div><button id="addDrawing" class="button button-quiet" type="button">＋新增图纸</button></div>
+    <div id="drawingEditor" class="editable-table"></div>
+    <div class="action-row"><button id="saveDrawings" class="button button-primary" type="button">保存图纸登记</button><span class="request-status">状态用于标识待审、已审和需补资料。</span></div>
+    <div id="drawingsOutput" class="inline-output"></div>`;
+  $("stageSourceId").value = state.sourceId || "local-source";
+  renderRowEditor("drawingEditor", state.drawingsDraft, [
+    { key: "drawing_no", label: "图号" }, { key: "name", label: "图纸名称" }, { key: "discipline", label: "专业" },
+    { key: "revision", label: "版本" }, { key: "status", label: "状态", options: [["received", "待审"], ["reviewed", "已审"], ["approved", "已批准"], ["superseded", "已作废"]] }, { key: "source_id", label: "资料编号" }, { key: "review_note", label: "审阅备注" },
+  ], () => ({ drawing_no: "", name: "", discipline: "general", revision: "A", status: "received", source_id: "", review_note: "" }));
+  $("addDrawing").addEventListener("click", () => { state.drawingsDraft.push({ drawing_no: "", name: "", discipline: "general", revision: "A", status: "received", source_id: "", review_note: "" }); renderDrawings(); });
+  $("saveDrawings").addEventListener("click", saveDrawings);
+  if (result) renderCapabilitySummary("drawingsOutput", result, [["图纸数量", result.summary?.drawing_count], ["版本数", result.summary?.revision_count], ["待审图纸", result.summary?.unreviewed_count], ["重复登记", result.summary?.duplicate_count]]);
+}
+
+async function saveDrawings() {
+  setError("");
+  try {
+    const context = stageContext("stageSourceId");
+    const result = await apiJson("/api/drawings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...context, drawings: state.drawingsDraft.filter((item) => item.drawing_no?.trim() || item.name?.trim()) }) });
+    state.drawingsResult = result;
+    await refreshWorkspace();
+    setStatus("图纸登记已保存");
+    renderDrawings();
+    renderAssist();
+  } catch (error) { setError(error.message); }
+}
+
+function renderBaseline() {
+  const result = state.baselineResult;
+  state.baselineDraft = result?.entries?.length ? result.entries.map((item) => ({ ...item })) : (state.baselineDraft.length ? state.baselineDraft : [{ code: "", name: "", unit: "", quantity: "", unit_price: "", amount: "", basis: "", source_id: "" }]);
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">P04 BASELINE LEDGER</span><h3>零号台账</h3></div><span class="surface-caption">把项目开局基线单独保存，金额可由工程量×单价自动计算</span></div>
+    <div class="capability-intro"><strong>零号台账是后续成本、变更和预警的比较基准。</strong><span>基线金额与 P05 成本计划分开保存，来源可回溯。</span></div>
+    <div class="field-grid capability-fields">${stageSourceField()}</div>
+    <div class="data-entry-heading"><div><span class="panel-label">BASELINE ENTRIES</span><h3>基线条目</h3></div><button id="addBaseline" class="button button-quiet" type="button">＋新增台账条目</button></div>
+    <div id="baselineEditor" class="editable-table"></div>
+    <div class="action-row"><button id="saveBaseline" class="button button-primary" type="button">保存零号台账</button><span class="request-status">未填写金额时，系统会尝试按数量和单价计算。</span></div>
+    <div id="baselineOutput" class="inline-output"></div>`;
+  $("stageSourceId").value = state.sourceId || "local-source";
+  renderRowEditor("baselineEditor", state.baselineDraft, [
+    { key: "code", label: "编码" }, { key: "name", label: "条目名称" }, { key: "unit", label: "单位" }, { key: "quantity", label: "数量", type: "number" },
+    { key: "unit_price", label: "单价", type: "number" }, { key: "amount", label: "金额", type: "number" }, { key: "basis", label: "基准口径" }, { key: "source_id", label: "资料编号" },
+  ], () => ({ code: "", name: "", unit: "", quantity: "", unit_price: "", amount: "", basis: "", source_id: "" }));
+  $("addBaseline").addEventListener("click", () => { state.baselineDraft.push({ code: "", name: "", unit: "", quantity: "", unit_price: "", amount: "", basis: "", source_id: "" }); renderBaseline(); });
+  $("saveBaseline").addEventListener("click", saveBaseline);
+  if (result) renderCapabilitySummary("baselineOutput", result, [["台账条目", result.summary?.entry_count], ["基线金额", dashboardMoney(result.summary?.baseline_total)], ["来源数", result.summary?.source_count], ["待定价", result.summary?.unpriced_count]]);
+}
+
+async function saveBaseline() {
+  setError("");
+  try {
+    const context = stageContext("stageSourceId");
+    const result = await apiJson("/api/baseline", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...context, entries: state.baselineDraft.filter((item) => item.name?.trim()) }) });
+    state.baselineResult = result;
+    await refreshWorkspace();
+    setStatus("零号台账已保存");
+    renderBaseline();
+    renderAssist();
+  } catch (error) { setError(error.message); }
+}
+
+function renderChanges() {
+  const result = state.changesResult;
+  state.changesDraft = result?.changes?.length ? result.changes.map((item) => ({ ...item })) : (state.changesDraft.length ? state.changesDraft : [{ change_id: "", title: "", reason: "", amount: "", status: "pending", impact_date: "", owner: "", source_id: "", risk_note: "" }]);
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">P06 CHANGE MANAGEMENT</span><h3>变更工作台</h3></div><span class="surface-caption">登记变更原因、金额影响、责任人和审批状态，形成可追踪决策队列</span></div>
+    <div class="capability-intro"><strong>变更先登记、再判断、后执行。</strong><span>待审批变更会进入经营看板提醒，不会静默改变成本基线。</span></div>
+    <div class="field-grid capability-fields">${stageSourceField()}</div>
+    <div class="data-entry-heading"><div><span class="panel-label">CHANGE REGISTER</span><h3>变更清单</h3></div><button id="addChange" class="button button-quiet" type="button">＋新增变更</button></div>
+    <div id="changeEditor" class="editable-table"></div>
+    <div class="action-row"><button id="saveChanges" class="button button-primary" type="button">保存变更清单</button><span class="request-status">批准或实施前，项目经理可在项目控制台复核。</span></div>
+    <div id="changesOutput" class="inline-output"></div>`;
+  $("stageSourceId").value = state.sourceId || "local-source";
+  renderRowEditor("changeEditor", state.changesDraft, [
+    { key: "change_id", label: "变更编号" }, { key: "title", label: "变更事项" }, { key: "reason", label: "原因" }, { key: "amount", label: "金额影响", type: "number" },
+    { key: "status", label: "状态", options: [["pending", "待审批"], ["approved", "已批准"], ["implemented", "已实施"], ["rejected", "已拒绝"]] }, { key: "impact_date", label: "影响日期", type: "date" }, { key: "owner", label: "责任人" }, { key: "source_id", label: "资料编号" }, { key: "risk_note", label: "风险备注" },
+  ], () => ({ change_id: "", title: "", reason: "", amount: "", status: "pending", impact_date: "", owner: "", source_id: "", risk_note: "" }));
+  $("addChange").addEventListener("click", () => { state.changesDraft.push({ change_id: "", title: "", reason: "", amount: "", status: "pending", impact_date: "", owner: "", source_id: "", risk_note: "" }); renderChanges(); });
+  $("saveChanges").addEventListener("click", saveChanges);
+  if (result) renderCapabilitySummary("changesOutput", result, [["变更数量", result.summary?.change_count], ["待审批", result.summary?.pending_count], ["已批准", result.summary?.approved_count], ["净影响", dashboardMoney(result.summary?.net_amount)]]);
+}
+
+async function saveChanges() {
+  setError("");
+  try {
+    const context = stageContext("stageSourceId");
+    const result = await apiJson("/api/changes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...context, changes: state.changesDraft.filter((item) => item.title?.trim()) }) });
+    state.changesResult = result;
+    await refreshWorkspace();
+    setStatus("变更清单已保存");
+    renderChanges();
+    renderAssist();
+  } catch (error) { setError(error.message); }
+}
+
+function renderEvidence() {
+  const result = state.evidenceResult;
+  state.evidenceDraft = result?.links?.length ? result.links.map((item) => ({ ...item })) : (state.evidenceDraft.length ? state.evidenceDraft : [{ link_id: "", source_id: "", target_type: "", target_id: "", relation: "supports", note: "", verified: "false" }]);
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">P07 EVIDENCE LINKAGE</span><h3>证据关联台</h3></div><span class="surface-caption">把合同、图纸、清单、台账、变更和初审事项串成可回溯证据链</span></div>
+    <div class="capability-intro"><strong>每个业务判断都可以回到来源。</strong><span>系统保存来源编号和关联关系，不把外部文件复制进 Core。</span></div>
+    <div class="field-grid capability-fields">${stageSourceField()}</div>
+    <div class="data-entry-heading"><div><span class="panel-label">EVIDENCE LINKS</span><h3>证据链条目</h3></div><button id="addEvidence" class="button button-quiet" type="button">＋新增关联</button></div>
+    <div id="evidenceEditor" class="editable-table"></div>
+    <div class="action-row"><button id="saveEvidence" class="button button-primary" type="button">保存证据关联</button><span class="request-status">关联只记录来源和目标编号，原文件仍由资料库保存。</span></div>
+    <div id="evidenceOutput" class="inline-output"></div>`;
+  $("stageSourceId").value = state.sourceId || "local-source";
+  renderRowEditor("evidenceEditor", state.evidenceDraft, [
+    { key: "link_id", label: "关联编号" }, { key: "source_id", label: "来源编号" }, { key: "target_type", label: "目标类型" }, { key: "target_id", label: "目标编号" },
+    { key: "relation", label: "关系" }, { key: "note", label: "说明" }, { key: "verified", label: "已核验", options: [["false", "待核验"], ["true", "已核验"]] },
+  ], () => ({ link_id: "", source_id: "", target_type: "", target_id: "", relation: "supports", note: "", verified: "false" }));
+  $("addEvidence").addEventListener("click", () => { state.evidenceDraft.push({ link_id: "", source_id: "", target_type: "", target_id: "", relation: "supports", note: "", verified: "false" }); renderEvidence(); });
+  $("saveEvidence").addEventListener("click", saveEvidence);
+  if (result) renderCapabilitySummary("evidenceOutput", result, [["关联数量", result.summary?.link_count], ["已核验", result.summary?.verified_count], ["待核验", result.summary?.unverified_count], ["目标类型", (result.summary?.target_types || []).join("、") || "—"]]);
+}
+
+async function saveEvidence() {
+  setError("");
+  try {
+    const context = stageContext("stageSourceId");
+    const links = state.evidenceDraft.filter((item) => item.target_type?.trim() && item.target_id?.trim()).map((item) => ({ ...item, verified: item.verified === true || item.verified === "true" }));
+    const result = await apiJson("/api/evidence", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...context, links }) });
+    state.evidenceResult = result;
+    await refreshWorkspace();
+    setStatus("证据关联已保存");
+    renderEvidence();
+    renderAssist();
+  } catch (error) { setError(error.message); }
+}
+
 function syncPlanDraft() {
   const items = state.boqResult?.items || [];
   if (state.planDraft.length !== items.length) {
@@ -1354,8 +1693,13 @@ function setView(view) {
   state.view = view;
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
   if (view === "overview") renderOverview();
+  if (view === "contract") renderContract();
   if (view === "boq") renderBoq();
+  if (view === "drawings") renderDrawings();
+  if (view === "baseline") renderBaseline();
   if (view === "plan") renderPlan();
+  if (view === "changes") renderChanges();
+  if (view === "evidence") renderEvidence();
   if (view === "review") renderReview();
   if (view === "dashboard") renderDashboard();
   if (view === "control") renderControl();

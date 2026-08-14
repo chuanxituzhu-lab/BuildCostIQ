@@ -91,13 +91,13 @@ ARCHITECTURE: dict[str, Any] = {
         },
     ],
     "capabilities": [
-        {"id": "P01", "label": "合同 intake", "status": "declarative", "surface": "占位能力"},
+        {"id": "P01", "label": "合同资料 intake", "status": "implemented", "surface": "合同资料台"},
         {"id": "P02", "label": "工程量清单 intake", "status": "implemented", "surface": "清单输入"},
-        {"id": "P03", "label": "图纸 intake", "status": "declarative", "surface": "占位能力"},
-        {"id": "P04", "label": "基线台账", "status": "declarative", "surface": "占位能力"},
+        {"id": "P03", "label": "图纸 intake", "status": "implemented", "surface": "图纸登记台"},
+        {"id": "P04", "label": "基线台账", "status": "implemented", "surface": "零号台账"},
         {"id": "P05", "label": "成本计划", "status": "implemented", "surface": "成本计划"},
-        {"id": "P06", "label": "变更管理", "status": "declarative", "surface": "占位能力"},
-        {"id": "P07", "label": "证据关联", "status": "declarative", "surface": "占位能力"},
+        {"id": "P06", "label": "变更管理", "status": "implemented", "surface": "变更工作台"},
+        {"id": "P07", "label": "证据关联", "status": "implemented", "surface": "证据链"},
         {"id": "P08", "label": "结算初审", "status": "implemented", "surface": "当前工作面"},
     ],
     "shared_modules": [
@@ -435,6 +435,56 @@ def _cost_plan(payload: object, actor: Mapping[str, Any] | None = None) -> dict[
     return result
 
 
+def _structured_capability(
+    payload: object,
+    capability_id: str,
+    stage: str,
+    action: str,
+    fields: tuple[str, ...],
+    actor: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Execute one structured P01/P03/P04/P06/P07 workbench stage."""
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    context = {
+        key: payload[key]
+        for key in ("project_id", "source_id", *fields)
+        if key in payload
+    }
+    result = dict(RUNTIME.gateway.execute(capability_id, context))
+    PROJECT_WORKSPACE.set_stage(str(context.get("project_id", "")), stage, result)
+    if actor and context.get("project_id"):
+        summary = result.get("summary") if isinstance(result.get("summary"), Mapping) else {}
+        PROJECT_WORKSPACE.append_audit(
+            str(context["project_id"]),
+            action,
+            actor,
+            str(context.get("source_id", "")),
+            {"capability_id": capability_id, **dict(summary)},
+        )
+    return result
+
+
+def _contract(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    return _structured_capability(payload, "P01", "contract", "contract.modified", ("contract", "obligations"), actor)
+
+
+def _drawings(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    return _structured_capability(payload, "P03", "drawings", "drawings.modified", ("drawings",), actor)
+
+
+def _baseline(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    return _structured_capability(payload, "P04", "baseline", "baseline.modified", ("entries",), actor)
+
+
+def _changes(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    return _structured_capability(payload, "P06", "changes", "changes.modified", ("changes",), actor)
+
+
+def _evidence(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    return _structured_capability(payload, "P07", "evidence", "evidence.modified", ("links",), actor)
+
+
 def _project(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
@@ -763,12 +813,19 @@ def _dashboard_period(snapshots: list[dict[str, Any]], days: int, now: datetime)
 
 def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
+    contract = (state.get("contract") or {}).get("result") or {}
     boq = (state.get("boq") or {}).get("result") or {}
+    drawings = (state.get("drawings") or {}).get("result") or {}
+    ledger = (state.get("baseline") or {}).get("result") or {}
     plan = (state.get("cost_plan") or {}).get("result") or {}
+    changes = (state.get("changes") or {}).get("result") or {}
+    evidence = (state.get("evidence") or {}).get("result") or {}
     review = (state.get("review") or {}).get("result") or {}
     summary = plan.get("summary") or {}
     cost_control = plan.get("cost_control")
-    baseline_total = _dashboard_decimal(summary.get("contract_subtotal"))
+    plan_baseline_total = _dashboard_decimal(summary.get("contract_subtotal"))
+    ledger_baseline_total = _dashboard_decimal((ledger.get("summary") or {}).get("baseline_total"))
+    baseline_total = plan_baseline_total if plan_baseline_total is not None else ledger_baseline_total
     pending_count = int(summary.get("pending_item_count", 0) or 0)
 
     comparison_rows: list[dict[str, Any]] = []
@@ -837,7 +894,7 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
             "view": view,
         })
 
-    if not plan:
+    if not plan and not ledger:
         add_alert("warn", "DASH-BASELINE-01", "成本基线尚未建立", "请先生成成本计划，项目经理暂时无法看到可靠的成本边界。", "plan")
     elif pending_count:
         add_alert("warn", "DASH-BASELINE-02", "仍有待组价清单", f"还有 {pending_count} 个清单项目没有合同单价，成本基线尚未完整。", "plan")
@@ -873,18 +930,47 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
     if month["issue_count"] and month["issue_count"] > week["issue_count"]:
         add_alert("info", "DASH-TREND-01", "月度问题多于本周", f"近30天累计 {month['issue_count']} 个问题，本周为 {week['issue_count']} 个；请关注重复问题。", "dashboard")
 
+    contract_summary = contract.get("summary") or {}
+    if not contract or contract_summary.get("missing_field_count", 0) > 0:
+        missing = int(contract_summary.get("missing_field_count", 0) or 0)
+        add_alert("warn", "DASH-P01-01", "合同主数据尚未完整", f"合同资料仍有 {missing or '若干'} 项关键字段待确认。", "contract")
+    drawing_summary = drawings.get("summary") or {}
+    if not drawings:
+        add_alert("info", "DASH-P03-01", "尚未建立图纸登记册", "请登记施工图、版本和审阅状态，避免变更和计量缺少图纸依据。", "drawings")
+    elif drawing_summary.get("unreviewed_count", 0):
+        add_alert("warn", "DASH-P03-02", "存在待审图纸", f"还有 {drawing_summary.get('unreviewed_count')} 张图纸未完成审阅。", "drawings")
+    if not plan and ledger:
+        add_alert("info", "DASH-P04-01", "已建立零号台账，尚未生成成本计划", "零号台账已形成开局基线；补充合同单价后继续生成 P05 成本计划。", "plan")
+    change_summary = changes.get("summary") or {}
+    if change_summary.get("pending_count", 0):
+        add_alert("warn", "DASH-P06-01", "存在待审批变更", f"有 {change_summary.get('pending_count')} 项变更等待决策，净影响 {change_summary.get('net_amount', 0):,.2f}。", "changes")
+    evidence_summary = evidence.get("summary") or {}
+    if evidence_summary.get("unverified_count", 0):
+        add_alert("info", "DASH-P07-01", "存在待核验证据关联", f"有 {evidence_summary.get('unverified_count')} 条证据关联尚未核验。", "evidence")
+
     alerts.sort(key=lambda item: item["risk"]["priority"], reverse=True)
     return {
         "project": state.get("project") or {},
         "audience": "project_manager" if (actor or {}).get("role") == ROLE_PROJECT_MANAGER else "cost_estimator",
         "generated_at": now.isoformat(),
         "baseline": {
-            "status": "ready" if plan else "missing",
-            "source": "P05 cost plan",
+            "status": "ready" if plan or ledger else "missing",
+            "source": "P05 cost plan" if plan else "P04 zero ledger",
             "boq_item_count": int(boq.get("item_count", len(boq.get("items") or [])) or 0),
             "contract_item_count": int(summary.get("contract_item_count", 0) or 0),
             "contract_subtotal": _dashboard_number(baseline_total),
+            "zero_ledger_total": _dashboard_number(ledger_baseline_total),
             "pending_item_count": pending_count,
+        },
+        "capabilities": {
+            "P01": contract.get("summary") or {},
+            "P02": boq.get("summary") or {"item_count": boq.get("item_count", 0)},
+            "P03": drawings.get("summary") or {},
+            "P04": ledger.get("summary") or {},
+            "P05": plan.get("summary") or {},
+            "P06": changes.get("summary") or {},
+            "P07": evidence.get("summary") or {},
+            "P08": review.get("summary") or {},
         },
         "comparison": comparison,
         "review": {
@@ -901,8 +987,13 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
 
 def _report_html(state: dict[str, Any]) -> bytes:
     project = state["project"]
+    contract = (state.get("contract") or {}).get("result") or {}
     boq = (state.get("boq") or {}).get("result") or {}
+    drawings = (state.get("drawings") or {}).get("result") or {}
+    ledger = (state.get("baseline") or {}).get("result") or {}
     plan = (state.get("cost_plan") or {}).get("result") or {}
+    changes = (state.get("changes") or {}).get("result") or {}
+    evidence = (state.get("evidence") or {}).get("result") or {}
     review = (state.get("review") or {}).get("result") or {}
     items = plan.get("items") or boq.get("items") or []
     rows = "".join(
@@ -914,12 +1005,27 @@ def _report_html(state: dict[str, Any]) -> bytes:
     )
     gate = "允许发布" if review.get("publishable") else "需要处理"
     gate_color = "#16734a" if review.get("publishable") else "#a12b24"
+    capability_rows = [
+        ("P01 合同资料", "已建立" if contract else "未建立", (contract.get("summary") or {}).get("missing_field_count", "—")),
+        ("P02 清单资料", "已建立" if boq else "未建立", boq.get("item_count", "—")),
+        ("P03 图纸登记", "已建立" if drawings else "未建立", (drawings.get("summary") or {}).get("drawing_count", "—")),
+        ("P04 零号台账", "已建立" if ledger else "未建立", (ledger.get("summary") or {}).get("baseline_total", "—")),
+        ("P05 成本计划", "已建立" if plan else "未建立", (plan.get("summary") or {}).get("contract_subtotal", "—")),
+        ("P06 变更管理", "已建立" if changes else "未建立", (changes.get("summary") or {}).get("pending_count", "—")),
+        ("P07 证据关联", "已建立" if evidence else "未建立", (evidence.get("summary") or {}).get("link_count", "—")),
+        ("P08 结算初审", "已建立" if review else "未建立", (review.get("summary") or {}).get("finding_count", "—")),
+    ]
+    capability_html = "".join(
+        f"<tr><td>{html.escape(str(label))}</td><td>{html.escape(str(status))}</td><td>{html.escape(str(value))}</td></tr>"
+        for label, status, value in capability_rows
+    )
     body = f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>{html.escape(str(project['name']))} - 造价工作报告</title>
 <style>body{{font-family:Arial,'Microsoft YaHei',sans-serif;margin:36px;color:#222}}h1{{margin-bottom:6px}}.meta{{color:#666;margin-bottom:24px}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #bbb;padding:7px;text-align:left;font-size:12px}}th{{background:#eee}}</style>
 </head><body><h1>{html.escape(str(project['name']))} · 造价工作报告</h1>
 <div class="meta">项目编号：{html.escape(str(project['id']))}　生成时间：{html.escape(str(project.get('updated_at', '')))}</div>
 <h2>工作状态</h2><p style="font-size:18px;font-weight:bold;color:{gate_color}">结算初审：{gate}</p>
+<h2>P01–P08 能力覆盖</h2><table><thead><tr><th>能力</th><th>状态</th><th>摘要</th></tr></thead><tbody>{capability_html}</tbody></table>
 <h2>成本计划</h2><p>合同计划小计：{html.escape(str((plan.get('summary') or {}).get('contract_subtotal', '—')))}　待组价：{html.escape(str((plan.get('summary') or {}).get('pending_item_count', '—')))}</p>
 <table><thead><tr><th>编码</th><th>项目</th><th>单位</th><th>工程量</th><th>合同单价</th><th>金额</th><th>状态</th></tr></thead><tbody>{rows}</tbody></table>
 <h2>审查事项</h2><ul>{''.join(f'<li>{html.escape(str(f.get("message", "")))}</li>' for f in review.get('findings', [])) or '<li>未发现审查事项</li>'}</ul>
@@ -1094,10 +1200,10 @@ def _health() -> dict[str, Any]:
         "service": "BuildCostIQ WebUI",
         "runtime": RUNTIME.health(),
         "review_capability": "P08",
-        "business_capabilities": ["P02", "P05", "P08"],
+        "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "经营看板、成本基线比对、成本超限预警、周月问题趋势、资料查看与权限审计",
+        "release_highlights": "P01-P08 全能力工作台、经营看板、成本基线比对、变更与证据链、资料留痕",
     }
 
 
@@ -1360,8 +1466,13 @@ class BuildCostHandler(BaseHTTPRequestHandler):
 
         actor = _optional_actor(self.headers)
         handlers = {
+            "/api/contract": lambda payload: _contract(payload, actor),
             "/api/boq": lambda payload: _boq(payload, actor),
+            "/api/drawings": lambda payload: _drawings(payload, actor),
+            "/api/baseline": lambda payload: _baseline(payload, actor),
             "/api/cost-plan": lambda payload: _cost_plan(payload, actor),
+            "/api/changes": lambda payload: _changes(payload, actor),
+            "/api/evidence": lambda payload: _evidence(payload, actor),
             "/api/review": lambda payload: _review(payload, actor),
         }
         handler = handlers.get(urlsplit(self.path).path)

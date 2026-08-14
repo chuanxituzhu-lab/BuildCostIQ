@@ -1,26 +1,25 @@
 from __future__ import annotations
 
 from .base import DeclarativeCapability
+from .baseline import BaselineLedgerCapability
 from .boq import BillOfQuantitiesCapability
+from .changes import ChangeManagementCapability
+from .contract import ContractIntakeCapability
 from .costplan import CostPlanCapability
+from .drawings import DrawingIntakeCapability
+from .evidence import EvidenceLinkageCapability
 from .review import SettlementReviewCapability
 
-
-def _plugin(capability_id: str, name: str) -> type[DeclarativeCapability]:
-    return type(f"{capability_id}Capability", (DeclarativeCapability,), {"capability_id": capability_id, "name": name})
-
-
-# P02, P05 and P08 have real implementations; the rest keep the declarative
-# placeholder until each is filled in turn. The gateway still sees exactly
-# P01-P08, so the frozen boundary is unchanged.
+# All eight frozen capabilities have a pure implementation. Persistence and
+# external file handling remain in adapters; the gateway boundary is unchanged.
 PLUGIN_CLASSES = (
-    _plugin("P01", "contract"),
+    ContractIntakeCapability,
     BillOfQuantitiesCapability,
-    _plugin("P03", "drawing"),
-    _plugin("P04", "baseline-ledger"),
+    DrawingIntakeCapability,
+    BaselineLedgerCapability,
     CostPlanCapability,
-    _plugin("P06", "change"),
-    _plugin("P07", "evidence"),
+    ChangeManagementCapability,
+    EvidenceLinkageCapability,
     SettlementReviewCapability,
 )
 
