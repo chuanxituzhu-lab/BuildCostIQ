@@ -1,6 +1,6 @@
 # BuildCostIQ
 
-BuildCostIQ version `v0.7.2-rc3` is a local-first construction-cost foundation and full P01–P08 project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
+BuildCostIQ version `v0.7.2-rc4` is a local-first construction-cost foundation and full P01–P08 project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
 
 ## Quick verification
 
@@ -20,7 +20,7 @@ python -m gui --host 127.0.0.1 --port 8787
 
 Open `http://127.0.0.1:8787/`. The WebUI provides a user-facing project overview, resumable local project workspace, Excel/CSV data intake, project-file library for Office/PDF/CAD/image sources, local recognition and automatic archive classification, business tables, cost planning, settlement review, next-step assistance, and Word/Excel-compatible exports. Its exchange center also imports and exports a portable project ZIP containing local project state, standard tables, report output, original source files, and derived Markdown archives. It uses the frozen P01–P08 gateway and keeps all data local by default; external OCR requires explicit per-file consent and technical JSON is not shown in the normal workflow. After installation, `buildcostiq-web --port 8787` is an equivalent launcher. See [docs/WEBUI.md](docs/WEBUI.md) for the API boundary.
 
-The homepage shows the current release version and release highlights. The workbench now exposes one direct screen for each capability: P01 contract intake, P02 BOQ intake, P03 drawing register, P04 zero ledger, P05 cost planning, P06 change management, P07 evidence linkage, and P08 settlement review. P01 also provides a dedicated contract-material intake entry for multi-file local archiving and recognition before contract master data is confirmed. It also provides three role scopes: project managers see important indicators only and can enter personnel, cost managers have full permissions and can enter personnel, and cost estimators operate the workbench with sensitive prices and costs hidden. It provides role-aware dashboards, local baseline comparison, automated alerts, file viewing, permission-gated edits and soft deletes, multi-file project intake, local recognition, and explicit external OCR consent.
+The homepage shows the current release version and release highlights. The workbench now exposes one direct screen for each capability: P01 contract intake, P02 BOQ intake, P03 drawing register, P04 zero ledger, P05 cost planning, P06 change management, P07 evidence linkage, and P08 settlement review. P01, P03, P04, P06, and P07 provide dedicated multi-file material-intake entries for local archiving and recognition before business records are confirmed. It also provides three role scopes: project managers see important indicators only and can enter personnel, cost managers have full permissions and can enter personnel, and cost estimators operate the workbench with sensitive prices and costs hidden. It provides role-aware dashboards, local baseline comparison, automated alerts, file viewing, permission-gated edits and soft deletes, multi-file project intake, local recognition, and explicit external OCR consent.
 
 ## Boundaries
 

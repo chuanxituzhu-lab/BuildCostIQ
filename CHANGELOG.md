@@ -2,6 +2,12 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc4 — 2026-08-14
+
+- Added dedicated multi-file material-intake entries to P03 drawings, P04 zero ledger, P06 changes, and P07 evidence linkage.
+- Reused the local source archive, recognition reports, storage-path display, view actions, and permission-gated soft deletion across these workspaces.
+- Kept the business forms and frozen Core/CapabilityGateway boundary unchanged.
+
 ## v0.7.2-rc3 — 2026-08-14
 
 - Added a dedicated P01 contract-material intake entry with multi-file selection.

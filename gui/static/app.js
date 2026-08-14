@@ -756,7 +756,7 @@ async function modifySource(source) {
   }
 }
 
-async function deleteSource(source) {
+async function deleteSource(source, targetId = "sourceList") {
   if (!isManager() || !window.confirm("仅造价经理可执行。资料将软删除并保留原文件与操作记录，确认继续？")) return;
   try {
     const response = await apiJson("/api/source/delete", {
@@ -765,7 +765,7 @@ async function deleteSource(source) {
       body: JSON.stringify({ project_id: state.projectId, source_id: source.source_id }),
     });
     applyWorkspace(response.workspace);
-    renderSourceList();
+    renderSourceList(targetId);
     renderControlIfVisible();
     setStatus("资料已软删除，原文件和操作痕迹仍保留");
   } catch (error) {
@@ -851,7 +851,7 @@ function renderSourceList(targetId = "sourceList") {
       deleteButton.type = "button";
       deleteButton.className = "icon-button danger-action";
       deleteButton.textContent = "删除（留痕）";
-      deleteButton.addEventListener("click", () => deleteSource(source));
+      deleteButton.addEventListener("click", () => deleteSource(source, targetId));
       actions.append(deleteButton);
     } else if (!deleted) {
       const permission = document.createElement("small");
@@ -1232,6 +1232,43 @@ async function handleContractSourceFiles(event) {
   }
 }
 
+function stageSourcePanel(stage, title, note) {
+  return `
+    <section class="source-panel stage-source-panel">
+      <div class="surface-title"><div><span class="panel-label">${stage.toUpperCase()} FILE INTAKE</span><h3>${title}录入</h3></div><button id="upload-${stage}-source" class="button button-quiet" type="button">＋录入${title}</button></div>
+      <p class="business-note">${note} 原件保存在本地资料库并自动识别，业务登记表仍需人工核对后保存。</p>
+      <div id="${stage}SourceList" class="source-list"></div>
+      <div id="${stage}IntakeSummary" class="intake-report-list"></div>
+    </section>`;
+}
+
+function bindStageSourcePanel(stage, label) {
+  const listId = `${stage}SourceList`;
+  const summaryId = `${stage}IntakeSummary`;
+  renderSourceList(listId);
+  renderIntakeReports(summaryId);
+  $(`upload-${stage}-source`).addEventListener("click", () => $("stageSourceInput").click());
+  $("stageSourceInput").onchange = (event) => handleStageSourceFiles(event, { label, listId, summaryId });
+}
+
+async function handleStageSourceFiles(event, { label, listId, summaryId }) {
+  const files = [...(event.target.files || [])];
+  if (!files.length) return;
+  setError("");
+  try {
+    await uploadFiles(files);
+    renderSourceList(listId);
+    renderIntakeReports(summaryId);
+    updateContextBar();
+    setStatus(`${files.length} 个${label}文件已保存并完成本地识别`);
+    renderAssist();
+  } catch (error) {
+    setError(error.message);
+  } finally {
+    event.target.value = "";
+  }
+}
+
 async function handleProjectInfoFiles(event) {
   const files = [...(event.target.files || [])];
   if (!files.length) return;
@@ -1559,6 +1596,7 @@ function renderDrawings() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">P03 DRAWINGS INTAKE</span><h3>图纸登记台</h3></div><span class="surface-caption">登记图号、专业、版本和审阅状态；原始 CAD/PDF 文件保留在资料库</span></div>
     <div class="capability-intro"><strong>图纸先形成可追踪的登记册。</strong><span>几何算量或外部 CAD 工具通过适配器交换，不改变 Core。</span></div>
+    ${stageSourcePanel("drawings", "图纸资料", "可多选施工图、竣工图、设计变更图、CAD、PDF 和图片资料。")}
     <div class="field-grid capability-fields">${stageSourceField()}</div>
     <div class="data-entry-heading"><div><span class="panel-label">DRAWING REGISTER</span><h3>图纸与版本</h3></div><button id="addDrawing" class="button button-quiet" type="button">＋新增图纸</button></div>
     <div id="drawingEditor" class="editable-table"></div>
@@ -1569,6 +1607,7 @@ function renderDrawings() {
     { key: "drawing_no", label: "图号" }, { key: "name", label: "图纸名称" }, { key: "discipline", label: "专业" },
     { key: "revision", label: "版本" }, { key: "status", label: "状态", options: [["received", "待审"], ["reviewed", "已审"], ["approved", "已批准"], ["superseded", "已作废"]] }, { key: "source_id", label: "资料编号" }, { key: "review_note", label: "审阅备注" },
   ], () => ({ drawing_no: "", name: "", discipline: "general", revision: "A", status: "received", source_id: "", review_note: "" }));
+  bindStageSourcePanel("drawings", "图纸资料");
   $("addDrawing").addEventListener("click", () => { state.drawingsDraft.push({ drawing_no: "", name: "", discipline: "general", revision: "A", status: "received", source_id: "", review_note: "" }); renderDrawings(); });
   $("saveDrawings").addEventListener("click", saveDrawings);
   if (result) renderCapabilitySummary("drawingsOutput", result, [["图纸数量", result.summary?.drawing_count], ["版本数", result.summary?.revision_count], ["待审图纸", result.summary?.unreviewed_count], ["重复登记", result.summary?.duplicate_count]]);
@@ -1593,6 +1632,7 @@ function renderBaseline() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">P04 BASELINE LEDGER</span><h3>零号台账</h3></div><span class="surface-caption">把项目开局基线单独保存，金额可由工程量×单价自动计算</span></div>
     <div class="capability-intro"><strong>零号台账是后续成本、变更和预警的比较基准。</strong><span>基线金额与 P05 成本计划分开保存，来源可回溯。</span></div>
+    ${stageSourcePanel("baseline", "零号台账资料", "可多选开工资料、合同附件、目标成本表、Excel、PDF、Word 和图片资料。")}
     <div class="field-grid capability-fields">${stageSourceField()}</div>
     <div class="data-entry-heading"><div><span class="panel-label">BASELINE ENTRIES</span><h3>基线条目</h3></div><button id="addBaseline" class="button button-quiet" type="button">＋新增台账条目</button></div>
     <div id="baselineEditor" class="editable-table"></div>
@@ -1603,6 +1643,7 @@ function renderBaseline() {
     { key: "code", label: "编码" }, { key: "name", label: "条目名称" }, { key: "unit", label: "单位" }, { key: "quantity", label: "数量", type: "number" },
     { key: "unit_price", label: "单价", type: "number" }, { key: "amount", label: "金额", type: "number" }, { key: "basis", label: "基准口径" }, { key: "source_id", label: "资料编号" },
   ], () => ({ code: "", name: "", unit: "", quantity: "", unit_price: "", amount: "", basis: "", source_id: "" }));
+  bindStageSourcePanel("baseline", "零号台账资料");
   $("addBaseline").addEventListener("click", () => { state.baselineDraft.push({ code: "", name: "", unit: "", quantity: "", unit_price: "", amount: "", basis: "", source_id: "" }); renderBaseline(); });
   $("saveBaseline").addEventListener("click", saveBaseline);
   if (result) renderCapabilitySummary("baselineOutput", result, [["台账条目", result.summary?.entry_count], ["基线金额", dashboardMoney(result.summary?.baseline_total)], ["来源数", result.summary?.source_count], ["待定价", result.summary?.unpriced_count]]);
@@ -1627,6 +1668,7 @@ function renderChanges() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">P06 CHANGE MANAGEMENT</span><h3>变更工作台</h3></div><span class="surface-caption">登记变更原因、金额影响、责任人和审批状态，形成可追踪决策队列</span></div>
     <div class="capability-intro"><strong>变更先登记、再判断、后执行。</strong><span>待审批变更会进入经营看板提醒，不会静默改变成本基线。</span></div>
+    ${stageSourcePanel("changes", "变更资料", "可多选变更联系单、洽商记录、签证、现场照片、图纸和审批文件。")}
     <div class="field-grid capability-fields">${stageSourceField()}</div>
     <div class="data-entry-heading"><div><span class="panel-label">CHANGE REGISTER</span><h3>变更清单</h3></div><button id="addChange" class="button button-quiet" type="button">＋新增变更</button></div>
     <div id="changeEditor" class="editable-table"></div>
@@ -1637,6 +1679,7 @@ function renderChanges() {
     { key: "change_id", label: "变更编号" }, { key: "title", label: "变更事项" }, { key: "reason", label: "原因" }, { key: "amount", label: "金额影响", type: "number" },
     { key: "status", label: "状态", options: [["pending", "待审批"], ["approved", "已批准"], ["implemented", "已实施"], ["rejected", "已拒绝"]] }, { key: "impact_date", label: "影响日期", type: "date" }, { key: "owner", label: "责任人" }, { key: "source_id", label: "资料编号" }, { key: "risk_note", label: "风险备注" },
   ], () => ({ change_id: "", title: "", reason: "", amount: "", status: "pending", impact_date: "", owner: "", source_id: "", risk_note: "" }));
+  bindStageSourcePanel("changes", "变更资料");
   $("addChange").addEventListener("click", () => { state.changesDraft.push({ change_id: "", title: "", reason: "", amount: "", status: "pending", impact_date: "", owner: "", source_id: "", risk_note: "" }); renderChanges(); });
   $("saveChanges").addEventListener("click", saveChanges);
   if (result) renderCapabilitySummary("changesOutput", result, [["变更数量", result.summary?.change_count], ["待审批", result.summary?.pending_count], ["已批准", result.summary?.approved_count], ["净影响", dashboardMoney(result.summary?.net_amount)]]);
@@ -1661,6 +1704,7 @@ function renderEvidence() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">P07 EVIDENCE LINKAGE</span><h3>证据关联台</h3></div><span class="surface-caption">把合同、图纸、清单、台账、变更和初审事项串成可回溯证据链</span></div>
     <div class="capability-intro"><strong>每个业务判断都可以回到来源。</strong><span>系统保存来源编号和关联关系，不把外部文件复制进 Core。</span></div>
+    ${stageSourcePanel("evidence", "证据资料", "可多选合同、图纸、清单、台账、变更、收方单和照片等证明资料。")}
     <div class="field-grid capability-fields">${stageSourceField()}</div>
     <div class="data-entry-heading"><div><span class="panel-label">EVIDENCE LINKS</span><h3>证据链条目</h3></div><button id="addEvidence" class="button button-quiet" type="button">＋新增关联</button></div>
     <div id="evidenceEditor" class="editable-table"></div>
@@ -1671,6 +1715,7 @@ function renderEvidence() {
     { key: "link_id", label: "关联编号" }, { key: "source_id", label: "来源编号" }, { key: "target_type", label: "目标类型" }, { key: "target_id", label: "目标编号" },
     { key: "relation", label: "关系" }, { key: "note", label: "说明" }, { key: "verified", label: "已核验", options: [["false", "待核验"], ["true", "已核验"]] },
   ], () => ({ link_id: "", source_id: "", target_type: "", target_id: "", relation: "supports", note: "", verified: "false" }));
+  bindStageSourcePanel("evidence", "证据资料");
   $("addEvidence").addEventListener("click", () => { state.evidenceDraft.push({ link_id: "", source_id: "", target_type: "", target_id: "", relation: "supports", note: "", verified: "false" }); renderEvidence(); });
   $("saveEvidence").addEventListener("click", saveEvidence);
   if (result) renderCapabilitySummary("evidenceOutput", result, [["关联数量", result.summary?.link_count], ["已核验", result.summary?.verified_count], ["待核验", result.summary?.unverified_count], ["目标类型", (result.summary?.target_types || []).join("、") || "—"]]);
