@@ -2,6 +2,12 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc8 — 2026-08-14
+
+- Added project-material search by filename, archive category, recognition category, and local path; filtered results retain the existing 查看 action for opening the source file.
+- Grouped relevant classification dropdowns so the most-used and recently used three-to-five choices appear first while the complete category set remains available.
+- Updated the WebUI release banner and runtime metadata without changing the frozen Core/CapabilityGateway P01–P08 boundary.
+
 ## v0.7.2-rc7 — 2026-08-14
 
 - Renamed P01 in the user-facing workbench to 合同与招采依据 and added five intake classifications: 招标、投标、定标、合同 and 执行解释。

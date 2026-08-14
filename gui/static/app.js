@@ -32,6 +32,7 @@ const state = {
   recognizers: [],
   basisCatalog: { categories: [], items: [] },
   basisReferences: [],
+  sourceSearchTerm: "",
   intakeReports: [],
   exportWorkspace: { kind: "report", filename: "", directoryHandle: null },
   personnel: { users: [], audit_log: [] },
@@ -70,6 +71,31 @@ const BASIS_CATEGORIES = [
   ["market_price", "市场价格"],
   ["interface_snapshot", "外部接口快照"],
 ];
+
+function prioritizedCategoryIds(items, fallbackOrder, limit = 5) {
+  const counts = new Map();
+  const recentRank = new Map();
+  items.forEach((item, itemIndex) => {
+    const category = item.archive_category || item.category;
+    if (category) {
+      counts.set(category, (counts.get(category) || 0) + 1);
+      recentRank.set(category, itemIndex);
+    }
+  });
+  const ranked = fallbackOrder
+    .map((id, index) => ({ id, count: counts.get(id) || 0, recent: recentRank.get(id) ?? -1, index }))
+    .sort((left, right) => right.count - left.count || right.recent - left.recent || left.index - right.index)
+    .map((item) => item.id);
+  return ranked.slice(0, Math.min(limit, fallbackOrder.length));
+}
+
+function groupedCategoryOptions(entries, priorityIds, valueFor = (entry) => entry[0], labelFor = (entry) => entry[1]) {
+  const priority = new Set(priorityIds);
+  const option = (entry) => `<option value="${valueFor(entry)}">${labelFor(entry)}</option>`;
+  const primary = entries.filter((entry) => priority.has(valueFor(entry))).map(option).join("");
+  const rest = entries.filter((entry) => !priority.has(valueFor(entry))).map(option).join("");
+  return `<optgroup label="常用/近期">${primary || '<option value="">暂无常用分类</option>'}</optgroup>${rest ? `<optgroup label="其他分类">${rest}</optgroup>` : ""}`;
+}
 
 async function apiJson(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -670,6 +696,7 @@ function renderOverview() {
   sourcePanel.innerHTML = `
     <div class="surface-title"><div><span class="panel-label">PROJECT FILES</span><h3>项目资料库</h3></div><button id="uploadSource" class="button button-quiet" type="button">＋接入资料</button></div>
     <p class="business-note">文件先在本地保存并自动识别归档；本地识别不外发，外部 OCR 只有在明确确认后才会发送指定文件。</p>
+    <div class="source-search-bar"><label for="sourceSearch">搜索项目资料</label><div class="source-search-controls"><input id="sourceSearch" type="search" placeholder="文件名、资料分类或本地路径" /><button id="sourceSearchButton" class="button button-quiet" type="button">搜索资料</button><button id="sourceSearchClear" class="button button-quiet" type="button">清除</button></div><small id="sourceSearchSummary" class="source-search-summary"></small></div>
     <div id="sourceList" class="source-list"></div>
     <div id="sourceIntakeSummary" class="intake-report-list"></div>
     <div class="recognition-entry"><span class="panel-label">RECOGNITION</span><div id="recognizerCatalog" class="recognizer-list"></div></div>
@@ -697,6 +724,7 @@ function renderOverview() {
     overviewCards.append(dashboardCard);
   }
   renderSourceList();
+  bindSourceLibrarySearch();
   const capabilityPanel = document.createElement("div");
   capabilityPanel.className = "overview-panel capability-coverage-panel";
   capabilityPanel.innerHTML = '<div class="surface-title"><div><span class="panel-label">P01 — P08 WORKBENCH</span><h3>八项能力入口</h3></div><span class="surface-caption">每项能力都有独立工作面，结果统一回到当前项目</span></div><div id="capabilityCoverage" class="capability-coverage"></div>';
@@ -823,16 +851,65 @@ async function deleteSource(source, targetId = "sourceList") {
   }
 }
 
+function sourceSearchText(source) {
+  const recognition = source.recognition || {};
+  return [
+    source.name,
+    source.kind,
+    source.archive_area,
+    source.archive_category,
+    source.archive_path,
+    source.storage_path,
+    recognition.category,
+    recognition.status,
+  ].filter(Boolean).join(" ").toLocaleLowerCase();
+}
+
+function bindSourceLibrarySearch() {
+  const input = $("sourceSearch");
+  const searchButton = $("sourceSearchButton");
+  const clearButton = $("sourceSearchClear");
+  if (!input || !searchButton || !clearButton) return;
+  input.value = state.sourceSearchTerm;
+  const runSearch = () => {
+    state.sourceSearchTerm = input.value.trim();
+    renderSourceList("sourceList");
+  };
+  searchButton.addEventListener("click", runSearch);
+  clearButton.addEventListener("click", () => {
+    input.value = "";
+    state.sourceSearchTerm = "";
+    renderSourceList("sourceList");
+    input.focus();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runSearch();
+    }
+  });
+}
+
 function renderSourceList(targetId = "sourceList", filter = {}) {
   const list = $(targetId);
   if (!list) return;
+  const searchTerm = (filter.searchTerm ?? (targetId === "sourceList" ? state.sourceSearchTerm : "")).trim().toLocaleLowerCase();
   const visibleSources = state.sources.filter((source) => {
     if (filter.archiveArea && source.archive_area !== filter.archiveArea) return false;
+    if (searchTerm && !sourceSearchText(source).includes(searchTerm)) return false;
     return true;
   });
+  const searchSummary = $("sourceSearchSummary");
+  if (targetId === "sourceList" && searchSummary) {
+    searchSummary.textContent = searchTerm
+      ? `搜索“${searchTerm}”：${visibleSources.length} / ${state.sources.length} 项资料`
+      : `${state.sources.length} 项资料，支持按名称、分类和本地路径搜索`;
+  }
   if (!visibleSources.length) {
     list.className = "source-list empty-state";
-    list.textContent = filter.archiveArea
+    list.textContent = searchTerm
+      ? `没有找到与“${searchTerm}”匹配的项目资料。`
+      : filter.archiveArea
       ? `当前归档位置还没有资料：${filter.archiveArea}`
       : "当前项目还没有其他资料。可以从这里接入 Word、PDF、CAD 或 Excel 文件。";
     return;
@@ -1701,7 +1778,12 @@ function renderBasisCatalog() {
 }
 
 function renderBasis() {
-  const categoryOptions = BASIS_CATEGORIES.map(([id, label]) => '<option value="' + id + '">' + label + "</option>").join("");
+  const basisCategoryPriority = prioritizedCategoryIds(
+    state.basisCatalog.items || [],
+    BASIS_CATEGORIES.map(([id]) => id),
+    4,
+  );
+  const categoryOptions = groupedCategoryOptions(BASIS_CATEGORIES, basisCategoryPriority);
   $("workspaceContent").innerHTML =
     '<div class="surface-title"><div><span class="panel-label">EXTERNAL BASIS LIBRARY</span><h3>外部依据库</h3></div><span class="surface-caption">独立于项目资料库保存，按版本快照被项目引用</span></div>' +
     '<div class="capability-intro"><strong>项目资料库保存“这个项目发生了什么”；外部依据库存放“当时依据什么规则和价格判断”。</strong><span>外部接口只取得本地快照，默认不向外发送项目资料；依据被 P04、P05、P08 引用后，历史项目仍按当时版本复核。</span></div>' +
@@ -1967,6 +2049,12 @@ function renderContract() {
   const result = state.contractResult;
   const contract = result?.contract || state.contractDraft;
   const obligations = result?.obligations || state.obligationsDraft;
+  const contractCategoryPriority = prioritizedCategoryIds(
+    state.sources,
+    CONTRACT_ARCHIVE_CLASSES.map(([value]) => value),
+    5,
+  );
+  const contractCategoryOptions = groupedCategoryOptions(CONTRACT_ARCHIVE_CLASSES, contractCategoryPriority, (entry) => entry[0], (entry) => `${entry[0]}：${entry[1]}`);
   state.contractDraft = { ...state.contractDraft, ...contract };
   state.obligationsDraft = obligations.length ? obligations.map((item) => ({ ...item })) : [{ name: "", owner: "", due_date: "", status: "pending", amount: "" }];
   $("workspaceContent").innerHTML = `
@@ -1975,7 +2063,7 @@ function renderContract() {
     <section class="source-panel contract-source-panel">
       <div class="surface-title"><div><span class="panel-label">CONTRACT FILE INTAKE</span><h3>合同与招采依据录入</h3></div><button id="uploadContractSource" class="button button-quiet" type="button">＋录入合同与招采依据</button></div>
       <p class="business-note">可多选招标、投标、定标、合同和执行解释资料；原件保存在本地资料库并自动识别，合同主数据仍需人工核对后保存。</p>
-      <label class="archive-selector">本次资料分类<select id="contractArchiveCategory">${CONTRACT_ARCHIVE_CLASSES.map(([value, label]) => `<option value="${value}">${value}：${label}</option>`).join("")}</select></label>
+      <label class="archive-selector">本次资料分类<select id="contractArchiveCategory">${contractCategoryOptions}</select><small class="select-note">优先显示使用量高或近期使用的分类；其他分类仍可在下拉菜单中选择。</small></label>
       <div id="contractSourceList" class="source-list"></div>
       <div id="contractIntakeSummary" class="intake-report-list"></div>
     </section>

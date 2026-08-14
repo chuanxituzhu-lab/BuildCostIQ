@@ -1432,7 +1432,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "P01-P08 资料分区归档、独立外部依据库、三角色分级权限、成本明细脱敏与审计留痕",
+        "release_highlights": "项目资料库搜索查看、常用与近期分类优先、P01-P08 资料分区归档、独立外部依据库",
     }
 
 

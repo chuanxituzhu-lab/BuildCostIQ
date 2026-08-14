@@ -1,4 +1,4 @@
-# BuildCostIQ Release Manifest — v0.7.2-rc7
+# BuildCostIQ Release Manifest — v0.7.2-rc8
 
 Release type: Release Candidate
 
