@@ -1274,7 +1274,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "P01-P08 全能力工作台、经营看板、成本基线比对、变更与证据链、资料留痕",
+        "release_highlights": "P01-P08 全能力工作台、三角色分级权限、成本明细脱敏、经营看板与审计留痕",
     }
 
 
