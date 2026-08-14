@@ -2,6 +2,11 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc5 — 2026-08-14
+
+- Added dedicated multi-file material-intake entries to P05 cost planning and P08 settlement review, completing the P01–P08 intake coverage.
+- Kept the existing P02 BOQ intake and reused the local archive, recognition reports, paths, view actions, and audit-controlled lifecycle across all stages.
+
 ## v0.7.2-rc4 — 2026-08-14
 
 - Added dedicated multi-file material-intake entries to P03 drawings, P04 zero ledger, P06 changes, and P07 evidence linkage.

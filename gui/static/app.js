@@ -1752,10 +1752,12 @@ function renderPlan() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">COST PLANNING</span><h3>编制成本计划</h3></div><span class="surface-caption">合同单价进入计划；市场单价仅用于内部成本参考</span></div>
     <div class="notice-line"><strong>当前资料：${state.fileName || state.sourceName}</strong><span>${state.boqResult.item_count} 项清单已带入。</span></div>
+    ${stageSourcePanel("plan", "成本计划资料", "可多选组价依据、市场询价、目标成本表、合同附件和计算说明。")}
     <div class="data-entry-heading"><div><span class="panel-label">PRICE BOOK</span><h3>补充单价</h3></div><span class="input-note">没有合同单价的项目会保留为待组价。</span></div>
     <div id="planEditor" class="editable-table"></div>
     <div class="action-row"><button id="runPlan" class="button button-primary" type="button">生成成本计划</button><span class="request-status">${planNote}</span></div>
     <div id="planOutput" class="inline-output"></div>`;
+  bindStageSourcePanel("plan", "成本计划资料");
   renderPlanEditor();
   $("runPlan").addEventListener("click", runCostPlan);
   if (state.planResult) renderPlanOutput(state.planResult);
@@ -1875,9 +1877,11 @@ function renderReview() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">SETTLEMENT REVIEW</span><h3>结算初审</h3></div><span class="surface-caption">检查数量、金额、单位和价格口径，形成处理建议</span></div>
     <div class="notice-line"><strong>待审资料：${state.fileName || state.sourceName}</strong><span>以下数据来自已生成的成本计划。</span></div>
+    ${stageSourcePanel("review", "结算资料", "可多选结算书、收方单、签证、竣工资料、对账单和其他审查依据。")}
     <div id="reviewTable" class="editable-table readonly-table"></div>
     <div class="action-row"><button id="runReview" class="button button-primary" type="button">运行结算初审</button><span class="request-status">系统会显示可发布、阻断和需要核对的事项。</span></div>
     <div id="reviewOutput" class="inline-output"></div>`;
+  bindStageSourcePanel("review", "结算资料");
   renderTable($("reviewTable"), [["name", "项目"], ["unit", "单位"], ["quantity", "工程量"], ["unit_price", "单价"], ["amount", "金额"], ["display_status", "状态"]], (state.planResult.items || []).map((item) => ({ ...item, display_status: displayPlanStatus(item.status) })));
   $("runReview").addEventListener("click", runReview);
   if (state.reviewResult) renderReviewOutput(state.reviewResult);
