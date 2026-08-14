@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 import re
 from typing import Any, Mapping
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from zipfile import BadZipFile, ZipFile
 
 from adapters import (
@@ -1432,7 +1432,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "项目资料库搜索查看、常用与近期分类优先、P01-P08 资料分区归档、独立外部依据库",
+        "release_highlights": "项目资料库搜索查看、中文文件名可打开、常用与近期分类优先、P01-P08 资料分区归档",
     }
 
 
@@ -1451,6 +1451,13 @@ class BuildCostWebServer(ThreadingHTTPServer):
 
 class BuildCostHandler(BaseHTTPRequestHandler):
     server_version = "BuildCostIQWebUI/0.1"
+
+    @staticmethod
+    def _content_disposition(disposition: str, filename: str) -> str:
+        safe_name = Path(filename).name.replace('"', "").replace("\r", "").replace("\n", "") or "source.bin"
+        fallback = safe_name.encode("ascii", "ignore").decode("ascii") or "source.bin"
+        encoded = quote(safe_name, safe="")
+        return f'{disposition}; filename="{fallback}"; filename*=UTF-8\'\'{encoded}'
 
     def _write_json(self, payload: object, status: int = 200) -> None:
         body = _json_bytes(payload)
@@ -1474,7 +1481,7 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Disposition", self._content_disposition("attachment", filename))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -1484,7 +1491,7 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
+        self.send_header("Content-Disposition", self._content_disposition("inline", safe_name))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         if self.command != "HEAD":

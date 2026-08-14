@@ -101,7 +101,7 @@ class WebUiTests(unittest.TestCase):
             f"--{boundary}\r\n"
             'Content-Disposition: form-data; name="source_id"\r\n\r\nsource-audit\r\n'
             f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="file"; filename="ledger.txt"\r\n'
+            'Content-Disposition: form-data; name="file"; filename="资料台账.txt"\r\n'
             "Content-Type: text/plain\r\n\r\n"
             "local ledger\r\n"
             f"--{boundary}--\r\n"

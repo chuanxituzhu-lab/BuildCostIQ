@@ -2,6 +2,11 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc9 — 2026-08-14
+
+- Fixed inline viewing for Unicode-named source files by emitting an ASCII fallback and UTF-8 filename response header.
+- Added regression coverage for opening a Chinese-named source through the WebUI endpoint.
+
 ## v0.7.2-rc8 — 2026-08-14
 
 - Added project-material search by filename, archive category, recognition category, and local path; filtered results retain the existing 查看 action for opening the source file.

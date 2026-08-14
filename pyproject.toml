@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "buildcostiq"
-version = "0.7.2rc8"
+version = "0.7.2rc9"
 description = "AI-native construction cost governance foundation"
 requires-python = ">=3.11"
 license = {text = "MIT"}
