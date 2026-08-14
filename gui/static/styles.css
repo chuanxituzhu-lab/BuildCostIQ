@@ -123,6 +123,7 @@ tbody tr.active-row { background: #e7ad5e0d; }
 .wide-field { margin-top: 15px; }
 label { display: flex; flex-direction: column; gap: 6px; color: #cbd3df; font-size: 12px; font-weight: 650; }
 input, textarea { width: 100%; color: var(--ink); background: #0b1118; border: 1px solid var(--line); border-radius: 2px; outline: none; }
+select { min-height: 36px; padding: 7px 9px; color: var(--ink); background: #0b1118; border: 1px solid var(--line); border-radius: 2px; }
 input { min-height: 36px; padding: 7px 9px; }
 textarea { min-height: 150px; padding: 9px; resize: vertical; font: 11px/1.55 "SFMono-Regular", Consolas, monospace; }
 input:focus, textarea:focus { border-color: var(--amber); box-shadow: 0 0 0 2px #e7ad5e22; }

@@ -24,9 +24,15 @@ class LocalAuthTests(unittest.TestCase):
             project_manager = store.register("project-manager", "secret1", "project_manager")
             self.assertEqual(project_manager["role_level"], 1)
             self.assertNotIn("delete_source", project_manager["permissions"])
+            self.assertIn("manage_personnel", project_manager["permissions"])
             self.assertFalse(project_manager["can_view_cost_detail"])
 
             estimator = store.register("estimator", "secret1", "cost_estimator")
             self.assertEqual(estimator["role_level"], 2)
             self.assertIn("edit_business_data", estimator["permissions"])
             self.assertNotIn("view_cost_detail", estimator["permissions"])
+            self.assertNotIn("manage_personnel", estimator["permissions"])
+
+            public_users = store.list_public_users()
+            self.assertEqual(len(public_users), 3)
+            self.assertTrue(all("password" not in user for user in public_users))

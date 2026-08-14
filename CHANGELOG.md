@@ -2,6 +2,13 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc1 — 2026-08-14
+
+- Added a permission-gated personnel management backend entry for project managers and cost managers.
+- Added local personnel snapshots without password material and a separate personnel audit trail for account creation.
+- Added the WebUI personnel management tab, role summary table, local-only account entry, and estimator-level hiding/403 enforcement.
+- Updated release metadata and homepage highlights for the personnel-management iteration.
+
 ## v0.7.1-rc1 — 2026-08-14
 
 - Added three role scopes: project manager KPI-only view, cost manager full permissions, and cost estimator operational access at level two.

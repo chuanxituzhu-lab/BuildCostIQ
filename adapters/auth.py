@@ -40,6 +40,7 @@ ROLE_PERMISSIONS = {
         "view_workspace",
         "view_dashboard",
         "view_kpi",
+        "manage_personnel",
     },
     ROLE_COST_MANAGER: {
         "view_workspace",
@@ -54,6 +55,7 @@ ROLE_PERMISSIONS = {
         "edit_business_data",
         "view_audit",
         "manage_project",
+        "manage_personnel",
         "export_cost",
     },
     ROLE_COST_ESTIMATOR: {
@@ -83,6 +85,7 @@ def _public_user(user: dict[str, Any]) -> dict[str, Any]:
         "role_description": ROLE_DESCRIPTIONS[user["role"]],
         "can_view_cost_detail": "view_cost_detail" in ROLE_PERMISSIONS[user["role"]],
         "permissions": sorted(ROLE_PERMISSIONS[user["role"]]),
+        "created_at": user.get("created_at", ""),
     }
 
 
@@ -93,6 +96,7 @@ class LocalAuthStore:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "users.json"
+        self.personnel_audit_path = self.root / "personnel_audit.json"
 
     def _load(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -104,6 +108,17 @@ class LocalAuthStore:
         temporary = self.path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self.path)
+
+    def _load_personnel_audit(self) -> list[dict[str, Any]]:
+        if not self.personnel_audit_path.exists():
+            return []
+        payload = json.loads(self.personnel_audit_path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, list) else []
+
+    def _save_personnel_audit(self, events: list[dict[str, Any]]) -> None:
+        temporary = self.personnel_audit_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(self.personnel_audit_path)
 
     @staticmethod
     def _password_record(password: str, salt: bytes | None = None) -> dict[str, str]:
@@ -149,3 +164,34 @@ class LocalAuthStore:
         if user is None or not self._verify_password(password, user.get("password", {})):
             raise ValueError("用户名或密码不正确")
         return _public_user(user)
+
+    def list_public_users(self) -> list[dict[str, Any]]:
+        """Return personnel records without password material."""
+        return [_public_user(user) for user in self._load()]
+
+    def record_personnel_audit(
+        self,
+        actor: dict[str, Any],
+        action: str,
+        target: str,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        event = {
+            "id": str(uuid4()),
+            "timestamp": _now(),
+            "action": action,
+            "actor": {
+                "id": actor.get("id", ""),
+                "username": actor.get("username", ""),
+                "role": actor.get("role", ""),
+                "role_label": actor.get("role_label", ""),
+            },
+            "target": target,
+            "details": dict(details or {}),
+        }
+        events = [*self._load_personnel_audit(), event]
+        self._save_personnel_audit(events[-500:])
+        return event
+
+    def personnel_snapshot(self) -> dict[str, Any]:
+        return {"users": self.list_public_users(), "audit_log": self._load_personnel_audit()}

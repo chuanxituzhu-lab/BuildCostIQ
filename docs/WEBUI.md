@@ -19,7 +19,7 @@ buildcostiq-web --port 8787
 
 Open `http://127.0.0.1:8787/`. The workbench starts at a project overview, saves a local project workspace, and provides a project file library for Excel, Word, PDF, CAD, image, and other source files. Every uploaded source is stored locally first and sent through local recognition when a local extractor is available. The recognizer creates a category, tags, confidence, text preview, and a Markdown derivative while preserving the original bytes. Scanned PDFs and images are marked as needing OCR when local extraction finds no text. The BOQ step provides Excel/CSV intake or a user-facing table. Continue the checked items into contract-based cost planning, then send the priced rows into settlement review. The left-side work assistant shows the next action and outstanding items. The overview also contains an exchange center: Excel/CSV and Word-compatible paths are direct, while CAD and budget-software files are shared through the portable project exchange package. The UI only assembles capability context; business decisions remain in the Gateway path.
 
-The current `v0.7.1-rc1` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
+The current `v0.7.2-rc1` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
 
 ## P01–P08 workbench
 
@@ -42,7 +42,7 @@ The “经营看板” is role-aware. Project managers see important project ind
 
 - Every project source has a `查看` action. The original bytes remain in the immutable local source store; a generated Markdown recognition copy can be opened separately when available.
 - Every source entry records the absolute local path of the original file and, when present, its Markdown recognition copy. The interface displays both paths and provides a copy-path action; opening an older workspace backfills missing path metadata from its content hash. Upload and workspace responses expose the same `storage_path` metadata for local integrations.
-- The first screen is a local registration/login surface. `项目经理` sees KPI-only overview and dashboard screens; `造价经理` has all P01–P08, source, cost, export, soft-delete, and audit permissions; `造价员` can intake, recognize, modify metadata, and edit operational data while sensitive prices and costs are hidden.
+- The first screen is a local registration/login surface. `项目经理` sees KPI-only overview and dashboard screens plus the personnel-management backend entry; `造价经理` has all P01–P08, source, cost, export, soft-delete, audit, and personnel-management permissions; `造价员` can intake, recognize, modify metadata, and edit operational data while sensitive prices and costs are hidden and personnel management is unavailable.
 - Source metadata edits, BOQ edits, cost-plan generation, recognition, review runs, views, uploads, and soft deletes append an audit event containing actor, time, target, and relevant details.
 - Review findings use red for urgent blockers, yellow for warnings, and blue for notices. The colors are a presentation of the existing rule severity and do not replace evidence.
 
@@ -55,6 +55,8 @@ The “经营看板” is role-aware. Project managers see important project ind
 - `GET /api/recognition/catalog` — local recognizers and external providers, including whether explicit consent is required.
 - `POST /api/auth/register` and `POST /api/auth/login` — local role registration and login; the returned bearer token is held in the browser session.
 - `GET /api/auth/me` — current local role and permissions.
+- `GET /api/personnel` — personnel list and personnel-management audit trail; requires `manage_personnel`.
+- `POST /api/personnel` — locally creates a role account and appends `personnel.created`; requires `manage_personnel`.
 - `GET /api/source/view?project_id=...&source_id=...` — authenticated inline view of an original source; add `derived=1` for a Markdown recognition copy.
 - `POST /api/source/modify` — authenticated metadata revision; requires `modify_source` and appends an audit event.
 - `POST /api/source/delete` — cost-manager-only soft deletion; original bytes remain and the event is auditable.

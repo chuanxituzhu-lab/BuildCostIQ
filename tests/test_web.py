@@ -54,6 +54,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("multiple", body)
         self.assertIn(".pdf", body)
         self.assertIn('id="loginForm"', body)
+        self.assertIn('id="personnelTab"', body)
         self.assertIn("项目经理工作台", body)
         self.assertIn("经营看板", body)
 
@@ -201,6 +202,61 @@ class WebUiTests(unittest.TestCase):
             manager_workspace = json.load(response)
         self.assertEqual(manager_workspace["access"], "full")
         self.assertEqual(manager_workspace["cost_plan"]["result"]["summary"]["contract_subtotal"], 1000.0)
+
+    def test_personnel_management_is_available_to_both_managers_only(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        def register(role, token):
+            return post_json(
+                "/api/auth/register",
+                {"username": f"personnel-{role}-{suffix}", "password": "local-pass", "role": role},
+                token,
+            )["token"]
+
+        project_manager_token = register("project_manager", self.manager_token)
+        estimator_token = register("cost_estimator", self.manager_token)
+
+        for token in (self.manager_token, project_manager_token):
+            with urlopen(self.auth_request("/api/personnel", token), timeout=2) as response:
+                snapshot = json.load(response)
+            self.assertIn("users", snapshot)
+            self.assertIn("audit_log", snapshot)
+            self.assertTrue(all("password" not in user for user in snapshot["users"]))
+
+        manager_created = post_json(
+            "/api/personnel",
+            {"username": f"created-by-cost-manager-{suffix}", "password": "local-pass", "role": "cost_manager"},
+            self.manager_token,
+        )
+        project_manager_created = post_json(
+            "/api/personnel",
+            {"username": f"created-by-project-manager-{suffix}", "password": "local-pass", "role": "cost_estimator"},
+            project_manager_token,
+        )
+        self.assertTrue(any(user["username"] == f"created-by-cost-manager-{suffix}" for user in manager_created["users"]))
+        self.assertTrue(any(user["username"] == f"created-by-project-manager-{suffix}" for user in project_manager_created["users"]))
+        self.assertIn("personnel.created", [event["action"] for event in project_manager_created["audit_log"]])
+
+        with self.assertRaises(HTTPError) as denied_get:
+            urlopen(self.auth_request("/api/personnel", estimator_token), timeout=2)
+        self.assertEqual(denied_get.exception.code, 403)
+        with self.assertRaises(HTTPError) as denied_post:
+            post_json(
+                "/api/personnel",
+                {"username": f"denied-{suffix}", "password": "local-pass", "role": "cost_estimator"},
+                estimator_token,
+            )
+        self.assertEqual(denied_post.exception.code, 403)
 
     def test_review_endpoint_uses_frozen_gateway(self):
         payload = {

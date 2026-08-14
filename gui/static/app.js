@@ -31,6 +31,7 @@ const state = {
   connectors: [],
   recognizers: [],
   intakeReports: [],
+  personnel: { users: [], audit_log: [] },
 };
 
 async function apiJson(url, options = {}) {
@@ -70,6 +71,10 @@ function isManager() {
   return isCostManager();
 }
 
+function canManagePersonnel() {
+  return Boolean(state.auth.user?.permissions?.includes("manage_personnel"));
+}
+
 function canViewCostDetail() {
   return Boolean(state.auth.user?.can_view_cost_detail);
 }
@@ -91,6 +96,7 @@ function showWorkspace(user) {
   $("workspaceShell").hidden = false;
   $("userSession").hidden = false;
   $("userRole").textContent = `${user.role_label} · ${user.username}`;
+  $("personnelTab").hidden = !canManagePersonnel();
   $("controlTab").hidden = !isCostManager();
   $("workspaceTitle").textContent = isProjectManager()
     ? "项目经理指标台"
@@ -99,7 +105,9 @@ function showWorkspace(user) {
     const view = tab.dataset.view;
     tab.hidden = view === "control"
       ? !isCostManager()
-      : isKpiOnly() && !["overview", "dashboard"].includes(view);
+      : view === "personnel"
+        ? !canManagePersonnel()
+        : isKpiOnly() && !["overview", "dashboard"].includes(view);
   });
 }
 
@@ -900,6 +908,111 @@ function renderAuditLog(target, entries) {
     row.append(action, actor, time);
     return row;
   }));
+}
+
+function renderPersonnelTable(container) {
+  if (!container) return;
+  const users = state.personnel.users || [];
+  if (!users.length) {
+    container.textContent = "暂无人员记录";
+    return;
+  }
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th>用户名</th><th>角色</th><th>权限级别</th><th>成本明细</th><th>录入时间</th></tr></thead>";
+  const body = document.createElement("tbody");
+  users.forEach((user) => {
+    const row = document.createElement("tr");
+    [
+      user.username,
+      user.role_label,
+      `L${user.role_level}`,
+      user.can_view_cost_detail ? "可查看" : "按角色隐藏",
+      user.created_at ? new Date(user.created_at).toLocaleString("zh-CN") : "—",
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = String(value ?? "—");
+      row.append(cell);
+    });
+    body.append(row);
+  });
+  table.append(body);
+  container.replaceChildren(table);
+}
+
+function renderPersonnelAudit(container) {
+  if (!container) return;
+  const events = [...(state.personnel.audit_log || [])].reverse();
+  if (!events.length) {
+    container.textContent = "暂无人员管理操作记录";
+    return;
+  }
+  container.replaceChildren(...events.map((event) => {
+    const row = document.createElement("div");
+    row.className = "audit-row";
+    const time = document.createElement("span");
+    time.textContent = event.timestamp ? new Date(event.timestamp).toLocaleString("zh-CN") : "—";
+    const actor = document.createElement("span");
+    actor.textContent = `${event.actor?.username || "—"} · ${event.actor?.role_label || event.actor?.role || "—"}`;
+    const detail = document.createElement("small");
+    detail.textContent = `${event.action || "—"} · ${event.details?.username || event.target || "—"}`;
+    row.append(time, actor, detail);
+    return row;
+  }));
+}
+
+function renderPersonnel() {
+  if (!canManagePersonnel()) {
+    setView(isKpiOnly() ? "dashboard" : "overview");
+    return;
+  }
+  $("workspaceContent").innerHTML =
+    '<div class="surface-title"><div><span class="panel-label">PERSONNEL MANAGEMENT</span><h3>人员管理</h3></div><span class="surface-caption">项目经理与造价经理均可录入；密码仅保存在本机</span></div>' +
+    '<div class="notice-line"><strong>后台权限</strong><span>项目经理和造价经理可以新增项目经理、造价经理、造价员账号；造价员没有人员管理入口。</span></div>' +
+    '<div class="control-grid personnel-grid">' +
+    '<section class="control-panel"><span class="panel-label">NEW PERSONNEL</span><h3>录入人员</h3>' +
+    '<form id="personnelForm" class="work-form"><div class="field-grid"><label>用户名<input id="personnelUsername" autocomplete="off" required minlength="2" maxlength="64" /></label><label>初始密码<input id="personnelPassword" type="password" autocomplete="new-password" required minlength="6" /></label></div>' +
+    '<div class="field-grid"><label>角色<select id="personnelRole"><option value="project_manager">项目经理（重要指标）</option><option value="cost_manager">造价经理（全部权限）</option><option value="cost_estimator">造价员（操作层）</option></select></label><div class="permission-note">新增后仅显示角色和权限摘要，不显示密码。</div></div>' +
+    '<div class="action-row"><button class="button button-primary" type="submit">保存人员</button><span id="personnelStatus" class="request-status"></span></div></form></section>' +
+    '<section class="control-panel"><div class="surface-title"><div><span class="panel-label">LOCAL USERS</span><h3>已登记人员</h3></div><span class="surface-caption">共 <strong id="personnelCount">0</strong> 人</span></div><div id="personnelTable" class="table-wrap"></div></section></div>' +
+    '<section class="control-panel audit-panel"><div class="surface-title"><div><span class="panel-label">PERSONNEL AUDIT TRAIL</span><h3>人员管理留痕</h3></div><span class="surface-caption">新增账号会记录操作人、角色、时间和目标</span></div><div id="personnelAudit" class="audit-list"></div></section>';
+  $("personnelCount").textContent = String((state.personnel.users || []).length);
+  renderPersonnelTable($("personnelTable"));
+  renderPersonnelAudit($("personnelAudit"));
+  $("personnelForm").addEventListener("submit", savePersonnel);
+}
+
+async function savePersonnel(event) {
+  event.preventDefault();
+  setError("");
+  const status = $("personnelStatus");
+  try {
+    const response = await apiJson("/api/personnel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: $("personnelUsername").value,
+        password: $("personnelPassword").value,
+        role: $("personnelRole").value,
+      }),
+    });
+    state.personnel = response;
+    $("personnelForm").reset();
+    status.textContent = "人员已保存，操作已留痕";
+    renderPersonnel();
+    setStatus("人员管理已更新");
+  } catch (error) {
+    status.textContent = "保存失败";
+    setError(error.message);
+  }
+}
+
+async function refreshPersonnel() {
+  if (!canManagePersonnel()) return;
+  try {
+    state.personnel = await apiJson("/api/personnel");
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
 function renderControlIfVisible() {
@@ -1793,7 +1906,8 @@ function bindViewButtons() {
 }
 
 function setView(view) {
-  if (isKpiOnly() && !["overview", "dashboard"].includes(view)) view = "dashboard";
+  if (isKpiOnly() && !["overview", "dashboard", "personnel"].includes(view)) view = "dashboard";
+  if (view === "personnel" && !canManagePersonnel()) view = isKpiOnly() ? "dashboard" : "overview";
   state.view = view;
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
   if (view === "overview") renderOverview();
@@ -1806,6 +1920,7 @@ function setView(view) {
   if (view === "evidence") renderEvidence();
   if (view === "review") renderReview();
   if (view === "dashboard") renderDashboard();
+  if (view === "personnel") renderPersonnel();
   if (view === "control") renderControl();
   renderAssist();
   updateContextBar();
@@ -1834,6 +1949,7 @@ async function loadDemo() {
   state.sourceName = state.sample.source_name || "示例清单资料";
   state.boqRows = draftFromSample(state.sample.boq_rows);
   await loadWorkspace();
+  await refreshPersonnel();
   setView(isKpiOnly() ? "dashboard" : "overview");
   setStatus(restoredStatus());
 }

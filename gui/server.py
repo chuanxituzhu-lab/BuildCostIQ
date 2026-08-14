@@ -728,6 +728,23 @@ def _auth_login(payload: object) -> dict[str, Any]:
     return {"token": token, "user": user}
 
 
+def _personnel_create(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    user = AUTH_STORE.register(
+        str(payload.get("username", "")),
+        str(payload.get("password", "")),
+        str(payload.get("role", "")),
+    )
+    AUTH_STORE.record_personnel_audit(
+        dict(actor),
+        "personnel.created",
+        str(user["id"]),
+        {"username": user["username"], "role": user["role"]},
+    )
+    return AUTH_STORE.personnel_snapshot()
+
+
 def _source_for(state: dict[str, Any], source_id: str) -> dict[str, Any]:
     source = next((item for item in state.get("sources", []) if item.get("source_id") == source_id), None)
     if source is None:
@@ -1274,7 +1291,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "P01-P08 全能力工作台、三角色分级权限、成本明细脱敏、经营看板与审计留痕",
+        "release_highlights": "P01-P08 全能力工作台、三角色分级权限、人员管理、成本明细脱敏、经营看板与审计留痕",
     }
 
 
@@ -1361,6 +1378,12 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"user": _require_actor(self.headers)})
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 401)
+        elif path == "/api/personnel":
+            try:
+                _require_actor(self.headers, "manage_personnel")
+                self._write_json(AUTH_STORE.personnel_snapshot())
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
         elif path == "/api/source/view":
             try:
                 actor = _require_actor(self.headers, "view_source")
@@ -1487,6 +1510,15 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             token = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             SESSIONS.pop(token, None)
             self._write_json({"ok": True})
+            return
+        if path == "/api/personnel":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_create(self._read_json(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
             return
         if path == "/api/source/modify":
             try:
