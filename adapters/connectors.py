@@ -68,6 +68,33 @@ CONNECTORS: tuple[ConnectorDescriptor, ...] = (
         "ready",
         "携带项目状态、标准化数据、报告和原始资料的本地交换包。",
     ),
+    ConnectorDescriptor(
+        "government-basis",
+        "政府政策/计价依据接口",
+        "basis",
+        ("import",),
+        (".json", ".csv", ".pdf"),
+        "consent",
+        "按明确指令取得政策和计价文件的本地快照，不自动发送项目资料。",
+    ),
+    ConnectorDescriptor(
+        "quota-basis",
+        "定额接口",
+        "basis",
+        ("import",),
+        (".json", ".csv", ".xlsx"),
+        "consent",
+        "取得定额、费用定额和编码换算数据后保存为本地版本快照。",
+    ),
+    ConnectorDescriptor(
+        "price-information",
+        "造价信息接口",
+        "basis",
+        ("import",),
+        (".json", ".csv", ".xlsx"),
+        "consent",
+        "取得人材机信息价和地区价格，记录发布日期、有效期和适用区域。",
+    ),
 )
 
 

@@ -11,7 +11,7 @@
 | P07 | Evidence linkage | implemented |
 | P08 | Settlement review | implemented |
 
-No additional plugin capability is part of v0.7.1-rc1. New integrations must be adapters and must not modify Core or create a new business capability.
+No additional plugin capability is part of the current release. The independent external-basis catalog (`adapters/basis.py`) is an adapter-owned local store, not P09; it records policy, pricing-basis, price-information, market-price, and interface snapshots for P04/P05/P08 references without modifying Core.
 
 
 ## Shared plugin modules (not capabilities)

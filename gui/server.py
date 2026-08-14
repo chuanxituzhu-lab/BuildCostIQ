@@ -20,7 +20,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from zipfile import BadZipFile, ZipFile
 
 from adapters import (
+    BASIS_CATEGORIES,
     ImmutableSourceStore,
+    LocalBasisWorkspace,
     LocalAuthStore,
     LocalProjectWorkspace,
     ROLE_COST_MANAGER,
@@ -39,6 +41,7 @@ RUNTIME = Runtime(build_default_plugins())
 MAX_BODY_BYTES = 50_000_000
 PROJECT_WORKSPACE = LocalProjectWorkspace(os.environ.get("BUILDCOSTIQ_WORKSPACE", "runtime/projects"))
 SOURCE_STORE = ImmutableSourceStore(Path(os.environ.get("BUILDCOSTIQ_SOURCE_STORE", "runtime/sources")))
+BASIS_WORKSPACE = LocalBasisWorkspace(os.environ.get("BUILDCOSTIQ_BASIS_STORE", "runtime/basis"))
 AUTH_STORE = LocalAuthStore(os.environ.get("BUILDCOSTIQ_AUTH", "runtime/auth"))
 SESSIONS: dict[str, dict[str, Any]] = {}
 
@@ -93,7 +96,7 @@ ARCHITECTURE: dict[str, Any] = {
         },
     ],
     "capabilities": [
-        {"id": "P01", "label": "合同资料 intake", "status": "implemented", "surface": "合同资料台"},
+        {"id": "P01", "label": "合同与招采依据 intake", "status": "implemented", "surface": "合同与招采依据台"},
         {"id": "P02", "label": "工程量清单 intake", "status": "implemented", "surface": "清单输入"},
         {"id": "P03", "label": "图纸 intake", "status": "implemented", "surface": "图纸登记台"},
         {"id": "P04", "label": "基线台账", "status": "implemented", "surface": "零号台账"},
@@ -400,6 +403,7 @@ def _boq_upload(
     fields = _multipart_fields(content_type, body)
     project_id = fields.get("project_id", ("", b""))[1].decode("utf-8").strip()
     source_id = fields.get("source_id", ("", b""))[1].decode("utf-8").strip()
+    archive_area = fields.get("archive_area", ("", b""))[1].decode("utf-8").strip() or "清单与计价资料"
     filename, content = fields.get("file", ("", b""))
     if not project_id or not source_id:
         raise ValueError("资料上传缺少项目或资料标识")
@@ -435,6 +439,8 @@ def _boq_upload(
             "media_type": source.media_type,
             "content_hash": source.content_hash,
             "storage_path": str(SOURCE_STORE.path_for(source)),
+            "archive_area": archive_area,
+            "archive_path": f"{archive_area}/{filename}",
             "size": len(content),
         },
     )
@@ -561,6 +567,8 @@ def _source_upload(
     fields = _multipart_fields(content_type, body)
     project_id = fields.get("project_id", ("", b""))[1].decode("utf-8").strip()
     source_id = fields.get("source_id", ("", b""))[1].decode("utf-8").strip()
+    archive_area = fields.get("archive_area", ("", b""))[1].decode("utf-8").strip() or "项目资料库/待分类"
+    archive_category = fields.get("archive_category", ("", b""))[1].decode("utf-8").strip()
     filename, content = fields.get("file", ("", b""))
     if not project_id:
         raise ValueError("资料上传缺少项目标识")
@@ -600,6 +608,9 @@ def _source_upload(
         "media_type": source.media_type,
         "content_hash": source.content_hash,
         "storage_path": str(SOURCE_STORE.path_for(source)),
+        "archive_area": archive_area,
+        "archive_path": f"{archive_area}/{filename}",
+        "archive_category": archive_category,
         "size": len(content),
     }
     state = PROJECT_WORKSPACE.add_source(project_id, metadata)
@@ -779,6 +790,135 @@ def _source_view(project_id: str, source_id: str, derived: bool, actor: Mapping[
     return content, content_type, Path(document.name).name
 
 
+def _basis_public(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Return business-facing basis metadata without raw hashes or backend IDs."""
+    visible = dict(item)
+    visible.pop("content_hash", None)
+    visible.pop("document_id", None)
+    visible.pop("source_id", None)
+    recognition = dict(visible.get("recognition") or {})
+    recognition.pop("text_preview", None)
+    if recognition.get("artifact"):
+        artifact = recognition["artifact"]
+        recognition["artifact"] = {key: artifact.get(key) for key in ("name", "media_type", "storage_path", "size")}
+    visible["recognition"] = recognition
+    return visible
+
+
+def _basis_upload(content_type: str, body: bytes, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not content_type.startswith("multipart/form-data"):
+        raise ValueError("外部依据上传需要 multipart/form-data")
+    fields = _multipart_fields(content_type, body)
+    filename, content = fields.get("file", ("", b""))
+    if not filename or not content:
+        raise ValueError("请选择政策、定额、信息价或市场价文件")
+    category = fields.get("category", ("", b""))[1].decode("utf-8").strip() or "policy"
+    category_meta = next((item for item in BASIS_CATEGORIES if item["id"] == category), None)
+    if category_meta is None:
+        raise ValueError("请选择有效的外部依据分类")
+    source = SOURCE_STORE.ingest(filename, content, mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    try:
+        recognition, artifact_content = recognize_source(filename, content)
+    except (RecognitionError, ValueError) as exc:
+        recognition = {
+            "status": "unavailable",
+            "mode": "local",
+            "connector_id": "local-auto",
+            "category": category_meta["label"],
+            "tags": [],
+            "confidence": 0.0,
+            "text_length": 0,
+            "text_preview": "",
+            "message": f"本地识别未完成：{exc}",
+        }
+        artifact_content = None
+    artifact = None
+    if artifact_content:
+        artifact_name = f"{Path(filename).stem or 'basis'}.md"
+        derived = SOURCE_STORE.ingest(artifact_name, artifact_content, "text/markdown")
+        artifact = {
+            "name": artifact_name,
+            "document_id": derived.id,
+            "content_hash": derived.content_hash,
+            "media_type": derived.media_type,
+            "storage_path": str(SOURCE_STORE.path_for(derived)),
+            "size": len(artifact_content),
+        }
+        recognition["artifact"] = artifact
+    def field(name: str) -> str:
+        return fields.get(name, ("", b""))[1].decode("utf-8").strip()
+    item = {
+        "basis_id": f"basis-{category}-{source.content_hash[:12]}",
+        "name": filename,
+        "title": field("title") or Path(filename).stem,
+        "category": category,
+        "category_label": category_meta["label"],
+        "description": field("description"),
+        "source_org": field("source_org"),
+        "source_url": field("source_url"),
+        "published_at": field("published_at"),
+        "effective_from": field("effective_from"),
+        "effective_to": field("effective_to"),
+        "region": field("region"),
+        "tax_mode": field("tax_mode"),
+        "pricing_mode": field("pricing_mode"),
+        "version": field("version"),
+        "archive_area": "外部依据库",
+        "archive_path": f"外部依据库/{category_meta['label']}/{filename}",
+        "storage_path": str(SOURCE_STORE.path_for(source)),
+        "media_type": source.media_type,
+        "content_hash": source.content_hash,
+        "document_id": source.id,
+        "size": len(content),
+        "recognition": recognition,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": {key: actor.get(key, "") for key in ("id", "username", "role", "role_label")},
+    }
+    saved = BASIS_WORKSPACE.add(item)
+    return {"basis": _basis_public(saved), "items": [_basis_public(row) for row in BASIS_WORKSPACE.list()]}
+
+
+def _basis_reference(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    project_id = str(payload.get("project_id", "")).strip()
+    basis_id = str(payload.get("basis_id", "")).strip()
+    stage = str(payload.get("stage", "")).strip().upper()
+    if not project_id or not basis_id or stage not in {"P04", "P05", "P08"}:
+        raise ValueError("依据引用需要项目、依据和 P04/P05/P08 工作阶段")
+    basis = BASIS_WORKSPACE.get(basis_id)
+    if basis is None:
+        raise FileNotFoundError("外部依据不存在")
+    state = PROJECT_WORKSPACE.add_basis_reference(project_id, basis, stage)
+    PROJECT_WORKSPACE.append_audit(
+        project_id,
+        "basis.referenced",
+        actor,
+        basis_id,
+        {"stage": stage, "version": basis.get("version"), "content_hash": basis.get("content_hash")},
+    )
+    return {"basis": _basis_public(basis), "workspace": state}
+
+
+def _basis_view(basis_id: str, derived: bool = False) -> tuple[bytes, str, str]:
+    basis = BASIS_WORKSPACE.get(basis_id)
+    if basis is None:
+        raise FileNotFoundError("外部依据不存在")
+    selected = dict(basis)
+    if derived:
+        selected = dict((basis.get("recognition") or {}).get("artifact") or {})
+        if not selected:
+            raise FileNotFoundError("该依据还没有本地识别稿")
+    document = SourceDocument(
+        name=str(selected.get("name", basis.get("name", "basis.bin"))),
+        content_hash=str(selected.get("content_hash", basis.get("content_hash", ""))),
+        media_type=str(selected.get("media_type", basis.get("media_type", "application/octet-stream"))),
+    )
+    content = SOURCE_STORE.read(document)
+    content_type = "text/plain; charset=utf-8" if document.name.lower().endswith((".md", ".html", ".htm")) else document.media_type
+    return content, content_type, Path(document.name).name
+
+
 def _source_modify(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
@@ -806,6 +946,7 @@ def _workspace(project_id: str) -> dict[str, Any]:
     state = PROJECT_WORKSPACE.load(project_id)
     if state is None:
         raise FileNotFoundError("项目尚未建立")
+    state.setdefault("basis_references", [])
     changed = False
     for source in state.get("sources", []):
         content_hash = source.get("content_hash")
@@ -1094,7 +1235,7 @@ def _report_html(state: dict[str, Any]) -> bytes:
     gate = "允许发布" if review.get("publishable") else "需要处理"
     gate_color = "#16734a" if review.get("publishable") else "#a12b24"
     capability_rows = [
-        ("P01 合同资料", "已建立" if contract else "未建立", (contract.get("summary") or {}).get("missing_field_count", "—")),
+        ("P01 合同与招采依据", "已建立" if contract else "未建立", (contract.get("summary") or {}).get("missing_field_count", "—")),
         ("P02 清单资料", "已建立" if boq else "未建立", boq.get("item_count", "—")),
         ("P03 图纸登记", "已建立" if drawings else "未建立", (drawings.get("summary") or {}).get("drawing_count", "—")),
         ("P04 零号台账", "已建立" if ledger else "未建立", (ledger.get("summary") or {}).get("baseline_total", "—")),
@@ -1291,7 +1432,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "P01-P08 全能力工作台、三角色分级权限、人员管理、成本明细脱敏、经营看板与审计留痕",
+        "release_highlights": "P01-P08 资料分区归档、独立外部依据库、三角色分级权限、成本明细脱敏与审计留痕",
     }
 
 
@@ -1398,6 +1539,22 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 401)
             except (FileNotFoundError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 404)
+        elif path == "/api/basis":
+            try:
+                _require_actor(self.headers, "view_basis")
+                self._write_json({"categories": list(BASIS_CATEGORIES), "items": [_basis_public(item) for item in BASIS_WORKSPACE.list()]})
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+        elif path == "/api/basis/view":
+            try:
+                _require_actor(self.headers, "view_basis")
+                query = parse_qs(parsed.query)
+                content, content_type, filename = _basis_view(query.get("basis_id", [""])[0], query.get("derived", ["0"])[0] == "1")
+                self._write_inline(content, content_type, filename)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
         elif path == "/api/health":
             self._write_json(_health())
@@ -1561,6 +1718,29 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": str(exc)}, 422)
             except Exception as exc:  # pragma: no cover - defensive HTTP boundary
                 self._write_json({"error": str(exc)}, 500)
+            return
+        if path == "/api/basis/upload":
+            try:
+                actor = _require_actor(self.headers, "upload_basis")
+                self._write_json(_basis_upload(self.headers.get("Content-Type", ""), self._read_body(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except Exception as exc:  # pragma: no cover - defensive HTTP boundary
+                self._write_json({"error": str(exc)}, 500)
+            return
+        if path == "/api/basis/reference":
+            try:
+                actor = _require_actor(self.headers, "reference_basis")
+                result = _basis_reference(self._read_json(), actor)
+                self._write_json(_redact_sensitive(result, actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
             return
         if path == "/api/source/recognize":
             try:

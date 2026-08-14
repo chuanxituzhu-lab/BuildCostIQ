@@ -19,13 +19,15 @@ buildcostiq-web --port 8787
 
 Open `http://127.0.0.1:8787/`. The workbench starts at a project overview, saves a local project workspace, and provides a project file library for Excel, Word, PDF, CAD, image, and other source files. Every uploaded source is stored locally first and sent through local recognition when a local extractor is available. The recognizer creates a category, tags, confidence, text preview, and a Markdown derivative while preserving the original bytes. Scanned PDFs and images are marked as needing OCR when local extraction finds no text. The BOQ step provides Excel/CSV intake or a user-facing table. Continue the checked items into contract-based cost planning, then send the priced rows into settlement review. The left-side work assistant shows the next action and outstanding items. The overview also contains an exchange center: Excel/CSV and Word-compatible paths are direct, while CAD and budget-software files are shared through the portable project exchange package. The UI only assembles capability context; business decisions remain in the Gateway path.
 
-The current `v0.7.2-rc6` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. P01 合同资料台 and P03–P08 each have a dedicated material-intake entry, while P02 retains its dedicated BOQ intake; all use the same local-first archive and recognition flow. Project exports open a second-level export workspace for selecting content, filename, and a local target folder through the browser File System Access API; “下载到默认位置” remains available when folder authorization is unavailable. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
+The current `v0.7.2-rc7` intake flow accepts multiple files in one selection. In the BOQ step, table files are sent through P02 and combined when several tables are selected; PDF, Word, PowerPoint, image, CAD, and article files are saved to the project library and reported individually. P01 is presented as 合同与招采依据 and classifies files into 招标阶段、投标阶段、定标阶段、合同阶段 and 执行解释; P03–P08 each have a dedicated material-intake entry with its own logical archive area, while P02 retains its dedicated BOQ intake. Project exports open a second-level export workspace for selecting content, filename, and a local target folder through the browser File System Access API; “下载到默认位置” remains available when folder authorization is unavailable. The project overview has a separate “接入初步资料” entry for initial project information, which uses the same local-first archive and recognition flow.
+
+The 外部依据库 is independent from the project file library. It stores 政策法规、定额与计价依据、造价信息、市场价格 and 外部接口快照 with source organization, source address, publication date, effective period, applicable region, tax/pricing basis, version, and local storage path. P04 零号台账、P05 成本计划 and P08 结算初审 each provide a “选择计价依据” entry. Referencing a basis stores a point-in-time snapshot in the local project workspace, so later updates cannot silently rewrite historical project conclusions. Hashes, backend identifiers, raw context, and recognition payloads remain hidden from the normal user interface.
 
 ## P01–P08 workbench
 
 The workspace exposes a direct screen for every frozen capability:
 
-- P01 合同资料台 — contract master data, dates, amount, and obligations.
+- P01 合同与招采依据台 — contract/procurement file classes, contract master data, dates, amount, and obligations.
 - P02 清单资料 — BOQ file/table intake and normalization.
 - P03 图纸登记台 — drawing number, discipline, revision, status, and source.
 - P04 零号台账 — baseline entries, amount calculation, basis, and source.
@@ -53,6 +55,8 @@ The “经营看板” is role-aware. Project managers see important project ind
 - `GET /api/sample` — sanitized seed data used by the user-facing demo screen.
 - `GET /api/connectors` — the external-tool connector catalog and supported directions/formats.
 - `GET /api/recognition/catalog` — local recognizers and external providers, including whether explicit consent is required.
+- `GET /api/basis` — local external-basis catalog and business metadata; requires `view_basis`.
+- `GET /api/basis/view?basis_id=...` — authenticated view of an external-basis original; add `derived=1` for a local Markdown copy.
 - `POST /api/auth/register` and `POST /api/auth/login` — local role registration and login; the returned bearer token is held in the browser session.
 - `GET /api/auth/me` — current local role and permissions.
 - `GET /api/personnel` — personnel list and personnel-management audit trail; requires `manage_personnel`.
@@ -64,6 +68,8 @@ The “经营看板” is role-aware. Project managers see important project ind
 - `POST /api/project` — creates or updates a local project workspace.
 - `GET /api/workspace?project_id=...` — resumes the saved project state.
 - `POST /api/source/upload` — saves a generic project source in the immutable source store and project library.
+- `POST /api/basis/upload` — saves a policy, pricing-basis, price-information, market-price, or interface-snapshot file to the independent local basis catalog.
+- `POST /api/basis/reference` — stores a versioned local basis snapshot reference for P04, P05, or P08.
 - `POST /api/source/recognize` — reruns local recognition or requests an explicitly authorized external recognition call for one source.
 - `GET /api/dashboard?project_id=...` — authenticated role-aware baseline, comparison, alert, review-cadence, and weekly/monthly issue summary.
 - `POST /api/contract` — executes P01 and saves the contract register.
@@ -91,7 +97,7 @@ P01 合同 → P02 清单 → P03 图纸 → P04 零号台账 → P05 成本计�
 
 The WebUI exposes standard table input plus `.xlsx`/`.xlsm`/`.csv` file intake. XLSX parsing remains in the P02 capability path; the browser only presents the resulting business table.
 
-Project state is stored under the ignored local `runtime/projects` directory by the workspace adapter. Source bytes are stored content-addressed under `runtime/sources`; Core remains unaware of both paths.
+Project state is stored under the ignored local `runtime/projects` directory by the workspace adapter. Project source bytes are stored content-addressed under `runtime/sources`; external-basis metadata is stored under `runtime/basis` and its source bytes use the same immutable local source store. Core remains unaware of all these paths.
 
 The project exchange ZIP contains `manifest.json`, `project.json`, normalized BOQ and cost-plan CSVs, a report, source files under `sources/`, and recognized Markdown derivatives under `derived/`. It is intended as a local shared boundary between BuildCostIQ, Excel/CSV, Word-compatible workflows, CAD/quantity tools, and budget software. The current release does not claim live COM, full DWG geometry parsing, or vendor-specific budget-software automation; those integrations can be added behind the connector boundary without changing Core.
 

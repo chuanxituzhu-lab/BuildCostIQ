@@ -8,6 +8,7 @@ from .auth import (
     ROLE_LEVELS,
     LocalAuthStore,
 )
+from .basis import BASIS_CATEGORIES, LocalBasisWorkspace
 from .connectors import ConnectorDescriptor, build_project_bundle, connector_catalog
 from .filesystem import ImmutableSourceStore
 from .recognition import RecognitionDescriptor, RecognitionError, recognition_catalog, recognize_source
@@ -15,7 +16,9 @@ from .workspace import LocalProjectWorkspace
 
 __all__ = [
     "ConnectorDescriptor",
+    "BASIS_CATEGORIES",
     "ImmutableSourceStore",
+    "LocalBasisWorkspace",
     "LocalProjectWorkspace",
     "LocalAuthStore",
     "ROLE_COST_ESTIMATOR",

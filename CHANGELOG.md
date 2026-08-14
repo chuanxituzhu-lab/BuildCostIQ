@@ -2,6 +2,14 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc7 — 2026-08-14
+
+- Renamed P01 in the user-facing workbench to 合同与招采依据 and added five intake classifications: 招标、投标、定标、合同 and 执行解释。
+- Added logical archive locations for the overview and P01–P08 material-intake entries; source cards now show the archive location and local original path.
+- Added an independent local 外部依据库 for policies, quotas/pricing basis, price information, market prices, and interface snapshots.
+- Added version-aware basis metadata and P04/P05/P08 project-reference entry points; raw hashes and backend IDs remain hidden from the normal UI.
+- Kept the frozen Core/CapabilityGateway boundary and default local-only data policy unchanged.
+
 ## v0.7.2-rc6 — 2026-08-14
 
 - Changed project export buttons to open a second-level local export workspace instead of downloading immediately.

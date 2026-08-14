@@ -30,6 +30,8 @@ const state = {
   sources: [],
   connectors: [],
   recognizers: [],
+  basisCatalog: { categories: [], items: [] },
+  basisReferences: [],
   intakeReports: [],
   exportWorkspace: { kind: "report", filename: "", directoryHandle: null },
   personnel: { users: [], audit_log: [] },
@@ -40,6 +42,33 @@ const EXPORT_OPTIONS = [
   { kind: "boq.xlsx", label: "Excel 清单", route: "boq.xlsx", extension: "xlsx", description: "标准化清单明细", requiresCostDetail: false },
   { kind: "cost-plan.xlsx", label: "Excel 成本计划", route: "cost-plan.xlsx", extension: "xlsx", description: "成本计划和组价结果", requiresCostDetail: true },
   { kind: "bundle", label: "项目交换包", route: "bundle", extension: "zip", description: "项目状态、资料和识别稿的本地交换包", requiresCostDetail: true },
+];
+
+const PROJECT_ARCHIVE_AREAS = {
+  overview: "项目资料库/项目初步信息",
+  boq: "项目资料库/清单与计价资料",
+  drawings: "项目资料库/图纸资料",
+  baseline: "项目资料库/零号台账资料",
+  plan: "项目资料库/成本计划与计价资料",
+  changes: "项目资料库/变更与签证资料",
+  evidence: "项目资料库/证据关联资料",
+  review: "项目资料库/结算与收方资料",
+};
+
+const CONTRACT_ARCHIVE_CLASSES = [
+  ["招标阶段", "招标文件、清单、最高投标限价、答疑、补遗和招标图纸"],
+  ["投标阶段", "投标文件、投标报价、报价清单和技术/商务承诺"],
+  ["定标阶段", "中标通知书、评标报告、澄清和定标资料"],
+  ["合同阶段", "合同正文、补充协议、附件、专用条款和通用条款"],
+  ["执行解释", "合同交底、会议纪要、发包人指令和批准文件"],
+];
+
+const BASIS_CATEGORIES = [
+  ["policy", "政策法规"],
+  ["pricing_basis", "定额与计价依据"],
+  ["price_info", "造价信息"],
+  ["market_price", "市场价格"],
+  ["interface_snapshot", "外部接口快照"],
 ];
 
 async function apiJson(url, options = {}) {
@@ -243,6 +272,7 @@ function applyWorkspace(workspace) {
   state.workspace = workspace;
   state.projectName = workspace.project?.name || state.projectName;
   state.sources = workspace.sources || [];
+  state.basisReferences = workspace.basis_references || [];
   if (state.sources.length && !state.fileName) state.sourceName = state.sources[state.sources.length - 1].name;
   const boq = workspace.boq?.result;
   const contract = workspace.contract?.result;
@@ -314,6 +344,18 @@ async function loadConnectors() {
   state.recognizers = recognition.recognizers || [];
 }
 
+async function loadBasisCatalog() {
+  if (isKpiOnly()) {
+    state.basisCatalog = { categories: [], items: [] };
+    return;
+  }
+  try {
+    state.basisCatalog = await apiJson("/api/basis");
+  } catch (_) {
+    state.basisCatalog = { categories: [], items: [] };
+  }
+}
+
 function updateContextBar() {
   $("projectDisplay").textContent = state.projectName || "演示项目";
   $("sourceDisplay").textContent = state.fileName || state.sourceName || "等待接入";
@@ -347,7 +389,7 @@ function renderAssist() {
     return;
   }
   const structuredStages = [
-    ["contract", "P01 合同资料", state.contractResult, "补充合同主数据和履约义务"],
+    ["contract", "P01 合同与招采依据", state.contractResult, "补充合同主数据和履约义务"],
     ["drawings", "P03 图纸登记", state.drawingsResult, "登记图号、版本和审阅状态"],
     ["baseline", "P04 零号台账", state.baselineResult, "建立项目开局成本基线"],
     ["changes", "P06 变更管理", state.changesResult, "登记变更影响并等待决策"],
@@ -452,7 +494,7 @@ function renderDashboard() {
   $("dashboardProjectName").textContent = dashboard.project?.name || state.projectName || "当前项目";
   $("dashboardRoleNote").textContent = roleNote;
   $("dashboardGeneratedAt").textContent = "刷新时间：" + new Date(dashboard.generated_at).toLocaleString("zh-CN");
-  const capabilityViews = [["P01", "合同资料", "contract"], ["P02", "清单资料", "boq"], ["P03", "图纸资料", "drawings"], ["P04", "零号台账", "baseline"], ["P05", "成本计划", "plan"], ["P06", "变更管理", "changes"], ["P07", "证据关联", "evidence"], ["P08", "结算初审", "review"]];
+  const capabilityViews = [["P01", "合同与招采依据", "contract"], ["P02", "清单资料", "boq"], ["P03", "图纸资料", "drawings"], ["P04", "零号台账", "baseline"], ["P05", "成本计划", "plan"], ["P06", "变更管理", "changes"], ["P07", "证据关联", "evidence"], ["P08", "结算初审", "review"]];
   $("dashboardCapabilities").replaceChildren(...capabilityViews.map(([id, label, view]) => {
     const item = document.createElement(isKpiOnly() ? "div" : "button");
     if (!isKpiOnly()) item.type = "button";
@@ -660,7 +702,7 @@ function renderOverview() {
   capabilityPanel.innerHTML = '<div class="surface-title"><div><span class="panel-label">P01 — P08 WORKBENCH</span><h3>八项能力入口</h3></div><span class="surface-caption">每项能力都有独立工作面，结果统一回到当前项目</span></div><div id="capabilityCoverage" class="capability-coverage"></div>';
   $("workspaceContent").append(capabilityPanel);
   const coverage = [
-    ["contract", "P01", "合同资料", state.contractResult], ["boq", "P02", "清单资料", state.boqResult], ["drawings", "P03", "图纸资料", state.drawingsResult], ["baseline", "P04", "零号台账", state.baselineResult],
+    ["contract", "P01", "合同与招采依据", state.contractResult], ["boq", "P02", "清单资料", state.boqResult], ["drawings", "P03", "图纸资料", state.drawingsResult], ["baseline", "P04", "零号台账", state.baselineResult],
     ["plan", "P05", "成本计划", state.planResult], ["changes", "P06", "变更管理", state.changesResult], ["evidence", "P07", "证据关联", state.evidenceResult], ["review", "P08", "结算初审", state.reviewResult],
   ];
   $("capabilityCoverage").replaceChildren(...coverage.map(([view, id, label, result]) => {
@@ -707,7 +749,7 @@ function renderConnectorCatalog() {
     note.textContent = `${connector.description} ${connector.formats.join(" / ")}`;
     const status = document.createElement("span");
     status.className = `connector-status connector-${connector.status}`;
-    status.textContent = connector.status === "ready" ? "可直接使用" : "通过交换包";
+    status.textContent = connector.status === "ready" ? "可直接使用" : connector.status === "consent" ? "明确授权后取得快照" : "通过交换包";
     item.append(name, note, status);
     return item;
   }));
@@ -781,16 +823,22 @@ async function deleteSource(source, targetId = "sourceList") {
   }
 }
 
-function renderSourceList(targetId = "sourceList") {
+function renderSourceList(targetId = "sourceList", filter = {}) {
   const list = $(targetId);
   if (!list) return;
-  if (!state.sources.length) {
+  const visibleSources = state.sources.filter((source) => {
+    if (filter.archiveArea && source.archive_area !== filter.archiveArea) return false;
+    return true;
+  });
+  if (!visibleSources.length) {
     list.className = "source-list empty-state";
-    list.textContent = "当前项目还没有其他资料。可以从这里接入 Word、PDF、CAD 或 Excel 文件。";
+    list.textContent = filter.archiveArea
+      ? `当前归档位置还没有资料：${filter.archiveArea}`
+      : "当前项目还没有其他资料。可以从这里接入 Word、PDF、CAD 或 Excel 文件。";
     return;
   }
   list.className = "source-list";
-  list.replaceChildren(...state.sources.slice().reverse().map((source) => {
+  list.replaceChildren(...visibleSources.slice().reverse().map((source) => {
     const item = document.createElement("div");
     item.className = "source-item";
     const info = document.createElement("div");
@@ -800,11 +848,12 @@ function renderSourceList(targetId = "sourceList") {
     const recognition = source.recognition || {};
     const recognitionLabel = recognition.category ? ` · ${recognition.category}` : "";
     const deleted = source.status === "deleted";
-    meta.textContent = `${source.kind} · ${deleted ? "已删除（保留记录）" : recognition.status === "completed" ? "已识别归档" : "已保存"}${recognitionLabel}`;
+    const archiveLabel = source.archive_category ? ` · ${source.archive_category}` : "";
+    meta.textContent = `${source.kind} · ${deleted ? "已删除（保留记录）" : recognition.status === "completed" ? "已识别归档" : "已保存"}${archiveLabel}${recognitionLabel}`;
     const pathInfo = document.createElement("small");
     pathInfo.className = "source-path";
     const artifactPath = recognition.artifact?.storage_path ? `\n识别稿：${recognition.artifact.storage_path}` : "";
-    pathInfo.textContent = `原件：${source.storage_path || "路径未记录"}${artifactPath}`;
+    pathInfo.textContent = `归档位置：${source.archive_path || source.archive_area || "项目资料库/待分类"}\n原件：${source.storage_path || "路径未记录"}${artifactPath}`;
     info.append(name, meta, pathInfo);
     const stateTag = document.createElement("span");
     stateTag.className = `source-state source-${recognition.status || "pending"}`;
@@ -1138,11 +1187,13 @@ function recognitionReport(source) {
   return { status: "pending", message: "文件已保存，等待识别。" };
 }
 
-async function uploadSourceFile(file, projectId, index = 0, parseBoq = false) {
+async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, metadata = {}) {
   const sourceId = sourceIdFor(file, index);
   const form = new FormData();
   form.append("project_id", projectId);
   form.append("source_id", sourceId);
+  if (metadata.archiveArea) form.append("archive_area", metadata.archiveArea);
+  if (metadata.archiveCategory) form.append("archive_category", metadata.archiveCategory);
   form.append("file", file, file.name);
   if (parseBoq && isTableSource(file)) {
     const result = await apiJson("/api/boq/upload", { method: "POST", body: form });
@@ -1160,13 +1211,13 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false) {
   };
 }
 
-async function uploadFiles(files, { parseBoq = false } = {}) {
+async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveCategory = "" } = {}) {
   const context = await ensureProject();
   const items = [];
   const reports = [];
   for (const [index, file] of files.entries()) {
     try {
-      const uploaded = await uploadSourceFile(file, context.project_id, index, parseBoq);
+      const uploaded = await uploadSourceFile(file, context.project_id, index, parseBoq, { archiveArea, archiveCategory });
       items.push(...(uploaded.result?.items || []));
       reports.push({ name: file.name, source_id: uploaded.sourceId, ...(uploaded.report || { status: "completed", message: "已保存。" }) });
     } catch (error) {
@@ -1209,7 +1260,7 @@ async function handleSourceFile(event) {
   if (!files.length) return;
   setError("");
   try {
-    await uploadFiles(files);
+    await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
     renderSourceList();
     updateContextBar();
     renderIntakeReports("sourceIntakeSummary");
@@ -1227,11 +1278,14 @@ async function handleContractSourceFiles(event) {
   if (!files.length) return;
   setError("");
   try {
-    await uploadFiles(files);
-    renderSourceList("contractSourceList");
+    await uploadFiles(files, {
+      archiveArea: "项目资料库/合同与招采依据",
+      archiveCategory: $("contractArchiveCategory")?.value || "合同阶段",
+    });
+    renderSourceList("contractSourceList", { archiveArea: "项目资料库/合同与招采依据" });
     renderIntakeReports("contractIntakeSummary");
     updateContextBar();
-    setStatus(`${files.length} 个合同资料文件已保存并完成本地识别`);
+    setStatus(`${files.length} 个合同与招采依据文件已保存并完成本地识别`);
     renderAssist();
   } catch (error) {
     setError(error.message);
@@ -1241,10 +1295,12 @@ async function handleContractSourceFiles(event) {
 }
 
 function stageSourcePanel(stage, title, note) {
+  const archiveArea = PROJECT_ARCHIVE_AREAS[stage] || "项目资料库/待分类";
   return `
     <section class="source-panel stage-source-panel">
       <div class="surface-title"><div><span class="panel-label">${stage.toUpperCase()} FILE INTAKE</span><h3>${title}录入</h3></div><button id="upload-${stage}-source" class="button button-quiet" type="button">＋录入${title}</button></div>
       <p class="business-note">${note} 原件保存在本地资料库并自动识别，业务登记表仍需人工核对后保存。</p>
+      <div class="archive-location"><span>本入口归档位置</span><strong>${archiveArea}</strong></div>
       <div id="${stage}SourceList" class="source-list"></div>
       <div id="${stage}IntakeSummary" class="intake-report-list"></div>
     </section>`;
@@ -1253,9 +1309,10 @@ function stageSourcePanel(stage, title, note) {
 function bindStageSourcePanel(stage, label) {
   const listId = `${stage}SourceList`;
   const summaryId = `${stage}IntakeSummary`;
-  renderSourceList(listId);
+  renderSourceList(listId, { archiveArea: PROJECT_ARCHIVE_AREAS[stage] });
   renderIntakeReports(summaryId);
   $(`upload-${stage}-source`).addEventListener("click", () => $("stageSourceInput").click());
+  $("stageSourceInput").dataset.stage = stage;
   $("stageSourceInput").onchange = (event) => handleStageSourceFiles(event, { label, listId, summaryId });
 }
 
@@ -1264,8 +1321,9 @@ async function handleStageSourceFiles(event, { label, listId, summaryId }) {
   if (!files.length) return;
   setError("");
   try {
-    await uploadFiles(files);
-    renderSourceList(listId);
+    const stage = event.target.dataset.stage || "";
+    await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS[stage] || "项目资料库/待分类", archiveCategory: `${label}资料` });
+    renderSourceList(listId, { archiveArea: PROJECT_ARCHIVE_AREAS[stage] });
     renderIntakeReports(summaryId);
     updateContextBar();
     setStatus(`${files.length} 个${label}文件已保存并完成本地识别`);
@@ -1282,7 +1340,7 @@ async function handleProjectInfoFiles(event) {
   if (!files.length) return;
   setError("");
   try {
-    await uploadFiles(files);
+    await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
     renderOverview();
     setStatus(`${files.length} 个初步资料已保存并自动归档`);
   } catch (error) {
@@ -1484,6 +1542,221 @@ async function downloadProjectFile(kind) {
   }
 }
 
+function basisCategoryLabel(category) {
+  return (state.basisCatalog.categories || []).find((item) => item.id === category)?.label
+    || BASIS_CATEGORIES.find(([id]) => id === category)?.[1]
+    || category || "外部依据";
+}
+
+function gatewayBasis(item) {
+  if (!item) return null;
+  const priceType = {
+    pricing_basis: "quota_base",
+    price_info: "information_price",
+    market_price: "market_quote",
+  }[item.category] || "";
+  const taxMode = (item.tax_mode || "").includes("不含") ? "tax_exclusive" : (item.tax_mode || "").includes("含") ? "tax_inclusive" : "";
+  return {
+    tax_inclusion: taxMode,
+    price_type: priceType,
+    source: [item.source_org, item.title, item.version].filter(Boolean).join(" · "),
+    price_date: item.published_at || item.version || item.effective_from || "",
+  };
+}
+
+function stageBasisContexts(stage) {
+  const references = state.basisReferences.filter((item) => item.stage === stage);
+  const contractReference = references.find((item) => item.category === "pricing_basis");
+  const marketReference = references.find((item) => ["price_info", "market_price"].includes(item.category));
+  return {
+    references,
+    contract_basis: gatewayBasis(contractReference) || state.sample?.contract_basis || {},
+    market_basis: gatewayBasis(marketReference) || state.sample?.market_basis || {},
+    subject_basis: gatewayBasis(contractReference) || state.sample?.subject_basis || {},
+    reference_basis: gatewayBasis(marketReference) || state.sample?.reference_basis || {},
+  };
+}
+
+function basisDisplayName(stage) {
+  const latest = state.basisReferences.filter((item) => item.stage === stage).at(-1);
+  return latest ? [latest.title || latest.name, latest.version].filter(Boolean).join(" · ") : "";
+}
+
+function basisReferencePanel(stage) {
+  const references = state.basisReferences.filter((item) => item.stage === stage);
+  const options = (state.basisCatalog.items || []).map((item) =>
+    '<option value="' + (item.basis_id || "") + '">' + (item.title || item.name) + " · " + basisCategoryLabel(item.category) + (item.version ? " · " + item.version : "") + "</option>"
+  ).join("");
+  const referenceHtml = references.length
+    ? references.map((item) =>
+      '<div class="basis-reference-row"><strong>' + (item.title || item.name) + "</strong><span>" + basisCategoryLabel(item.category) + (item.version ? " · 版本 " + item.version : "") + (item.region ? " · " + item.region : "") + '</span><small>本地保存：' + (item.storage_path || "路径未记录") + "</small></div>"
+    ).join("")
+    : '<div class="empty-state">本阶段尚未引用外部依据。历史项目不会因依据库更新而被覆盖。</div>';
+  return '<section id="basisReferencePanel-' + stage + '" class="basis-reference-panel">' +
+    '<div class="data-entry-heading"><div><span class="panel-label">BASIS REFERENCE</span><h3>选择计价依据</h3></div><button class="button button-quiet" type="button" data-view="basis">进入外部依据库</button></div>' +
+    '<p class="business-note">从本地外部依据库选择政策、定额、信息价或市场价；引用会保存当时的版本、有效期和本地路径快照。</p>' +
+    '<div class="basis-reference-actions"><select id="basisReferenceSelect-' + stage + '"><option value="">' + (options ? "请选择本项目采用的依据" : "请先录入外部依据") + "</option>" + options + '</select><button id="saveBasisReference-' + stage + '" class="button button-quiet" type="button" ' + (options ? "" : "disabled") + '>保存本阶段引用</button></div>' +
+    '<div class="basis-reference-list">' + referenceHtml + "</div></section>";
+}
+
+function bindBasisReferencePanel(stage) {
+  const button = $("saveBasisReference-" + stage);
+  if (button) button.addEventListener("click", () => saveBasisReference(stage));
+  bindViewButtons();
+}
+
+async function saveBasisReference(stage) {
+  const basisId = $("basisReferenceSelect-" + stage)?.value;
+  if (!basisId) {
+    setStatus("请先选择一项外部依据");
+    return;
+  }
+  try {
+    const response = await apiJson("/api/basis/reference", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: state.projectId, basis_id: basisId, stage }),
+    });
+    applyWorkspace(response.workspace);
+    const panel = $("basisReferencePanel-" + stage);
+    if (panel) panel.outerHTML = basisReferencePanel(stage);
+    bindBasisReferencePanel(stage);
+    setStatus(stage + " 已保存外部依据引用：" + (response.basis?.title || "已选择"));
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+async function viewBasis(item, derived = false) {
+  const popup = window.open("about:blank", "_blank", "noopener");
+  try {
+    const query = "/api/basis/view?basis_id=" + encodeURIComponent(item.basis_id) + (derived ? "&derived=1" : "");
+    const response = await fetch(query, { headers: { Authorization: "Bearer " + state.auth.token } });
+    if (!response.ok) throw new Error("依据查看失败（" + response.status + "）");
+    const objectUrl = URL.createObjectURL(await response.blob());
+    if (popup) popup.location.href = objectUrl;
+    else window.open(objectUrl, "_blank", "noopener");
+  } catch (error) {
+    if (popup) popup.close();
+    setError(error.message);
+  }
+}
+
+async function copyBasisPath(item) {
+  const paths = [item.archive_path, item.storage_path, item.recognition?.artifact?.storage_path].filter(Boolean).join(String.fromCharCode(10));
+  try {
+    await navigator.clipboard.writeText(paths);
+    setStatus("依据保存位置已复制");
+  } catch (_) {
+    window.prompt("依据保存位置", paths);
+  }
+}
+
+function renderBasisCatalog() {
+  const target = $("basisCatalogList");
+  if (!target) return;
+  const filter = $("basisCategoryFilter")?.value || "";
+  const items = (state.basisCatalog.items || []).filter((item) => !filter || item.category === filter);
+  if (!items.length) {
+    target.className = "basis-catalog-list empty-state";
+    target.textContent = "当前分类还没有外部依据。";
+    return;
+  }
+  target.className = "basis-catalog-list";
+  target.replaceChildren(...items.slice().reverse().map((item) => {
+    const card = document.createElement("article");
+    card.className = "basis-item";
+    const info = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = item.title || item.name;
+    const meta = document.createElement("small");
+    meta.textContent = basisCategoryLabel(item.category) + " · " + (item.source_org || "来源未填写") + (item.version ? " · 版本 " + item.version : "") + (item.source_url ? " · " + item.source_url : "");
+    const scope = document.createElement("small");
+    scope.textContent = "发布日期：" + (item.published_at || "未填写") + " · 适用地区：" + (item.region || "未填写") + " · 有效期：" + (item.effective_from || "未填写") + " 至 " + (item.effective_to || "未填写");
+    const rule = document.createElement("small");
+    rule.textContent = "税口径：" + (item.tax_mode || "未填写") + " · 计价口径：" + (item.pricing_mode || "未填写");
+    const path = document.createElement("small");
+    path.className = "source-path";
+    path.textContent = "保存位置：" + (item.archive_path || "外部依据库") + String.fromCharCode(10) + "原件：" + (item.storage_path || "路径未记录");
+    info.append(title, meta, scope, rule, path);
+    const actions = document.createElement("div");
+    actions.className = "source-actions";
+    const view = document.createElement("button");
+    view.type = "button"; view.className = "icon-button source-view-button"; view.textContent = "查看";
+    view.addEventListener("click", () => viewBasis(item));
+    actions.append(view);
+    if (item.recognition?.artifact) {
+      const derived = document.createElement("button");
+      derived.type = "button"; derived.className = "icon-button"; derived.textContent = "查看识别稿";
+      derived.addEventListener("click", () => viewBasis(item, true));
+      actions.append(derived);
+    }
+    const copy = document.createElement("button");
+    copy.type = "button"; copy.className = "icon-button"; copy.textContent = "复制路径";
+    copy.addEventListener("click", () => copyBasisPath(item));
+    actions.append(copy);
+    card.append(info, actions);
+    return card;
+  }));
+}
+
+function renderBasis() {
+  const categoryOptions = BASIS_CATEGORIES.map(([id, label]) => '<option value="' + id + '">' + label + "</option>").join("");
+  $("workspaceContent").innerHTML =
+    '<div class="surface-title"><div><span class="panel-label">EXTERNAL BASIS LIBRARY</span><h3>外部依据库</h3></div><span class="surface-caption">独立于项目资料库保存，按版本快照被项目引用</span></div>' +
+    '<div class="capability-intro"><strong>项目资料库保存“这个项目发生了什么”；外部依据库存放“当时依据什么规则和价格判断”。</strong><span>外部接口只取得本地快照，默认不向外发送项目资料；依据被 P04、P05、P08 引用后，历史项目仍按当时版本复核。</span></div>' +
+    '<div class="basis-layout">' +
+      '<section class="basis-panel"><div class="data-entry-heading"><div><span class="panel-label">BASIS INTAKE</span><h3>录入外部依据</h3></div><span class="request-status">文件和元数据均保存在本地</span></div>' +
+      '<div class="field-grid basis-fields">' +
+        '<label>依据分类<select id="basisCategory">' + categoryOptions + '</select></label>' +
+        '<label>依据名称<input id="basisTitle" placeholder="如：2026 年 7 月信息价" /></label>' +
+        '<label>来源单位<input id="basisSourceOrg" placeholder="政府部门、造价站或供应商" /></label>' +
+        '<label>来源地址<input id="basisSourceUrl" placeholder="可选：官网或接口地址" /></label>' +
+        '<label>发布日期<input id="basisPublishedAt" type="date" /></label>' +
+        '<label>版本号<input id="basisVersion" placeholder="如：2026-07" /></label>' +
+        '<label>适用地区<input id="basisRegion" placeholder="如：浙江省 / 杭州市" /></label>' +
+        '<label>税口径<input id="basisTaxMode" placeholder="含税/不含税" /></label>' +
+        '<label>计价口径<input id="basisPricingMode" placeholder="清单计价/定额计价/市场价" /></label>' +
+        '<label>有效期起<input id="basisEffectiveFrom" type="date" /></label>' +
+        '<label>有效期止<input id="basisEffectiveTo" type="date" /></label>' +
+      '</div>' +
+      '<div class="intake-banner basis-file-picker"><div><strong id="basisFileName">尚未选择依据文件</strong><span>支持 PDF、Word、Excel、CSV、图片、文章和接口快照文件。</span></div><button id="chooseBasisFile" class="button button-quiet" type="button">选择依据文件</button></div>' +
+      '<div class="action-row"><button id="saveBasis" class="button button-primary" type="button">保存到外部依据库</button><span id="basisUploadStatus" class="request-status"></span></div></section>' +
+      '<aside class="basis-panel basis-boundary"><span class="panel-label">BOUNDARY</span><h3>资料边界</h3><div class="basis-boundary-row"><strong>项目资料库</strong><span>合同、清单、图纸、台账、变更、结算和证据</span></div><div class="basis-boundary-row"><strong>外部依据库</strong><span>政策、定额、信息价、市场价和接口快照</span></div><div class="basis-boundary-row"><strong>项目引用</strong><span>P04 建基线 · P05 编成本 · P08 做初审</span></div></aside>' +
+    '</div>' +
+    '<section class="basis-panel basis-catalog-panel"><div class="data-entry-heading"><div><span class="panel-label">LOCAL BASIS CATALOG</span><h3>本地依据目录</h3></div><label class="basis-filter">筛选分类<select id="basisCategoryFilter"><option value="">全部</option>' + categoryOptions + '</select></label></div><div id="basisCatalogList" class="basis-catalog-list"></div></section>';
+  $("chooseBasisFile").addEventListener("click", () => $("basisInput").click());
+  $("basisInput").onchange = (event) => { $("basisFileName").textContent = event.target.files?.[0]?.name || "尚未选择依据文件"; };
+  $("basisCategoryFilter").addEventListener("change", renderBasisCatalog);
+  $("saveBasis").addEventListener("click", saveBasisFile);
+  renderBasisCatalog();
+}
+
+async function saveBasisFile() {
+  const file = $("basisInput").files?.[0];
+  if (!file) { $("basisUploadStatus").textContent = "请先选择依据文件"; return; }
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const fields = {
+    category: "basisCategory", title: "basisTitle", source_org: "basisSourceOrg", source_url: "basisSourceUrl",
+    published_at: "basisPublishedAt", version: "basisVersion", region: "basisRegion", tax_mode: "basisTaxMode",
+    pricing_mode: "basisPricingMode", effective_from: "basisEffectiveFrom", effective_to: "basisEffectiveTo",
+  };
+  Object.entries(fields).forEach(([key, id]) => form.append(key, $(id).value));
+  try {
+    const response = await apiJson("/api/basis/upload", { method: "POST", body: form });
+    state.basisCatalog.items = response.items || [];
+    $("basisUploadStatus").textContent = "依据已保存，原件和识别稿均留在本地";
+    $("basisInput").value = "";
+    $("basisFileName").textContent = "尚未选择依据文件";
+    renderBasisCatalog();
+    setStatus("外部依据已录入本地依据库");
+  } catch (error) {
+    $("basisUploadStatus").textContent = "保存失败";
+    setError(error.message);
+  }
+}
+
 function renderBoq() {
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">DOCUMENT INTAKE</span><h3>接入清单资料</h3></div><span class="surface-caption">支持多文件接入；表格进入清单，PDF/Word/图片等进入资料库并自动识别</span></div>
@@ -1492,6 +1765,7 @@ function renderBoq() {
       <button id="chooseFile" class="button button-primary" type="button">选择资料文件（可多选）</button>
       <span id="fileName" class="file-name">尚未选择文件</span>
     </div>
+    <div class="archive-location"><span>本入口归档位置</span><strong>${PROJECT_ARCHIVE_AREAS.boq}</strong></div>
     <div id="boqIntakeSummary" class="intake-report-list"></div>
     <div class="field-grid workspace-fields">
       <label>项目名称<input id="boqProjectName" /></label>
@@ -1586,7 +1860,7 @@ async function handleFile(event) {
   if (!files.length) return;
   setError("");
   try {
-    await uploadFiles(files, { parseBoq: true });
+    await uploadFiles(files, { parseBoq: true, archiveArea: PROJECT_ARCHIVE_AREAS.boq, archiveCategory: "清单与计价资料" });
     $("fileName").textContent = files.length === 1 ? files[0].name : `${files.length} 个文件`;
     renderBoqEditor();
     renderIntakeReports();
@@ -1696,11 +1970,12 @@ function renderContract() {
   state.contractDraft = { ...state.contractDraft, ...contract };
   state.obligationsDraft = obligations.length ? obligations.map((item) => ({ ...item })) : [{ name: "", owner: "", due_date: "", status: "pending", amount: "" }];
   $("workspaceContent").innerHTML = `
-    <div class="surface-title"><div><span class="panel-label">P01 CONTRACT INTAKE</span><h3>合同资料台</h3></div><span class="surface-caption">记录合同主数据、关键日期、金额和履约义务；解释结果保留来源编号</span></div>
-    <div class="capability-intro"><strong>合同是项目成本和履约判断的第一来源。</strong><span>系统只整理已确认资料，不替代合同法律解释。</span></div>
+    <div class="surface-title"><div><span class="panel-label">P01 CONTRACT / PROCUREMENT BASIS</span><h3>合同与招采依据台</h3></div><span class="surface-caption">重点展示影响合同范围、价格、工期、责任和履约的依据</span></div>
+    <div class="capability-intro"><strong>合同资料不等同于项目所有文件。</strong><span>招标、投标、定标、合同和执行解释五类资料在本入口重点归档；清单、图纸、变更和结算资料分别进入 P02、P03、P06、P08。</span></div>
     <section class="source-panel contract-source-panel">
-      <div class="surface-title"><div><span class="panel-label">CONTRACT FILE INTAKE</span><h3>合同资料录入</h3></div><button id="uploadContractSource" class="button button-quiet" type="button">＋录入合同资料</button></div>
-      <p class="business-note">可多选合同正文、补充协议、清单、附件等文件；原件保存在本地资料库并自动识别，合同主数据仍需人工核对后保存。</p>
+      <div class="surface-title"><div><span class="panel-label">CONTRACT FILE INTAKE</span><h3>合同与招采依据录入</h3></div><button id="uploadContractSource" class="button button-quiet" type="button">＋录入合同与招采依据</button></div>
+      <p class="business-note">可多选招标、投标、定标、合同和执行解释资料；原件保存在本地资料库并自动识别，合同主数据仍需人工核对后保存。</p>
+      <label class="archive-selector">本次资料分类<select id="contractArchiveCategory">${CONTRACT_ARCHIVE_CLASSES.map(([value, label]) => `<option value="${value}">${value}：${label}</option>`).join("")}</select></label>
       <div id="contractSourceList" class="source-list"></div>
       <div id="contractIntakeSummary" class="intake-report-list"></div>
     </section>
@@ -1721,7 +1996,7 @@ function renderContract() {
     { key: "name", label: "义务/节点" }, { key: "owner", label: "责任方" }, { key: "due_date", label: "截止日期", type: "date" },
     { key: "status", label: "状态", options: [["pending", "待办"], ["active", "进行中"], ["done", "已完成"]] }, { key: "amount", label: "金额", type: "number" },
   ], () => ({ name: "", owner: "", due_date: "", status: "pending", amount: "" }));
-  renderSourceList("contractSourceList");
+  renderSourceList("contractSourceList", { archiveArea: "项目资料库/合同与招采依据" });
   renderIntakeReports("contractIntakeSummary");
   $("uploadContractSource").addEventListener("click", () => $("contractSourceInput").click());
   $("contractSourceInput").onchange = handleContractSourceFiles;
@@ -1789,6 +2064,7 @@ function renderBaseline() {
     <div class="surface-title"><div><span class="panel-label">P04 BASELINE LEDGER</span><h3>零号台账</h3></div><span class="surface-caption">把项目开局基线单独保存，金额可由工程量×单价自动计算</span></div>
     <div class="capability-intro"><strong>零号台账是后续成本、变更和预警的比较基准。</strong><span>基线金额与 P05 成本计划分开保存，来源可回溯。</span></div>
     ${stageSourcePanel("baseline", "零号台账资料", "可多选开工资料、合同附件、目标成本表、Excel、PDF、Word 和图片资料。")}
+    ${basisReferencePanel("P04")}
     <div class="field-grid capability-fields">${stageSourceField()}</div>
     <div class="data-entry-heading"><div><span class="panel-label">BASELINE ENTRIES</span><h3>基线条目</h3></div><button id="addBaseline" class="button button-quiet" type="button">＋新增台账条目</button></div>
     <div id="baselineEditor" class="editable-table"></div>
@@ -1800,6 +2076,7 @@ function renderBaseline() {
     { key: "unit_price", label: "单价", type: "number" }, { key: "amount", label: "金额", type: "number" }, { key: "basis", label: "基准口径" }, { key: "source_id", label: "资料编号" },
   ], () => ({ code: "", name: "", unit: "", quantity: "", unit_price: "", amount: "", basis: "", source_id: "" }));
   bindStageSourcePanel("baseline", "零号台账资料");
+  bindBasisReferencePanel("P04");
   $("addBaseline").addEventListener("click", () => { state.baselineDraft.push({ code: "", name: "", unit: "", quantity: "", unit_price: "", amount: "", basis: "", source_id: "" }); renderBaseline(); });
   $("saveBaseline").addEventListener("click", saveBaseline);
   if (result) renderCapabilitySummary("baselineOutput", result, [["台账条目", result.summary?.entry_count], ["基线金额", dashboardMoney(result.summary?.baseline_total)], ["来源数", result.summary?.source_count], ["待定价", result.summary?.unpriced_count]]);
@@ -1809,7 +2086,9 @@ async function saveBaseline() {
   setError("");
   try {
     const context = stageContext("stageSourceId");
-    const result = await apiJson("/api/baseline", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...context, entries: state.baselineDraft.filter((item) => item.name?.trim()) }) });
+    const basisLabel = basisDisplayName("P04");
+    const entries = state.baselineDraft.filter((item) => item.name?.trim()).map((item) => ({ ...item, basis: item.basis || basisLabel }));
+    const result = await apiJson("/api/baseline", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...context, entries }) });
     state.baselineResult = result;
     await refreshWorkspace();
     setStatus("零号台账已保存");
@@ -1909,11 +2188,13 @@ function renderPlan() {
     <div class="surface-title"><div><span class="panel-label">COST PLANNING</span><h3>编制成本计划</h3></div><span class="surface-caption">合同单价进入计划；市场单价仅用于内部成本参考</span></div>
     <div class="notice-line"><strong>当前资料：${state.fileName || state.sourceName}</strong><span>${state.boqResult.item_count} 项清单已带入。</span></div>
     ${stageSourcePanel("plan", "成本计划资料", "可多选组价依据、市场询价、目标成本表、合同附件和计算说明。")}
+    ${basisReferencePanel("P05")}
     <div class="data-entry-heading"><div><span class="panel-label">PRICE BOOK</span><h3>补充单价</h3></div><span class="input-note">没有合同单价的项目会保留为待组价。</span></div>
     <div id="planEditor" class="editable-table"></div>
     <div class="action-row"><button id="runPlan" class="button button-primary" type="button">生成成本计划</button><span class="request-status">${planNote}</span></div>
     <div id="planOutput" class="inline-output"></div>`;
   bindStageSourcePanel("plan", "成本计划资料");
+  bindBasisReferencePanel("P05");
   renderPlanEditor();
   $("runPlan").addEventListener("click", runCostPlan);
   if (state.planResult) renderPlanOutput(state.planResult);
@@ -1959,6 +2240,7 @@ async function runCostPlan() {
   setError("");
   try {
     const context = await ensureProject();
+    const basis = stageBasisContexts("P05");
     const result = await apiJson("/api/cost-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1968,8 +2250,8 @@ async function runCostPlan() {
         items: state.boqResult.items,
         contract_prices: priceBook("contractPrice"),
         market_prices: priceBook("marketPrice"),
-        contract_basis: state.sample?.contract_basis || {},
-        market_basis: state.sample?.market_basis || {},
+        contract_basis: basis.contract_basis,
+        market_basis: basis.market_basis,
       }),
     });
     state.planResult = result;
@@ -2034,10 +2316,12 @@ function renderReview() {
     <div class="surface-title"><div><span class="panel-label">SETTLEMENT REVIEW</span><h3>结算初审</h3></div><span class="surface-caption">检查数量、金额、单位和价格口径，形成处理建议</span></div>
     <div class="notice-line"><strong>待审资料：${state.fileName || state.sourceName}</strong><span>以下数据来自已生成的成本计划。</span></div>
     ${stageSourcePanel("review", "结算资料", "可多选结算书、收方单、签证、竣工资料、对账单和其他审查依据。")}
+    ${basisReferencePanel("P08")}
     <div id="reviewTable" class="editable-table readonly-table"></div>
     <div class="action-row"><button id="runReview" class="button button-primary" type="button">运行结算初审</button><span class="request-status">系统会显示可发布、阻断和需要核对的事项。</span></div>
     <div id="reviewOutput" class="inline-output"></div>`;
   bindStageSourcePanel("review", "结算资料");
+  bindBasisReferencePanel("P08");
   renderTable($("reviewTable"), [["name", "项目"], ["unit", "单位"], ["quantity", "工程量"], ["unit_price", "单价"], ["amount", "金额"], ["display_status", "状态"]], (state.planResult.items || []).map((item) => ({ ...item, display_status: displayPlanStatus(item.status) })));
   $("runReview").addEventListener("click", runReview);
   if (state.reviewResult) renderReviewOutput(state.reviewResult);
@@ -2047,6 +2331,7 @@ async function runReview() {
   setError("");
   try {
     const context = await ensureProject();
+    const basis = stageBasisContexts("P08");
     const result = await apiJson("/api/review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2056,8 +2341,8 @@ async function runReview() {
         rows: reviewRows(),
         reference_units: state.sample?.reference_units || {},
         reference_prices: state.sample?.reference_prices || {},
-        subject_basis: state.sample?.subject_basis || {},
-        reference_basis: state.sample?.reference_basis || {},
+        subject_basis: basis.subject_basis,
+        reference_basis: basis.reference_basis,
       }),
     });
     state.reviewResult = result;
@@ -2153,6 +2438,7 @@ function setView(view) {
   if (view === "evidence") renderEvidence();
   if (view === "review") renderReview();
   if (view === "export") renderExportWorkspace();
+  if (view === "basis") renderBasis();
   if (view === "dashboard") renderDashboard();
   if (view === "personnel") renderPersonnel();
   if (view === "control") renderControl();
@@ -2177,6 +2463,7 @@ async function loadHealth() {
 async function loadDemo() {
   state.sample = await apiJson("/api/sample");
   await loadConnectors();
+  await loadBasisCatalog();
   state.projectId = state.sample.project_id;
   state.sourceId = state.sample.source_id;
   state.projectName = state.sample.project_name || "演示道路项目";

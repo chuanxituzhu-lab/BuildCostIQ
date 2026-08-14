@@ -115,6 +115,8 @@ class WebUiTests(unittest.TestCase):
         with urlopen(upload_request, timeout=2) as response:
             uploaded = json.load(response)
         self.assertEqual(uploaded["source"]["source_id"], "source-audit")
+        self.assertEqual(uploaded["source"]["archive_area"], "项目资料库/待分类")
+        self.assertIn("archive_path", uploaded["source"])
 
         view_request = Request(
             f"{self.base_url}/api/source/view?project_id={project_id}&source_id=source-audit",
@@ -257,6 +259,79 @@ class WebUiTests(unittest.TestCase):
                 estimator_token,
             )
         self.assertEqual(denied_post.exception.code, 403)
+
+    def test_external_basis_is_independent_and_can_be_referenced_by_p04(self):
+        suffix = uuid4().hex[:10]
+        project_id = f"basis-project-{suffix}"
+
+        def post_json(path, payload):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json"),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        post_json("/api/project", {"project_id": project_id, "name": "依据引用测试项目"})
+        boundary = f"----BuildCostIQBasis{suffix}"
+        parts = [
+            ("category", "price_info"),
+            ("title", "2026年7月信息价"),
+            ("source_org", "本地造价信息站"),
+            ("version", "2026-07"),
+            ("region", "测试地区"),
+            ("effective_from", "2026-07-01"),
+            ("effective_to", "2026-07-31"),
+        ]
+        chunks = []
+        for name, value in parts:
+            chunks.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+        chunks.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"price-info.txt\"\r\n"
+            "Content-Type: text/plain\r\n\r\n人材机信息价 2026年7月\r\n"
+        )
+        chunks.append(f"--{boundary}--\r\n")
+        upload_request = Request(
+            f"{self.base_url}/api/basis/upload",
+            data="".join(chunks).encode("utf-8"),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}", **self.auth_headers()},
+            method="POST",
+        )
+        with urlopen(upload_request, timeout=2) as response:
+            uploaded = json.load(response)
+        basis = uploaded["basis"]
+        self.assertEqual(basis["category"], "price_info")
+        self.assertIn("外部依据库/造价信息", basis["archive_path"])
+        self.assertNotIn("content_hash", basis)
+
+        with urlopen(self.auth_request("/api/basis"), timeout=2) as response:
+            catalog = json.load(response)
+        self.assertTrue(any(item["basis_id"] == basis["basis_id"] for item in catalog["items"]))
+
+        reference = post_json(
+            "/api/basis/reference",
+            {"project_id": project_id, "basis_id": basis["basis_id"], "stage": "P04"},
+        )
+        self.assertEqual(reference["basis"]["version"], "2026-07")
+        self.assertEqual(reference["workspace"]["basis_references"][0]["stage"], "P04")
+
+        view_request = self.auth_request(f"/api/basis/view?basis_id={basis['basis_id']}")
+        with urlopen(view_request, timeout=2) as response:
+            self.assertIn("人材机信息价", response.read().decode("utf-8"))
+
+        project_manager_request = Request(
+            f"{self.base_url}/api/auth/register",
+            data=json.dumps({"username": f"basis-pm-{suffix}", "password": "local-pass", "role": "project_manager"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(project_manager_request, timeout=2) as response:
+            project_manager_token = json.load(response)["token"]
+        with self.assertRaises(HTTPError) as denied:
+            urlopen(self.auth_request("/api/basis", project_manager_token), timeout=2)
+        self.assertEqual(denied.exception.code, 403)
 
     def test_review_endpoint_uses_frozen_gateway(self):
         payload = {
@@ -528,7 +603,7 @@ class WebUiTests(unittest.TestCase):
     def test_connector_catalog_and_bidirectional_project_exchange(self):
         with urlopen(f"{self.base_url}/api/connectors", timeout=2) as response:
             catalog = json.load(response)["connectors"]
-        self.assertEqual({item["id"] for item in catalog}, {"excel-csv", "word-report", "cad-quantity", "budget-software", "project-bundle"})
+        self.assertEqual({item["id"] for item in catalog}, {"excel-csv", "word-report", "cad-quantity", "budget-software", "project-bundle", "government-basis", "quota-basis", "price-information"})
 
         project_id = "exchange-test"
         project_request = Request(

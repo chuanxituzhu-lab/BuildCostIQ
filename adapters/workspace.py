@@ -58,6 +58,7 @@ class LocalProjectWorkspace:
             "changes": None,
             "evidence": None,
             "review": None,
+            "basis_references": [],
             "alert_snapshots": [],
             "audit_log": [],
         }
@@ -113,6 +114,20 @@ class LocalProjectWorkspace:
         sources = [item for item in sources if item.get("source_id") != source.get("source_id")]
         sources.append(dict(source))
         state["sources"] = sources
+        return self.save(state)
+
+    def add_basis_reference(self, project_id: str, basis: Mapping[str, Any], stage: str) -> dict[str, Any]:
+        """Store a point-in-time basis snapshot selected by a project stage."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        references = [
+            item for item in list(state.get("basis_references") or [])
+            if not (item.get("basis_id") == basis.get("basis_id") and item.get("stage") == stage)
+        ]
+        snapshot = dict(basis)
+        snapshot["stage"] = stage
+        snapshot["referenced_at"] = _now()
+        references.append(snapshot)
+        state["basis_references"] = references
         return self.save(state)
 
     def append_audit(
