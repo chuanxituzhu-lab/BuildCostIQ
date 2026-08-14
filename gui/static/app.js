@@ -31,8 +31,16 @@ const state = {
   connectors: [],
   recognizers: [],
   intakeReports: [],
+  exportWorkspace: { kind: "report", filename: "", directoryHandle: null },
   personnel: { users: [], audit_log: [] },
 };
+
+const EXPORT_OPTIONS = [
+  { kind: "report", label: "Word 兼容报告", route: "report", extension: "html", description: "项目报告（HTML 格式，可用 Word 打开）", requiresCostDetail: true },
+  { kind: "boq.xlsx", label: "Excel 清单", route: "boq.xlsx", extension: "xlsx", description: "标准化清单明细", requiresCostDetail: false },
+  { kind: "cost-plan.xlsx", label: "Excel 成本计划", route: "cost-plan.xlsx", extension: "xlsx", description: "成本计划和组价结果", requiresCostDetail: true },
+  { kind: "bundle", label: "项目交换包", route: "bundle", extension: "zip", description: "项目状态、资料和识别稿的本地交换包", requiresCostDetail: true },
+];
 
 async function apiJson(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -672,10 +680,10 @@ function renderOverview() {
   renderConnectorCatalog();
   $("uploadSource").addEventListener("click", () => $("sourceInput").click());
   $("sourceInput").onchange = handleSourceFile;
-  $("exportReport").addEventListener("click", () => downloadProjectFile("report"));
-  $("exportBoq").addEventListener("click", () => downloadProjectFile("boq.xlsx"));
-  $("exportPlan").addEventListener("click", () => downloadProjectFile("cost-plan.xlsx"));
-  $("exportBundle").addEventListener("click", () => downloadProjectFile("bundle"));
+  $("exportReport").addEventListener("click", () => openExportWorkspace("report"));
+  $("exportBoq").addEventListener("click", () => openExportWorkspace("boq.xlsx"));
+  $("exportPlan").addEventListener("click", () => openExportWorkspace("cost-plan.xlsx"));
+  $("exportBundle").addEventListener("click", () => openExportWorkspace("bundle"));
   $("importBundle").addEventListener("click", () => $("bundleInput").click());
   $("bundleInput").onchange = handleBundleImport;
   bindViewButtons();
@@ -1307,7 +1315,7 @@ async function handleBundleImport(event) {
   }
 }
 
-async function downloadProjectFile(kind) {
+async function legacyDownloadProjectFile(kind) {
   if (!state.workspace) {
     setError("请先保存项目");
     return;
@@ -1325,6 +1333,154 @@ async function downloadProjectFile(kind) {
     URL.revokeObjectURL(objectUrl);
   } catch (error) {
     setError(error.message);
+  }
+}
+
+function availableExportOptions() {
+  return EXPORT_OPTIONS.filter((option) => !option.requiresCostDetail || canViewCostDetail());
+}
+
+function exportOption(kind) {
+  const options = availableExportOptions();
+  return options.find((option) => option.kind === kind) || options[0];
+}
+
+function defaultExportFilename(kind) {
+  const projectId = state.projectId || "buildcostiq-project";
+  if (kind === "report") return projectId + "-report.html";
+  if (kind === "boq.xlsx") return projectId + "-boq.xlsx";
+  if (kind === "cost-plan.xlsx") return projectId + "-cost-plan.xlsx";
+  return projectId + "-buildcostiq.zip";
+}
+
+function openExportWorkspace(kind) {
+  const option = exportOption(kind);
+  state.exportWorkspace = { kind: option.kind, filename: defaultExportFilename(option.kind), directoryHandle: null };
+  setView("export");
+}
+
+function setExportStatus(message, tone = "") {
+  const target = $("exportStatus");
+  if (!target) return;
+  target.className = ("export-status " + tone).trim();
+  target.textContent = message;
+}
+
+function renderExportDirectory() {
+  const target = $("exportDirectoryName");
+  if (!target) return;
+  target.textContent = state.exportWorkspace.directoryHandle?.name || "尚未选择文件夹";
+}
+
+function renderExportWorkspace() {
+  const options = availableExportOptions();
+  const selected = exportOption(state.exportWorkspace.kind);
+  state.exportWorkspace.kind = selected.kind;
+  state.exportWorkspace.filename = state.exportWorkspace.filename || defaultExportFilename(selected.kind);
+  const optionHtml = options.map((option) => (
+    '<option value="' + option.kind + '"' + (option.kind === selected.kind ? " selected" : "") + ">" + option.label + "</option>"
+  )).join("");
+  $("workspaceContent").innerHTML = [
+    '<div class="surface-title"><div><span class="panel-label">LOCAL EXPORT CENTER</span><h3>导出项目资料</h3></div><span class="surface-caption">先确认导出内容和本地目标文件夹，再写入文件</span></div>',
+    '<div class="capability-intro"><strong>导出文件只写入你明确选择的本地位置。</strong><span>系统不会把项目资料发送到外部服务；浏览器不支持文件夹授权时可改用默认下载。</span></div>',
+    '<div class="export-workspace">',
+    '<section class="export-panel"><div class="data-entry-heading"><div><span class="panel-label">EXPORT SETTINGS</span><h3>导出设置</h3></div><span class="request-status" id="exportSelectedDescription"></span></div>',
+    '<div class="field-grid export-fields"><label>导出内容<select id="exportKind">' + optionHtml + '</select></label><label>文件名<input id="exportFilename" /></label></div>',
+    '<div class="export-folder-card"><div><span class="panel-label">TARGET FOLDER</span><strong id="exportDirectoryName">尚未选择文件夹</strong><small>选择后将直接写入该文件夹，不经过服务器。</small></div><button id="chooseExportDirectory" class="button button-quiet" type="button">选择导出文件夹</button></div>',
+    '<div class="action-row"><button id="confirmExport" class="button button-primary" type="button">确认导出到所选文件夹</button><button id="downloadExport" class="button button-quiet" type="button">下载到默认位置</button><button id="backFromExport" class="button button-quiet" type="button">返回资料库</button></div>',
+    '<div id="exportStatus" class="export-status">请选择目标文件夹后确认导出。</div></section>',
+    '<aside class="export-panel export-notes"><span class="panel-label">EXPORT NOTE</span><h3>本次导出内容</h3><p id="exportDescription"></p><div class="notice-line"><strong>本地优先</strong><span>导出动作会保留当前项目编号和文件名，便于归档、交接和追溯。</span></div></aside>',
+    '</div>',
+  ].join("");
+  $("exportFilename").value = state.exportWorkspace.filename;
+  $("exportSelectedDescription").textContent = selected.description;
+  $("exportDescription").textContent = selected.description;
+  renderExportDirectory();
+  $("exportKind").addEventListener("change", (event) => {
+    state.exportWorkspace.kind = event.target.value;
+    state.exportWorkspace.filename = defaultExportFilename(event.target.value);
+    $("exportFilename").value = state.exportWorkspace.filename;
+    const option = exportOption(event.target.value);
+    $("exportSelectedDescription").textContent = option.description;
+    $("exportDescription").textContent = option.description;
+    setExportStatus("导出内容已切换，请确认文件名和目标文件夹。", "info");
+  });
+  $("exportFilename").addEventListener("input", (event) => { state.exportWorkspace.filename = event.target.value; });
+  $("chooseExportDirectory").addEventListener("click", chooseExportDirectory);
+  $("confirmExport").addEventListener("click", confirmExportToDirectory);
+  $("downloadExport").addEventListener("click", () => downloadProjectFile(state.exportWorkspace.kind));
+  $("backFromExport").addEventListener("click", () => setView("overview"));
+}
+
+async function chooseExportDirectory() {
+  if (!window.showDirectoryPicker) {
+    setExportStatus("当前浏览器不支持直接选择文件夹，请使用“下载到默认位置”。", "warn");
+    return;
+  }
+  try {
+    state.exportWorkspace.directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+    renderExportDirectory();
+    setExportStatus("已选择文件夹：" + state.exportWorkspace.directoryHandle.name + "，可以确认导出。", "ok");
+  } catch (error) {
+    if (error.name !== "AbortError") setExportStatus("选择文件夹失败：" + error.message, "error");
+  }
+}
+
+async function fetchProjectFile(kind) {
+  if (!state.workspace) throw new Error("请先保存项目");
+  const option = exportOption(kind);
+  const response = await fetch(
+    "/api/workspace/" + encodeURIComponent(state.projectId) + "/" + option.route,
+    { headers: { Authorization: "Bearer " + state.auth.token } },
+  );
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || ("文件导出失败（" + response.status + "）"));
+  }
+  return response.blob();
+}
+
+function triggerBrowserDownload(blob, filename) {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function confirmExportToDirectory() {
+  const filename = (state.exportWorkspace.filename || "").trim();
+  if (!filename) {
+    setExportStatus("请填写导出文件名。", "error");
+    return;
+  }
+  if (!state.exportWorkspace.directoryHandle) {
+    setExportStatus("请先选择导出文件夹；如需使用浏览器默认位置，请点击“下载到默认位置”。", "warn");
+    return;
+  }
+  try {
+    const blob = await fetchProjectFile(state.exportWorkspace.kind);
+    const fileHandle = await state.exportWorkspace.directoryHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    setExportStatus("导出完成：" + state.exportWorkspace.directoryHandle.name + "\\" + filename, "ok");
+  } catch (error) {
+    setExportStatus("导出失败：" + error.message, "error");
+  }
+}
+
+async function downloadProjectFile(kind) {
+  try {
+    const filename = (state.exportWorkspace.filename || defaultExportFilename(kind)).trim();
+    const blob = await fetchProjectFile(kind);
+    triggerBrowserDownload(blob, filename);
+    setExportStatus("已交给浏览器下载：" + filename, "ok");
+  } catch (error) {
+    setExportStatus(error.message, "error");
   }
 }
 
@@ -1996,6 +2152,7 @@ function setView(view) {
   if (view === "changes") renderChanges();
   if (view === "evidence") renderEvidence();
   if (view === "review") renderReview();
+  if (view === "export") renderExportWorkspace();
   if (view === "dashboard") renderDashboard();
   if (view === "personnel") renderPersonnel();
   if (view === "control") renderControl();

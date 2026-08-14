@@ -2,6 +2,12 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc6 — 2026-08-14
+
+- Changed project export buttons to open a second-level local export workspace instead of downloading immediately.
+- Added export type selection, editable filenames, folder selection through the browser File System Access API, explicit confirmation, and a default-download fallback.
+- Kept export authorization and the Core/CapabilityGateway boundary unchanged.
+
 ## v0.7.2-rc5 — 2026-08-14
 
 - Added dedicated multi-file material-intake entries to P05 cost planning and P08 settlement review, completing the P01–P08 intake coverage.
