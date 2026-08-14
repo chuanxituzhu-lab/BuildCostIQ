@@ -1959,6 +1959,11 @@ $("workspaceTabs").addEventListener("click", (event) => {
   if (tab) setView(tab.dataset.view);
 });
 
+$("assistList").addEventListener("click", (event) => {
+  const item = event.target.closest("[data-view]");
+  if (item) setView(item.dataset.view);
+});
+
 $("loginForm").addEventListener("submit", submitLogin);
 $("registerForm").addEventListener("submit", submitRegister);
 $("logoutButton").addEventListener("click", logout);

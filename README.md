@@ -1,6 +1,6 @@
 # BuildCostIQ
 
-BuildCostIQ version `v0.7.2-rc1` is a local-first construction-cost foundation and full P01–P08 project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
+BuildCostIQ version `v0.7.2-rc2` is a local-first construction-cost foundation and full P01–P08 project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`).
 
 ## Quick verification
 

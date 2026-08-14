@@ -2,6 +2,11 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc2 — 2026-08-14
+
+- Fixed the left-side P01–P08 work-assist entries so they navigate to the same workbench views as the top menu.
+- Added delegated navigation handling for dynamically refreshed work-assist items.
+
 ## v0.7.2-rc1 — 2026-08-14
 
 - Added a permission-gated personnel management backend entry for project managers and cost managers.
