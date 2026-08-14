@@ -31,6 +31,7 @@ from adapters import (
 )
 from adapters.connectors import build_project_bundle, connector_catalog
 from adapters.recognition import RecognitionError, recognition_catalog, recognize_source
+from adapters.search import build_evidence_answer, search_local_evidence
 from core import Runtime
 from core.models import SourceDocument
 from plugins import build_default_plugins
@@ -963,6 +964,56 @@ def _workspace(project_id: str) -> dict[str, Any]:
     return state
 
 
+def _local_search(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("检索请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    query = str(payload.get("query", "")).strip()
+    mode = str(payload.get("mode", "search")).strip().lower() or "search"
+    scope = str(payload.get("scope", "all")).strip().lower() or "all"
+    stage = str(payload.get("stage", "")).strip()
+    category = str(payload.get("category", "")).strip()
+    if not project_id or not query:
+        raise ValueError("请填写项目和检索内容")
+    if mode not in {"search", "ask"}:
+        raise ValueError("检索模式不受支持")
+    if scope not in {"all", "project", "basis"}:
+        raise ValueError("检索范围不受支持")
+    if scope == "basis" and not _can(actor, "view_basis"):
+        raise PermissionError("当前角色不能检索外部依据库")
+    state = _workspace(project_id)
+    visible_state = _redact_sensitive(state, actor)
+    packet = search_local_evidence(
+        visible_state,
+        BASIS_WORKSPACE.list(),
+        query,
+        scope=scope,
+        stage=stage,
+        category=category,
+        source_reader=lambda content_hash: SOURCE_STORE.read(
+            SourceDocument(name="local-search.bin", content_hash=content_hash, media_type="application/octet-stream")
+        ),
+        can_view_source=_can(actor, "view_source"),
+        can_view_basis=_can(actor, "view_basis"),
+    )
+    if mode == "ask":
+        packet.update(build_evidence_answer(packet))
+    PROJECT_WORKSPACE.append_audit(
+        project_id,
+        "question.asked" if mode == "ask" else "search.performed",
+        actor,
+        project_id,
+        {
+            "query": query[:300],
+            "mode": mode,
+            "scope": scope,
+            "result_count": packet.get("total", 0),
+            "answer_mode": packet.get("answer_mode", "local_index") if mode == "ask" else "local_index",
+        },
+    )
+    return packet
+
+
 def _dashboard_decimal(value: Any) -> Decimal | None:
     if value is None or value == "":
         return None
@@ -1432,7 +1483,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "项目资料库搜索查看、中文文件名可打开、常用与近期分类优先、P01-P08 资料分区归档",
+        "release_highlights": "本地资料与问题检索、证据摘要与溯源标注、无依据不回答、中文文件名可打开、P01-P08 资料分区归档",
     }
 
 
@@ -1674,6 +1725,17 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             token = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             SESSIONS.pop(token, None)
             self._write_json({"ok": True})
+            return
+        if path == "/api/search":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                self._write_json(_local_search(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
             return
         if path == "/api/personnel":
             try:

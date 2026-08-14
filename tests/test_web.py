@@ -713,6 +713,76 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(gated["recognition"]["status"], "consent_required")
         self.assertEqual(gated["workspace"]["sources"][0]["recognition"]["mode"], "local")
 
+    def test_local_search_returns_traceable_evidence_and_honest_no_hit(self):
+        boundary = "----BuildCostIQSearchBoundary"
+        chunks: list[bytes] = []
+        for name, value, filename in [
+            ("project_id", "search-project", None),
+            ("source_id", "search-source", None),
+            ("file", "合同清单包含工程量和单价，结算依据为本地合同文件。", "搜索资料.txt"),
+        ]:
+            chunks.append(f"--{boundary}\r\n".encode())
+            if filename:
+                chunks.append(f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode())
+                chunks.append(b"Content-Type: text/plain; charset=utf-8\r\n\r\n")
+            else:
+                chunks.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+            chunks.append(value.encode("utf-8"))
+            chunks.append(b"\r\n")
+        chunks.append(f"--{boundary}--\r\n".encode())
+        upload_request = Request(
+            f"{self.base_url}/api/source/upload",
+            data=b"".join(chunks),
+            headers=self.auth_headers(f"multipart/form-data; boundary={boundary}"),
+            method="POST",
+        )
+        with urlopen(upload_request, timeout=2):
+            pass
+
+        def search(query: str, mode: str = "search"):
+            request = Request(
+                f"{self.base_url}/api/search",
+                data=json.dumps({"project_id": "search-project", "query": query, "mode": mode, "scope": "project"}, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json"),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        found = search("工程量和单价")
+        self.assertGreaterEqual(found["total"], 1)
+        self.assertTrue(any(item["match_status"] == "supported" for item in found["results"]))
+        serialized = json.dumps(found, ensure_ascii=False)
+        self.assertNotIn("content_hash", serialized)
+        self.assertNotIn("document_id", serialized)
+        self.assertIn("archive_path", serialized)
+        self.assertTrue(all(item["provenance"]["external_sent"] is False for item in found["results"]))
+
+        answer = search("火星档案不存在", "ask")
+        self.assertEqual(answer["answer_mode"], "local_evidence_summary")
+        self.assertIn("不能对这个问题给出确定结论", answer["answer"])
+        self.assertEqual(answer["external_ai"]["sent"], False)
+
+        pm_request = Request(
+            f"{self.base_url}/api/auth/register",
+            data=json.dumps({"username": f"search-pm-{uuid4().hex[:8]}", "password": "local-pass", "role": "project_manager"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(pm_request, timeout=2) as response:
+            pm_token = json.load(response)["token"]
+        pm_search = Request(
+            f"{self.base_url}/api/search",
+            data=json.dumps({"project_id": "search-project", "query": "工程量", "scope": "all"}, ensure_ascii=False).encode("utf-8"),
+            headers=self.auth_headers("application/json", pm_token),
+            method="POST",
+        )
+        with urlopen(pm_search, timeout=2) as response:
+            pm_result = json.load(response)
+        self.assertTrue(pm_result["results"])
+        self.assertTrue(all(item["openable"] is False and item["storage_path"] == "" for item in pm_result["results"]))
+        self.assertFalse(any(item["result_id"].startswith("external-basis:") for item in pm_result["results"]))
+
 
 if __name__ == "__main__":
     unittest.main()

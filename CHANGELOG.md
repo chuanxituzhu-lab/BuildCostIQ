@@ -2,6 +2,13 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc10 — 2026-08-14
+
+- Added a global “资料与问题” search entry and dedicated WebUI workspace for project materials, external basis snapshots, and saved P01–P08 records.
+- Added local evidence-grounded question summaries with visible source, archive path, recognition status, and uncertainty labels.
+- Defaulted search and question answering to local-only evidence; external AI remains disabled and requires explicit consent at a future adapter boundary.
+- Added strict long-question matching and role-aware result visibility so unsupported questions do not become false positive answers.
+
 ## v0.7.2-rc9 — 2026-08-14
 
 - Fixed inline viewing for Unicode-named source files by emitting an ASCII fallback and UTF-8 filename response header.

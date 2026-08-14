@@ -1,6 +1,6 @@
 # BuildCostIQ
 
-BuildCostIQ version `v0.7.2-rc9` is a local-first construction-cost foundation and full P01–P08 project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`). The project file library now supports searching by filename, category, or local path and keeps the most-used and recently used categories at the front of relevant dropdowns; Unicode filenames use a browser-compatible inline response so source files can be opened directly.
+BuildCostIQ version `v0.7.2-rc10` is a local-first construction-cost foundation and full P01–P08 project workbench. The architecture is frozen around a small Core, independent adapters, and exactly eight plugin capabilities (`P01`–`P08`). The WebUI now provides a global local-evidence search and question workspace: results show traceable source and archive information, unsupported questions are explicitly marked as lacking sufficient evidence, and external AI remains disabled unless a future adapter receives explicit consent. The project file library also supports searching by filename, category, or local path; Unicode filenames use a browser-compatible inline response so source files can be opened directly.
 
 ## Quick verification
 

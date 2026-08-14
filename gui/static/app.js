@@ -33,6 +33,14 @@ const state = {
   basisCatalog: { categories: [], items: [] },
   basisReferences: [],
   sourceSearchTerm: "",
+  search: {
+    mode: "search",
+    query: "",
+    scope: "all",
+    stage: "",
+    category: "",
+    response: null,
+  },
   intakeReports: [],
   exportWorkspace: { kind: "report", filename: "", directoryHandle: null },
   personnel: { users: [], audit_log: [] },
@@ -149,6 +157,7 @@ function isKpiOnly() {
 function showAuth(message = "") {
   $("authShell").hidden = false;
   $("workspaceShell").hidden = true;
+  $("globalSearchForm").hidden = true;
   $("userSession").hidden = true;
   setAuthMessage(message);
 }
@@ -157,6 +166,7 @@ function showWorkspace(user) {
   state.auth.user = user;
   $("authShell").hidden = true;
   $("workspaceShell").hidden = false;
+  $("globalSearchForm").hidden = false;
   $("userSession").hidden = false;
   $("userRole").textContent = `${user.role_label} · ${user.username}`;
   $("personnelTab").hidden = !canManagePersonnel();
@@ -170,7 +180,7 @@ function showWorkspace(user) {
       ? !isCostManager()
       : view === "personnel"
         ? !canManagePersonnel()
-        : isKpiOnly() && !["overview", "dashboard"].includes(view);
+        : isKpiOnly() && !["overview", "dashboard", "search"].includes(view);
   });
 }
 
@@ -395,6 +405,7 @@ function updateContextBar() {
 function renderAssist() {
   const tasks = [];
   if (isKpiOnly()) {
+    tasks.push({ tone: "next", title: "查找资料或提问", note: "只基于本地项目资料显示可追溯依据。", view: "search" });
     tasks.push({ tone: "next", title: "查看项目经营看板", note: "项目经理仅显示重要指标、风险预警和经营趋势。", view: "dashboard" });
     $("assistList").replaceChildren(...tasks.map((task) => {
       const button = document.createElement("button");
@@ -414,6 +425,7 @@ function renderAssist() {
     }));
     return;
   }
+  tasks.push({ tone: "next", title: "查找资料或提问", note: "本地检索优先；回答会标注命中依据和不确定性。", view: "search" });
   const structuredStages = [
     ["contract", "P01 合同与招采依据", state.contractResult, "补充合同主数据和履约义务"],
     ["drawings", "P03 图纸登记", state.drawingsResult, "登记图号、版本和审阅状态"],
@@ -658,6 +670,197 @@ function renderDashboard() {
     }));
   }
   bindViewButtons();
+}
+
+function searchStatusLabel(status) {
+  return status === "supported" ? "可回溯命中" : status === "related" ? "索引关联" : "依据不足";
+}
+
+function renderSearchResults() {
+  const response = state.search.response;
+  const resultList = $("searchResultList");
+  const summary = $("searchResultSummary");
+  const answerPanel = $("searchAnswerPanel");
+  if (!resultList || !summary || !answerPanel) return;
+  if (!response) {
+    summary.textContent = state.search.query ? "正在准备本地检索…" : "输入文件名、合同条款、价格依据或你想核对的问题。";
+    resultList.className = "search-result-list empty-state";
+    resultList.textContent = "检索结果会显示资料来源、归档位置、识别状态和可查看入口。";
+    answerPanel.hidden = true;
+    return;
+  }
+  summary.textContent = response.total
+    ? `本地检索到 ${response.total} 条相关记录；当前显示 ${response.results.length} 条`
+    : "没有命中本地资料。系统不会用猜测补齐答案。";
+  if (state.search.mode === "ask") {
+    answerPanel.hidden = false;
+    $("searchAnswerText").textContent = response.answer || "未形成回答";
+    $("searchAnswerPolicy").textContent = response.answer_policy || "仅使用本地证据";
+    const claimsTarget = $("searchClaims");
+    const claims = response.claims || [];
+    claimsTarget.replaceChildren(...claims.map((claim) => {
+      const item = document.createElement("article");
+      item.className = `search-claim search-claim-${claim.status || "related"}`;
+      const title = document.createElement("strong");
+      title.textContent = `${claim.label || "证据"} · ${claim.source || "未命名资料"}`;
+      const body = document.createElement("p");
+      body.textContent = claim.text || "未提供摘要";
+      const source = document.createElement("small");
+      source.textContent = `溯源：${claim.archive_path || "未记录归档位置"} · ${claim.is_inference ? "系统推断" : "资料原文/识别稿"}`;
+      item.append(title, body, source);
+      return item;
+    }));
+    const uncertaintyTarget = $("searchUncertainties");
+    const uncertainties = response.uncertainties || [];
+    uncertaintyTarget.replaceChildren(...uncertainties.map((text) => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      return item;
+    }));
+    $("searchUncertaintyBlock").hidden = !uncertainties.length;
+  } else {
+    answerPanel.hidden = true;
+  }
+  if (!response.results?.length) {
+    resultList.className = "search-result-list empty-state";
+    resultList.textContent = "未找到可引用的本地资料。可以换用文件名、合同关键词、P01–P08 阶段名称或更具体的问题。";
+    return;
+  }
+  resultList.className = "search-result-list";
+  resultList.replaceChildren(...response.results.map((result) => {
+    const item = document.createElement("article");
+    item.className = "search-result-item";
+    const head = document.createElement("div");
+    head.className = "search-result-head";
+    const info = document.createElement("div");
+    const title = document.createElement("h4");
+    title.textContent = result.title || "未命名资料";
+    const meta = document.createElement("small");
+    meta.textContent = `${result.scope_label || "本地资料"} · ${result.type_label || "资料"} · ${result.category || "未分类"}`;
+    info.append(title, meta);
+    const status = document.createElement("span");
+    status.className = `search-result-status search-status-${result.match_status || "related"}`;
+    status.textContent = searchStatusLabel(result.match_status);
+    head.append(info, status);
+    const snippet = document.createElement("p");
+    snippet.className = "search-result-snippet";
+    snippet.textContent = result.snippet || "未提供可检索摘要";
+    const provenance = document.createElement("small");
+    provenance.className = "search-result-provenance";
+    provenance.textContent = `来源：${result.provenance?.source_name || result.title || "本地资料"} · 归档：${result.archive_path || "未记录归档位置"}`;
+    item.append(head, snippet, provenance);
+    if (result.storage_path) {
+      const path = document.createElement("small");
+      path.className = "search-result-path";
+      path.textContent = `本地保存：${result.storage_path}`;
+      item.append(path);
+    }
+    const actions = document.createElement("div");
+    actions.className = "search-result-actions";
+    if (result.openable && result.source_id && result.result_id?.startsWith("project-source:")) {
+      const view = document.createElement("button");
+      view.type = "button";
+      view.className = "icon-button source-view-button";
+      view.textContent = result.derived ? "查看识别稿" : "查看资料";
+      view.addEventListener("click", () => viewSource({ source_id: result.source_id }, Boolean(result.derived)));
+      actions.append(view);
+      if (result.derived) {
+        const original = document.createElement("button");
+        original.type = "button";
+        original.className = "icon-button";
+        original.textContent = "查看原件";
+        original.addEventListener("click", () => viewSource({ source_id: result.source_id }, false));
+        actions.append(original);
+      }
+    } else if (result.openable && result.source_id && result.result_id?.startsWith("external-basis:")) {
+      const view = document.createElement("button");
+      view.type = "button";
+      view.className = "icon-button source-view-button";
+      view.textContent = result.derived ? "查看识别稿" : "查看依据";
+      view.addEventListener("click", () => viewBasis({ basis_id: result.source_id }, Boolean(result.derived)));
+      actions.append(view);
+      if (result.derived) {
+        const original = document.createElement("button");
+        original.type = "button";
+        original.className = "icon-button";
+        original.textContent = "查看原件";
+        original.addEventListener("click", () => viewBasis({ basis_id: result.source_id }, false));
+        actions.append(original);
+      }
+    } else if (!result.openable && isKpiOnly()) {
+      const note = document.createElement("small");
+      note.className = "permission-note";
+      note.textContent = "当前角色仅显示索引和风险相关信息";
+      actions.append(note);
+    }
+    if (actions.childNodes.length) item.append(actions);
+    return item;
+  }));
+}
+
+async function performSearch() {
+  const queryInput = $("searchQuery");
+  if (queryInput) state.search.query = queryInput.value.trim();
+  if (!state.search.query) {
+    state.search.response = null;
+    renderSearchResults();
+    return;
+  }
+  state.search.response = null;
+  renderSearchResults();
+  try {
+    state.search.response = await apiJson("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: state.projectId,
+        query: state.search.query,
+        mode: state.search.mode,
+        scope: state.search.scope,
+        stage: state.search.stage,
+        category: state.search.category,
+      }),
+    });
+    renderSearchResults();
+    setStatus(state.search.mode === "ask" ? "问题已按本地证据完成核对" : "本地资料检索完成");
+  } catch (error) {
+    setError(error.message);
+    state.search.response = null;
+    renderSearchResults();
+  }
+}
+
+function renderSearch() {
+  if (isKpiOnly()) state.search.scope = "project";
+  const stageOptions = [
+    ["", "全部 P01–P08"], ["P01", "P01 合同与招采依据"], ["P02", "P02 清单资料"], ["P03", "P03 图纸资料"],
+    ["P04", "P04 零号台账"], ["P05", "P05 成本计划"], ["P06", "P06 变更管理"], ["P07", "P07 证据关联"], ["P08", "P08 结算初审"],
+  ];
+  const scopeOptions = isKpiOnly()
+    ? [["project", "当前项目资料"]]
+    : [["all", "当前项目 + 外部依据"], ["project", "仅当前项目资料"], ["basis", "仅外部依据库"]];
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">LOCAL EVIDENCE SEARCH</span><h3>资料与问题检索</h3></div><span class="surface-caption">搜索入口在顶部；这里显示完整结果、来源和溯源</span></div>
+    <div class="search-policy"><strong>本地优先，认知诚实</strong><span>默认只读取当前项目、外部依据快照和已保存的 P01–P08 记录；没有依据就明确显示不足，不把系统推断写成事实。</span><span>外部 AI 未启用；未来如接入，必须逐次明确授权并显示发送范围。</span></div>
+    <section class="search-workspace">
+      <div class="search-mode-row"><div class="search-mode-switch"><button id="searchModeSearch" class="button ${state.search.mode === "search" ? "button-primary" : "button-quiet"}" type="button">查资料</button><button id="searchModeAsk" class="button ${state.search.mode === "ask" ? "button-primary" : "button-quiet"}" type="button">问问题</button></div><small id="searchModeNote" class="request-status">${state.search.mode === "ask" ? "回答只引用下方本地证据，不调用外部 AI。" : "按文件名、分类、路径、识别稿和业务记录查找。"}</small></div>
+      <form id="searchForm" class="search-form"><label class="visually-hidden" for="searchQuery">检索内容</label><input id="searchQuery" type="search" placeholder="例如：合同金额、工程量清单、变更依据、信息价有效期" /><button class="button button-primary" type="submit">开始检索</button></form>
+      <div class="search-filters"><label>检索范围<select id="searchScope">${scopeOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><label>工作阶段<select id="searchStage">${stageOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><label>资料分类<input id="searchCategory" placeholder="可选，如：合同与商务" /></label></div>
+      <div id="searchResultSummary" class="search-result-summary"></div>
+      <section id="searchAnswerPanel" class="search-answer-panel" hidden><div class="surface-title"><div><span class="panel-label">EVIDENCE-GROUNDED ANSWER</span><h3>本地证据回答</h3></div><span class="surface-caption">不是自动裁决</span></div><p id="searchAnswerText" class="search-answer-text"></p><small id="searchAnswerPolicy" class="search-answer-policy"></small><div id="searchUncertaintyBlock" class="search-uncertainty" hidden><strong>需要人工核对</strong><ul id="searchUncertainties"></ul></div><div id="searchClaims" class="search-claims"></div></section>
+      <section class="search-results-panel"><div class="surface-title"><div><span class="panel-label">TRACEABLE RESULTS</span><h3>命中资料</h3></div><span class="surface-caption">每条结果都标明来源和归档位置</span></div><div id="searchResultList" class="search-result-list"></div></section>
+    </section>`;
+  $("searchQuery").value = state.search.query;
+  $("searchScope").value = state.search.scope;
+  $("searchStage").value = state.search.stage;
+  $("searchCategory").value = state.search.category;
+  $("searchModeSearch").addEventListener("click", () => { state.search.mode = "search"; state.search.response = null; renderSearch(); });
+  $("searchModeAsk").addEventListener("click", () => { state.search.mode = "ask"; state.search.response = null; renderSearch(); });
+  $("searchScope").addEventListener("change", (event) => { state.search.scope = event.target.value; state.search.response = null; });
+  $("searchStage").addEventListener("change", (event) => { state.search.stage = event.target.value; state.search.response = null; });
+  $("searchCategory").addEventListener("input", (event) => { state.search.category = event.target.value.trim(); state.search.response = null; });
+  $("searchForm").addEventListener("submit", (event) => { event.preventDefault(); performSearch(); });
+  renderSearchResults();
 }
 
 function renderOverview() {
@@ -2512,11 +2715,12 @@ function bindViewButtons() {
 }
 
 function setView(view) {
-  if (isKpiOnly() && !["overview", "dashboard", "personnel"].includes(view)) view = "dashboard";
+  if (isKpiOnly() && !["overview", "dashboard", "search", "personnel"].includes(view)) view = "dashboard";
   if (view === "personnel" && !canManagePersonnel()) view = isKpiOnly() ? "dashboard" : "overview";
   state.view = view;
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
   if (view === "overview") renderOverview();
+  if (view === "search") renderSearch();
   if (view === "contract") renderContract();
   if (view === "boq") renderBoq();
   if (view === "drawings") renderDrawings();
@@ -2548,6 +2752,21 @@ async function loadHealth() {
   }
 }
 
+function submitGlobalSearch(event) {
+  event.preventDefault();
+  const input = $("globalSearchInput");
+  const query = input?.value.trim() || "";
+  if (!query) {
+    setView("search");
+    $("searchQuery")?.focus();
+    return;
+  }
+  state.search.query = query;
+  state.search.response = null;
+  setView("search");
+  performSearch();
+}
+
 async function loadDemo() {
   state.sample = await apiJson("/api/sample");
   await loadConnectors();
@@ -2576,6 +2795,7 @@ $("assistList").addEventListener("click", (event) => {
 $("loginForm").addEventListener("submit", submitLogin);
 $("registerForm").addEventListener("submit", submitRegister);
 $("logoutButton").addEventListener("click", logout);
+$("globalSearchForm").addEventListener("submit", submitGlobalSearch);
 
 async function boot() {
   await loadHealth();
