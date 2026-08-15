@@ -1559,7 +1559,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "本地资料与问题检索、证据摘要与溯源标注、无依据不回答、中文文件名可打开、P01-P08 资料分区归档",
+        "release_highlights": "项目资料库默认显示 2 项、其余资料可展开；本地资料与问题检索、证据摘要与溯源标注、无依据不回答、中文文件名可打开、P01-P08 资料分区归档",
     }
 
 

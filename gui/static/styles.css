@@ -405,6 +405,7 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .project-setup .button { white-space: nowrap; }
 .source-panel { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
 .source-list { display: grid; gap: 7px; margin-top: 12px; }
+.source-list-toggle { justify-self: start; margin-top: 2px; }
 .source-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line-soft); background: #0d141d; }
 .source-item > div:first-child { min-width: 0; flex: 1 1 280px; }
 .source-item strong, .source-item small { display: block; }

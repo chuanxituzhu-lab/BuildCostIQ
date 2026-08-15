@@ -33,6 +33,7 @@ const state = {
   basisCatalog: { categories: [], items: [] },
   basisReferences: [],
   sourceSearchTerm: "",
+  sourceListExpanded: false,
   search: {
     mode: "search",
     query: "",
@@ -1079,12 +1080,14 @@ function bindSourceLibrarySearch() {
   input.value = state.sourceSearchTerm;
   const runSearch = () => {
     state.sourceSearchTerm = input.value.trim();
+    state.sourceListExpanded = false;
     renderSourceList("sourceList");
   };
   searchButton.addEventListener("click", runSearch);
   clearButton.addEventListener("click", () => {
     input.value = "";
     state.sourceSearchTerm = "";
+    state.sourceListExpanded = false;
     renderSourceList("sourceList");
     input.focus();
   });
@@ -1105,11 +1108,18 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
     if (searchTerm && !sourceSearchText(source).includes(searchTerm)) return false;
     return true;
   });
+  const isProjectLibrary = targetId === "sourceList";
+  const collapsedCount = Math.max(0, visibleSources.length - 2);
+  const showCollapsed = isProjectLibrary && collapsedCount > 0 && !state.sourceListExpanded;
+  const displayedSources = showCollapsed ? visibleSources.slice(0, 2) : visibleSources;
   const searchSummary = $("sourceSearchSummary");
   if (targetId === "sourceList" && searchSummary) {
-    searchSummary.textContent = searchTerm
+    const resultSummary = searchTerm
       ? `搜索“${searchTerm}”：${visibleSources.length} / ${state.sources.length} 项资料`
       : `${state.sources.length} 项资料，支持按名称、分类和本地路径搜索`;
+    searchSummary.textContent = showCollapsed
+      ? `${resultSummary}；当前显示 2 项，其余 ${collapsedCount} 项已收起`
+      : resultSummary;
   }
   if (!visibleSources.length) {
     list.className = "source-list empty-state";
@@ -1121,7 +1131,7 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
     return;
   }
   list.className = "source-list";
-  list.replaceChildren(...visibleSources.slice().reverse().map((source) => {
+  list.replaceChildren(...displayedSources.slice().reverse().map((source) => {
     const item = document.createElement("div");
     item.className = "source-item";
     const info = document.createElement("div");
@@ -1203,6 +1213,19 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
     item.append(info, stateTag, actions);
     return item;
   }));
+  if (isProjectLibrary && collapsedCount > 0) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "button button-quiet source-list-toggle";
+    toggle.textContent = state.sourceListExpanded
+      ? "收起资料（保留前 2 项）"
+      : `展开其余 ${collapsedCount} 项资料`;
+    toggle.addEventListener("click", () => {
+      state.sourceListExpanded = !state.sourceListExpanded;
+      renderSourceList("sourceList");
+    });
+    list.append(toggle);
+  }
 }
 
 function renderIntakeProgress(targetId, files, archiveArea) {

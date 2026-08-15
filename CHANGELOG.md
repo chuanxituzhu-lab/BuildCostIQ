@@ -2,6 +2,11 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc13 - 2026-08-15
+
+- Project library defaults to two visible materials and provides an explicit expand/collapse control for the remaining files.
+- Search and clear actions return the library to the compact two-item view; stage-specific P01-P08 working lists remain unchanged.
+
 ## v0.7.2-rc12 — 2026-08-15
 
 - Added independent logical archive subfolders for P01 contract/procurement classifications: 招标阶段、投标阶段、定标阶段、合同阶段 and 执行解释.
