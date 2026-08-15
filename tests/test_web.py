@@ -580,6 +580,8 @@ class WebUiTests(unittest.TestCase):
         parts = [
             ("project_id", "source-project", None),
             ("source_id", "contract-source", None),
+            ("archive_area", "项目资料库/合同与招采依据", None),
+            ("archive_category", "招标阶段", None),
             ("file", b"fake-word-content", "contract.docx"),
         ]
         chunks: list[bytes] = []
@@ -602,7 +604,12 @@ class WebUiTests(unittest.TestCase):
         with urlopen(request, timeout=2) as response:
             result = json.load(response)
         self.assertEqual(result["source"]["kind"], "Word 文档")
+        self.assertEqual(result["source"]["archive_path"], "项目资料库/合同与招采依据/招标阶段/contract.docx")
         self.assertEqual(result["workspace"]["sources"][0]["name"], "contract.docx")
+        archive_storage_path = Path(result["source"]["archive_storage_path"])
+        self.assertTrue(archive_storage_path.is_file())
+        self.assertEqual(archive_storage_path.read_bytes(), b"fake-word-content")
+        self.assertIn("招标阶段", archive_storage_path.parts)
         self.assertTrue(Path(result["source"]["storage_path"]).is_file())
 
     def test_connector_catalog_and_bidirectional_project_exchange(self):

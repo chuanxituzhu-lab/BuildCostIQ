@@ -2,6 +2,14 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc12 — 2026-08-15
+
+- Added independent logical archive subfolders for P01 contract/procurement classifications: 招标阶段、投标阶段、定标阶段、合同阶段 and 执行解释.
+- Added read-only local category archive copies under `runtime/archive/<project>/...`; the category folder path is shown separately from the immutable original path.
+- The P01 page now shows the selected category’s full archive location before upload and each uploaded file’s category-specific path after upload.
+- Normalized legacy source metadata so existing classified files display under the correct category folder; removed duplicate stage names such as 图纸资料资料.
+- Kept the immutable content-addressed original store and frozen Core/CapabilityGateway P01–P08 boundary unchanged.
+
 ## v0.7.2-rc11 — 2026-08-15
 
 - Fixed multi-file intake feedback across project files, P01–P08 material entries, and the external basis library.

@@ -21,6 +21,7 @@ from zipfile import BadZipFile, ZipFile
 
 from adapters import (
     BASIS_CATEGORIES,
+    CategorizedArchiveStore,
     ImmutableSourceStore,
     LocalBasisWorkspace,
     LocalAuthStore,
@@ -42,6 +43,7 @@ RUNTIME = Runtime(build_default_plugins())
 MAX_BODY_BYTES = 50_000_000
 PROJECT_WORKSPACE = LocalProjectWorkspace(os.environ.get("BUILDCOSTIQ_WORKSPACE", "runtime/projects"))
 SOURCE_STORE = ImmutableSourceStore(Path(os.environ.get("BUILDCOSTIQ_SOURCE_STORE", "runtime/sources")))
+ARCHIVE_STORE = CategorizedArchiveStore(Path(os.environ.get("BUILDCOSTIQ_ARCHIVE_STORE", "runtime/archive")))
 BASIS_WORKSPACE = LocalBasisWorkspace(os.environ.get("BUILDCOSTIQ_BASIS_STORE", "runtime/basis"))
 AUTH_STORE = LocalAuthStore(os.environ.get("BUILDCOSTIQ_AUTH", "runtime/auth"))
 SESSIONS: dict[str, dict[str, Any]] = {}
@@ -394,6 +396,21 @@ def _multipart_fields(content_type: str, body: bytes) -> dict[str, tuple[str, by
     return fields
 
 
+def _normalize_archive_category(archive_category: str) -> str:
+    category = str(archive_category or "").strip("/\\ ")
+    return category[:-2] if category.endswith("资料资料") else category
+
+
+def _archive_path(archive_area: str, archive_category: str, filename: str) -> str:
+    """Build a logical archive path without duplicating same-named area folders."""
+    area_parts = [part.strip("/\\ ") for part in str(archive_area).split("/") if part.strip("/\\ ")]
+    category = _normalize_archive_category(archive_category)
+    if category and (not area_parts or area_parts[-1] != category):
+        area_parts.append(category)
+    area_parts.append(str(filename).strip("/\\ "))
+    return "/".join(part for part in area_parts if part)
+
+
 def _boq_upload(
     content_type: str,
     body: bytes,
@@ -405,7 +422,7 @@ def _boq_upload(
     project_id = fields.get("project_id", ("", b""))[1].decode("utf-8").strip()
     source_id = fields.get("source_id", ("", b""))[1].decode("utf-8").strip()
     archive_area = fields.get("archive_area", ("", b""))[1].decode("utf-8").strip() or "清单与计价资料"
-    archive_category = fields.get("archive_category", ("", b""))[1].decode("utf-8").strip()
+    archive_category = _normalize_archive_category(fields.get("archive_category", ("", b""))[1].decode("utf-8").strip())
     filename, content = fields.get("file", ("", b""))
     if not project_id or not source_id:
         raise ValueError("资料上传缺少项目或资料标识")
@@ -431,6 +448,16 @@ def _boq_upload(
         raise ValueError("仅支持 .xlsx、.xlsm 或 .csv 清单资料")
     result = dict(RUNTIME.gateway.execute("P02", context))
     source = SOURCE_STORE.ingest(filename, content, mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    archive_storage_path = str(
+        ARCHIVE_STORE.materialize(
+            project_id,
+            archive_area,
+            archive_category,
+            filename,
+            SOURCE_STORE.path_for(source),
+            source.content_hash,
+        )
+    )
     PROJECT_WORKSPACE.add_source(
         project_id,
         {
@@ -441,8 +468,9 @@ def _boq_upload(
             "media_type": source.media_type,
             "content_hash": source.content_hash,
             "storage_path": str(SOURCE_STORE.path_for(source)),
+            "archive_storage_path": archive_storage_path,
             "archive_area": archive_area,
-            "archive_path": f"{archive_area}/{filename}",
+            "archive_path": _archive_path(archive_area, archive_category, filename),
             "archive_category": archive_category,
             "size": len(content),
         },
@@ -463,7 +491,8 @@ def _boq_upload(
         "source": source_metadata,
         "archive": {
             "area": source_metadata.get("archive_area", archive_area),
-            "path": source_metadata.get("archive_path", f"{archive_area}/{filename}"),
+            "path": source_metadata.get("archive_path", _archive_path(archive_area, archive_category, filename)),
+            "archive_storage_path": source_metadata.get("archive_storage_path", ""),
             "storage_path": source_metadata.get("storage_path", ""),
         },
     }
@@ -579,7 +608,7 @@ def _source_upload(
     project_id = fields.get("project_id", ("", b""))[1].decode("utf-8").strip()
     source_id = fields.get("source_id", ("", b""))[1].decode("utf-8").strip()
     archive_area = fields.get("archive_area", ("", b""))[1].decode("utf-8").strip() or "项目资料库/待分类"
-    archive_category = fields.get("archive_category", ("", b""))[1].decode("utf-8").strip()
+    archive_category = _normalize_archive_category(fields.get("archive_category", ("", b""))[1].decode("utf-8").strip())
     filename, content = fields.get("file", ("", b""))
     if not project_id:
         raise ValueError("资料上传缺少项目标识")
@@ -587,6 +616,16 @@ def _source_upload(
         raise ValueError("请选择项目资料文件")
     source_id = source_id or Path(filename).stem
     source = SOURCE_STORE.ingest(filename, content, mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    archive_storage_path = str(
+        ARCHIVE_STORE.materialize(
+            project_id,
+            archive_area,
+            archive_category,
+            filename,
+            SOURCE_STORE.path_for(source),
+            source.content_hash,
+        )
+    )
     suffix = Path(filename).suffix.lower()
     kind = {
         ".doc": "Word 文档",
@@ -619,8 +658,9 @@ def _source_upload(
         "media_type": source.media_type,
         "content_hash": source.content_hash,
         "storage_path": str(SOURCE_STORE.path_for(source)),
+        "archive_storage_path": archive_storage_path,
         "archive_area": archive_area,
-        "archive_path": f"{archive_area}/{filename}",
+        "archive_path": _archive_path(archive_area, archive_category, filename),
         "archive_category": archive_category,
         "size": len(content),
     }
@@ -960,10 +1000,36 @@ def _workspace(project_id: str) -> dict[str, Any]:
     state.setdefault("basis_references", [])
     changed = False
     for source in state.get("sources", []):
+        archive_area = str(source.get("archive_area") or "").strip()
+        archive_category = _normalize_archive_category(str(source.get("archive_category") or ""))
+        if archive_category and source.get("archive_category") != archive_category:
+            source["archive_category"] = archive_category
+            changed = True
+        if archive_area and source.get("name"):
+            expected_archive_path = _archive_path(archive_area, archive_category, str(source["name"]))
+            if source.get("archive_path") != expected_archive_path:
+                source["archive_path"] = expected_archive_path
+                changed = True
         content_hash = source.get("content_hash")
         if content_hash and not source.get("storage_path"):
             source["storage_path"] = str(SOURCE_STORE.path_for(str(content_hash)))
             changed = True
+        if content_hash and archive_area and source.get("name"):
+            source_path = SOURCE_STORE.path_for(str(content_hash))
+            if source_path.is_file():
+                archive_storage_path = str(
+                    ARCHIVE_STORE.materialize(
+                        project_id,
+                        archive_area,
+                        archive_category,
+                        str(source["name"]),
+                        source_path,
+                        str(content_hash),
+                    )
+                )
+                if source.get("archive_storage_path") != archive_storage_path:
+                    source["archive_storage_path"] = archive_storage_path
+                    changed = True
         artifact = (source.get("recognition") or {}).get("artifact") or {}
         artifact_hash = artifact.get("content_hash")
         if artifact_hash and not artifact.get("storage_path"):

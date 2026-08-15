@@ -1008,7 +1008,7 @@ async function viewSource(source, derived = false) {
 
 async function copySourcePaths(source) {
   const artifact = (source.recognition || {}).artifact || {};
-  const paths = [source.storage_path, artifact.storage_path].filter(Boolean).join("\n");
+  const paths = [source.archive_storage_path, source.storage_path, artifact.storage_path].filter(Boolean).join("\n");
   if (!paths) {
     setStatus("当前资料还没有记录保存路径");
     return;
@@ -1064,6 +1064,7 @@ function sourceSearchText(source) {
     source.archive_area,
     source.archive_category,
     source.archive_path,
+    source.archive_storage_path,
     source.storage_path,
     recognition.category,
     recognition.status,
@@ -1135,7 +1136,8 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
     const pathInfo = document.createElement("small");
     pathInfo.className = "source-path";
     const artifactPath = recognition.artifact?.storage_path ? `\n识别稿：${recognition.artifact.storage_path}` : "";
-    pathInfo.textContent = `归档位置：${source.archive_path || source.archive_area || "项目资料库/待分类"}\n原件：${source.storage_path || "路径未记录"}${artifactPath}`;
+    const archiveStoragePath = source.archive_storage_path ? `\n分类文件夹：${source.archive_storage_path}` : "";
+    pathInfo.textContent = `归档位置：${source.archive_path || source.archive_area || "项目资料库/待分类"}${archiveStoragePath}\n原件：${source.storage_path || "路径未记录"}${artifactPath}`;
     info.append(name, meta, pathInfo);
     const stateTag = document.createElement("span");
     stateTag.className = `source-state source-${recognition.status || "pending"}`;
@@ -1250,6 +1252,12 @@ function renderIntakeReports(targetId = "boqIntakeSummary", reports = state.inta
       archive.className = "intake-path";
       archive.textContent = `归档位置：${report.archive_path || report.archive_area}`;
       item.append(archive);
+    }
+    if (report.archive_storage_path) {
+      const archiveStorage = document.createElement("small");
+      archiveStorage.className = "intake-path";
+      archiveStorage.textContent = `分类文件夹：${report.archive_storage_path}`;
+      item.append(archiveStorage);
     }
     if (report.storage_path) {
       const path = document.createElement("small");
@@ -1521,6 +1529,7 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, me
         message: `已读取 ${result.item_count} 项清单并保存到本地，进入清单核对。`,
         archive_area: source?.archive_area,
         archive_path: source?.archive_path || result.archive?.path,
+        archive_storage_path: source?.archive_storage_path,
         storage_path: source?.storage_path || result.archive?.storage_path,
       },
     };
@@ -1534,6 +1543,7 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, me
       ...recognitionReport(response.source),
       archive_area: response.source.archive_area,
       archive_path: response.source.archive_path,
+      archive_storage_path: response.source.archive_storage_path,
       storage_path: response.source.storage_path,
     },
   };
@@ -1560,6 +1570,7 @@ async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveC
     const recognition = source?.recognition;
     if (source?.archive_area) report.archive_area = source.archive_area;
     if (source?.archive_path) report.archive_path = source.archive_path;
+    if (source?.archive_storage_path) report.archive_storage_path = source.archive_storage_path;
     if (source?.storage_path) report.storage_path = source.storage_path;
     if (report.status === "table" && recognition && recognition.status !== "completed") {
       report.status = recognition.status || "unavailable";
@@ -1611,12 +1622,14 @@ async function handleContractSourceFiles(event) {
   if (!files.length) return;
   setError("");
   const archiveArea = "项目资料库/合同与招采依据";
-  renderIntakeProgress("contractIntakeSummary", files, archiveArea);
-  setStatus(`已选择 ${files.length} 个合同资料，准备保存到 ${archiveArea}`);
+  const archiveCategory = $("contractArchiveCategory")?.value || "合同阶段";
+  const archivePath = `${archiveArea}/${archiveCategory}`;
+  renderIntakeProgress("contractIntakeSummary", files, archivePath);
+  setStatus(`已选择 ${files.length} 个合同资料，准备保存到 ${archivePath}`);
   try {
     const { reports } = await uploadFiles(files, {
       archiveArea,
-      archiveCategory: $("contractArchiveCategory")?.value || "合同阶段",
+      archiveCategory,
     });
     renderSourceList("contractSourceList", { archiveArea });
     renderIntakeReports("contractIntakeSummary");
@@ -1661,7 +1674,7 @@ async function handleStageSourceFiles(event, { label, listId, summaryId }) {
   renderIntakeProgress(summaryId, files, archiveArea);
   setStatus(`已选择 ${files.length} 个${label}文件，准备保存到 ${archiveArea}`);
   try {
-    const { reports } = await uploadFiles(files, { archiveArea, archiveCategory: `${label}资料` });
+    const { reports } = await uploadFiles(files, { archiveArea, archiveCategory: label });
     renderSourceList(listId, { archiveArea });
     renderIntakeReports(summaryId);
     updateContextBar();
@@ -2366,7 +2379,7 @@ function renderContract() {
       <div class="surface-title"><div><span class="panel-label">CONTRACT FILE INTAKE</span><h3>合同与招采依据录入</h3></div><button id="uploadContractSource" class="button button-quiet" type="button">＋录入合同与招采依据</button></div>
       <p class="business-note">可多选招标、投标、定标、合同和执行解释资料；原件保存在本地资料库并自动识别，合同主数据仍需人工核对后保存。</p>
       <label class="archive-selector">本次资料分类<select id="contractArchiveCategory">${contractCategoryOptions}</select><small class="select-note">优先显示使用量高或近期使用的分类；其他分类仍可在下拉菜单中选择。</small></label>
-      <div class="archive-location"><span>本入口归档位置</span><strong>项目资料库/合同与招采依据</strong></div>
+      <div class="archive-location"><span>本次分类归档位置</span><strong id="contractArchiveLocation">项目资料库/合同与招采依据</strong></div>
       <div id="contractSourceList" class="source-list"></div>
       <div id="contractIntakeSummary" class="intake-report-list"></div>
     </section>
@@ -2391,6 +2404,12 @@ function renderContract() {
   renderIntakeReports("contractIntakeSummary");
   $("uploadContractSource").addEventListener("click", () => $("contractSourceInput").click());
   $("contractSourceInput").onchange = handleContractSourceFiles;
+  const updateContractArchiveLocation = () => {
+    const category = $("contractArchiveCategory")?.value || "合同阶段";
+    $("contractArchiveLocation").textContent = `项目资料库/合同与招采依据/${category}`;
+  };
+  $("contractArchiveCategory").addEventListener("change", updateContractArchiveLocation);
+  updateContractArchiveLocation();
   $("addObligation").addEventListener("click", () => { state.obligationsDraft.push({ name: "", owner: "", due_date: "", status: "pending", amount: "" }); renderContract(); });
   $("saveContract").addEventListener("click", saveContract);
   if (result) {
