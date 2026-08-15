@@ -34,6 +34,7 @@ const state = {
   basisReferences: [],
   sourceSearchTerm: "",
   sourceListExpanded: false,
+  sourceListExpandedByTarget: {},
   search: {
     mode: "search",
     query: "",
@@ -1109,8 +1110,10 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
     return true;
   });
   const isProjectLibrary = targetId === "sourceList";
+  const isCompactList = isProjectLibrary || targetId.endsWith("SourceList");
+  const listExpanded = isProjectLibrary ? state.sourceListExpanded : Boolean(state.sourceListExpandedByTarget[targetId]);
   const collapsedCount = Math.max(0, visibleSources.length - 2);
-  const showCollapsed = isProjectLibrary && collapsedCount > 0 && !state.sourceListExpanded;
+  const showCollapsed = isCompactList && collapsedCount > 0 && !listExpanded;
   const displayedSources = showCollapsed ? visibleSources.slice(-2) : visibleSources;
   const searchSummary = $("sourceSearchSummary");
   if (targetId === "sourceList" && searchSummary) {
@@ -1153,27 +1156,34 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
     stateTag.className = `source-state source-${recognition.status || "pending"}`;
     stateTag.textContent = deleted ? "已删除·留痕" : recognition.status === "completed" ? "本地完成" : recognition.status === "needs_ocr" ? "待 OCR" : recognition.status === "unavailable" || recognition.status === "error" ? "未转换" : "待识别";
     if (recognition.message) item.title = recognition.message;
-    const actions = document.createElement("div");
-    actions.className = "source-actions";
+    const actions = document.createElement("details");
+    actions.className = "source-actions-menu";
+    const actionSummary = document.createElement("summary");
+    actionSummary.className = "icon-button source-menu-trigger";
+    actionSummary.textContent = "⋯ 操作";
+    actions.append(actionSummary);
+    const actionPanel = document.createElement("div");
+    actionPanel.className = "source-actions";
+    actions.append(actionPanel);
     const viewButton = document.createElement("button");
     viewButton.type = "button";
     viewButton.className = "icon-button source-view-button";
     viewButton.textContent = "查看";
     viewButton.addEventListener("click", () => viewSource(source));
-    actions.append(viewButton);
+    actionPanel.append(viewButton);
     const copyPathButton = document.createElement("button");
     copyPathButton.type = "button";
     copyPathButton.className = "icon-button";
     copyPathButton.textContent = "复制路径";
     copyPathButton.addEventListener("click", () => copySourcePaths(source));
-    actions.append(copyPathButton);
+    actionPanel.append(copyPathButton);
     if (recognition.artifact) {
       const artifactButton = document.createElement("button");
       artifactButton.type = "button";
       artifactButton.className = "icon-button";
       artifactButton.textContent = "查看识别稿";
       artifactButton.addEventListener("click", () => viewSource(source, true));
-      actions.append(artifactButton);
+      actionPanel.append(artifactButton);
     }
     if (!deleted) {
       const modifyButton = document.createElement("button");
@@ -1181,21 +1191,21 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
       modifyButton.className = "icon-button";
       modifyButton.textContent = "修改信息";
       modifyButton.addEventListener("click", () => modifySource(source));
-      actions.append(modifyButton);
+      actionPanel.append(modifyButton);
     }
     const localButton = document.createElement("button");
     localButton.type = "button";
     localButton.className = "icon-button";
     localButton.textContent = "本地识别";
     localButton.addEventListener("click", () => recognizeSource(source.source_id, "local-auto"));
-    if (!deleted) actions.append(localButton);
+    if (!deleted) actionPanel.append(localButton);
     if (!deleted && recognition.status === "needs_ocr") {
       const externalButton = document.createElement("button");
       externalButton.type = "button";
       externalButton.className = "icon-button external-action";
       externalButton.textContent = "外部 OCR";
       externalButton.addEventListener("click", () => requestExternalOcr(source.source_id));
-      actions.append(externalButton);
+      actionPanel.append(externalButton);
     }
     if (!deleted && isManager()) {
       const deleteButton = document.createElement("button");
@@ -1203,26 +1213,28 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
       deleteButton.className = "icon-button danger-action";
       deleteButton.textContent = "删除（留痕）";
       deleteButton.addEventListener("click", () => deleteSource(source, targetId));
-      actions.append(deleteButton);
+      actionPanel.append(deleteButton);
     } else if (!deleted) {
       const permission = document.createElement("small");
       permission.className = "permission-note";
       permission.textContent = "删除需造价经理";
-      actions.append(permission);
+      actionPanel.append(permission);
     }
     item.append(info, stateTag, actions);
     return item;
   }));
-  if (isProjectLibrary && collapsedCount > 0) {
+  if (isCompactList && collapsedCount > 0) {
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "button button-quiet source-list-toggle";
-    toggle.textContent = state.sourceListExpanded
-      ? "收起资料（保留前 2 项）"
-      : `展开其余 ${collapsedCount} 项资料`;
+    toggle.setAttribute("aria-expanded", String(listExpanded));
+    toggle.textContent = listExpanded
+      ? "收起资料（保留最新 2 项）"
+      : `⋯ 其余 ${collapsedCount} 项资料`;
     toggle.addEventListener("click", () => {
-      state.sourceListExpanded = !state.sourceListExpanded;
-      renderSourceList("sourceList");
+      if (isProjectLibrary) state.sourceListExpanded = !listExpanded;
+      else state.sourceListExpandedByTarget[targetId] = !listExpanded;
+      renderSourceList(targetId, filter);
     });
     list.append(toggle);
   }
@@ -1238,10 +1250,10 @@ function renderIntakeProgress(targetId, files, archiveArea) {
     const title = document.createElement("strong");
     title.textContent = file.name;
     const message = document.createElement("span");
-    message.textContent = "正在保存并进行本地识别…";
+    message.textContent = "正在快速保存到本地分类文件夹，识别将在保存后后台更新…";
     const path = document.createElement("small");
     path.className = "intake-path";
-    path.textContent = `计划归档位置：${archiveArea}/${file.name}`;
+    path.textContent = `保存位置：${archiveArea}/${file.name}`;
     item.append(title, message, path);
     return item;
   }));
@@ -1469,8 +1481,8 @@ function renderRecognizerCatalog() {
   }));
 }
 
-async function recognizeSource(sourceId, connectorId = "local-auto", allowExternal = false) {
-  setError("");
+async function recognizeSource(sourceId, connectorId = "local-auto", allowExternal = false, { silent = false } = {}) {
+  if (!silent) setError("");
   try {
     const response = await apiJson("/api/source/recognize", {
       method: "POST",
@@ -1478,11 +1490,15 @@ async function recognizeSource(sourceId, connectorId = "local-auto", allowExtern
       body: JSON.stringify({ project_id: state.projectId, source_id: sourceId, connector_id: connectorId, allow_external: allowExternal }),
     });
     applyWorkspace(response.workspace);
-    renderSourceList();
-    updateContextBar();
-    setStatus(response.recognition?.message || "资料识别完成");
+    if (!silent) {
+      renderSourceList();
+      updateContextBar();
+      setStatus(response.recognition?.message || "资料识别完成");
+    }
+    return response;
   } catch (error) {
-    setError(error.message);
+    if (!silent) setError(error.message);
+    throw error;
   }
 }
 
@@ -1532,6 +1548,41 @@ function recognitionReport(source) {
   return { status: "pending", message: "文件已保存，等待识别。" };
 }
 
+async function recognizeSavedSources(sourceIds, { listId = "", filter = {}, summaryId = "" } = {}) {
+  if (!sourceIds.length) return;
+  setStatus(`本地资料已快速保存，正在后台识别 ${sourceIds.length} 项资料…`);
+  const results = [];
+  for (const sourceId of sourceIds) {
+    try {
+      await recognizeSource(sourceId, "local-auto", false, { silent: true });
+      results.push({ status: "fulfilled" });
+    } catch (error) {
+      results.push({ status: "rejected", reason: error });
+    }
+  }
+  await refreshWorkspace();
+  const sourceMap = new Map((state.sources || []).map((source) => [source.source_id, source]));
+  state.intakeReports = state.intakeReports.map((report) => {
+    const source = sourceMap.get(report.source_id);
+    if (!source) return report;
+    const recognition = recognitionReport(source);
+    return {
+      ...report,
+      ...recognition,
+      archive_area: source.archive_area || report.archive_area,
+      archive_path: source.archive_path || report.archive_path,
+      archive_storage_path: source.archive_storage_path || report.archive_storage_path,
+      storage_path: source.storage_path || report.storage_path,
+    };
+  });
+  renderIntakeReports(summaryId || "boqIntakeSummary");
+  renderSourceList();
+  if (listId) renderSourceList(listId, filter);
+  updateContextBar();
+  const failed = results.filter((result) => result.status === "rejected").length;
+  setStatus(failed ? `本地资料已保存，${failed} 项识别失败，请查看资料状态` : "本地资料已保存，识别结果已更新");
+}
+
 async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, metadata = {}) {
   const sourceId = sourceIdFor(file, index);
   const form = new FormData();
@@ -1539,6 +1590,7 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, me
   form.append("source_id", sourceId);
   if (metadata.archiveArea) form.append("archive_area", metadata.archiveArea);
   if (metadata.archiveCategory) form.append("archive_category", metadata.archiveCategory);
+  if (metadata.deferRecognition) form.append("recognize", "false");
   form.append("file", file, file.name);
   if (parseBoq && isTableSource(file)) {
     const result = await apiJson("/api/boq/upload", { method: "POST", body: form });
@@ -1572,23 +1624,25 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, me
   };
 }
 
-async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveCategory = "" } = {}) {
+async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveCategory = "", listId = "", summaryId = "" } = {}) {
   const context = await ensureProject();
   const items = [];
   const reports = [];
+  setStatus(`正在快速保存 ${files.length} 项资料到本地分类文件夹…`);
   for (const [index, file] of files.entries()) {
-    setStatus(`正在保存第 ${index + 1}/${files.length} 个资料：${file.name}`);
+    setStatus(`正在快速保存到本地 ${index + 1}/${files.length}：${file.name}`);
     try {
-      const uploaded = await uploadSourceFile(file, context.project_id, index, parseBoq, { archiveArea, archiveCategory });
+      const uploaded = await uploadSourceFile(file, context.project_id, index, parseBoq, { archiveArea, archiveCategory, deferRecognition: true });
       items.push(...(uploaded.result?.items || []));
       reports.push({ name: file.name, source_id: uploaded.sourceId, ...(uploaded.report || { status: "completed", message: "已保存。" }) });
     } catch (error) {
       reports.push({ name: file.name, status: "error", message: error.message || "文件处理失败。" });
     }
   }
+  const orderedReports = reports;
   await refreshWorkspace();
   const sourceMap = new Map((state.sources || []).map((source) => [source.source_id, source]));
-  for (const report of reports) {
+  for (const report of orderedReports) {
     const source = sourceMap.get(report.source_id);
     const recognition = source?.recognition;
     if (source?.archive_area) report.archive_area = source.archive_area;
@@ -1603,7 +1657,13 @@ async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveC
   const sourceNames = files.map((file) => file.name);
   state.fileName = sourceNames.length === 1 ? sourceNames[0] : `${sourceNames.length} 个文件`;
   state.sourceName = state.fileName;
-  state.intakeReports = reports;
+  state.intakeReports = orderedReports;
+  const deferredSourceIds = orderedReports
+    .filter((report) => report.status !== "error" && report.source_id)
+    .map((report) => report.source_id);
+  if (deferredSourceIds.length) {
+    void recognizeSavedSources(deferredSourceIds, { listId, filter: { archiveArea }, summaryId }).catch((error) => setError(error.message));
+  }
   if (parseBoq && items.length) {
     const rows = [["项目编码", "项目名称", "计量单位", "工程量"], ...items.map((item) => [item.code, item.name, item.unit, item.quantity])];
     const combined = await apiJson("/api/boq", {
@@ -1617,7 +1677,7 @@ async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveC
     state.planResult = null;
     state.reviewResult = null;
   }
-  return { files, reports, items };
+  return { files, reports: orderedReports, items };
 }
 
 async function handleSourceFile(event) {
@@ -1627,7 +1687,7 @@ async function handleSourceFile(event) {
   renderIntakeProgress("sourceIntakeSummary", files, PROJECT_ARCHIVE_AREAS.overview);
   setStatus(`已选择 ${files.length} 个资料，准备保存到 ${PROJECT_ARCHIVE_AREAS.overview}`);
   try {
-    const { reports } = await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
+    const { reports } = await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息", listId: "sourceList", summaryId: "sourceIntakeSummary" });
     renderSourceList();
     updateContextBar();
     renderIntakeReports("sourceIntakeSummary");
@@ -1653,6 +1713,8 @@ async function handleContractSourceFiles(event) {
     const { reports } = await uploadFiles(files, {
       archiveArea,
       archiveCategory,
+      listId: "contractSourceList",
+      summaryId: "contractIntakeSummary",
     });
     renderSourceList("contractSourceList", { archiveArea });
     renderIntakeReports("contractIntakeSummary");
@@ -1697,7 +1759,7 @@ async function handleStageSourceFiles(event, { label, listId, summaryId }) {
   renderIntakeProgress(summaryId, files, archiveArea);
   setStatus(`已选择 ${files.length} 个${label}文件，准备保存到 ${archiveArea}`);
   try {
-    const { reports } = await uploadFiles(files, { archiveArea, archiveCategory: label });
+    const { reports } = await uploadFiles(files, { archiveArea, archiveCategory: label, listId, summaryId });
     renderSourceList(listId, { archiveArea });
     renderIntakeReports(summaryId);
     updateContextBar();
@@ -1717,7 +1779,7 @@ async function handleProjectInfoFiles(event) {
   renderIntakeProgress("sourceIntakeSummary", files, PROJECT_ARCHIVE_AREAS.overview);
   setStatus(`已选择 ${files.length} 个初步资料，准备保存到 ${PROJECT_ARCHIVE_AREAS.overview}`);
   try {
-    const { reports } = await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
+    const { reports } = await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息", listId: "sourceList", summaryId: "sourceIntakeSummary" });
     renderOverview();
     renderIntakeReports("sourceIntakeSummary");
     setStatus(intakeCompletionMessage(files, reports, "初步资料"));

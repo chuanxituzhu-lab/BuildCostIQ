@@ -423,6 +423,7 @@ def _boq_upload(
     source_id = fields.get("source_id", ("", b""))[1].decode("utf-8").strip()
     archive_area = fields.get("archive_area", ("", b""))[1].decode("utf-8").strip() or "清单与计价资料"
     archive_category = _normalize_archive_category(fields.get("archive_category", ("", b""))[1].decode("utf-8").strip())
+    recognize_requested = fields.get("recognize", ("", b""))[1].decode("utf-8").strip().lower() not in {"0", "false", "no", "off"}
     filename, content = fields.get("file", ("", b""))
     if not project_id or not source_id:
         raise ValueError("资料上传缺少项目或资料标识")
@@ -476,7 +477,8 @@ def _boq_upload(
         },
     )
     source_metadata = PROJECT_WORKSPACE.load(project_id)["sources"][-1]
-    source_metadata, _ = _auto_recognize_source(project_id, source_metadata)
+    if recognize_requested:
+        source_metadata, _ = _auto_recognize_source(project_id, source_metadata)
     PROJECT_WORKSPACE.set_stage(project_id, "boq", result)
     if actor:
         PROJECT_WORKSPACE.append_audit(
@@ -609,6 +611,7 @@ def _source_upload(
     source_id = fields.get("source_id", ("", b""))[1].decode("utf-8").strip()
     archive_area = fields.get("archive_area", ("", b""))[1].decode("utf-8").strip() or "项目资料库/待分类"
     archive_category = _normalize_archive_category(fields.get("archive_category", ("", b""))[1].decode("utf-8").strip())
+    recognize_requested = fields.get("recognize", ("", b""))[1].decode("utf-8").strip().lower() not in {"0", "false", "no", "off"}
     filename, content = fields.get("file", ("", b""))
     if not project_id:
         raise ValueError("资料上传缺少项目标识")
@@ -665,7 +668,8 @@ def _source_upload(
         "size": len(content),
     }
     state = PROJECT_WORKSPACE.add_source(project_id, metadata)
-    metadata, state = _auto_recognize_source(project_id, metadata)
+    if recognize_requested:
+        metadata, state = _auto_recognize_source(project_id, metadata)
     if actor:
         state = PROJECT_WORKSPACE.append_audit(
             project_id,
@@ -1559,7 +1563,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "项目资料库默认显示最新 2 项、其余资料可展开；本地资料与问题检索、证据摘要与溯源标注、无依据不回答、中文文件名可打开、P01-P08 资料分区归档",
+        "release_highlights": "资料先快速保存到本地分类文件夹、识别后台更新；P01-P08 资料列表默认显示最新 2 项并可用三点展开；每份资料操作进入二级菜单；本地资料与问题检索、证据摘要与溯源标注、无依据不回答、中文文件名可打开、P01-P08 资料分区归档",
     }
 
 

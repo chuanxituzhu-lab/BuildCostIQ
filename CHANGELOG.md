@@ -2,6 +2,13 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc15 - 2026-08-15
+
+- Decoupled local file saving from recognition for WebUI intake: files are quickly written to their local category folders first, while local recognition runs in the background and updates the visible result.
+- Multi-file intake keeps the selected-file order and reports each local save before background recognition updates the result.
+- P01-P08 material lists default to the newest two visible files and expose the remaining files through a three-dot expand/collapse control.
+- Source actions are grouped under a per-file second-level “⋯ 操作” menu for viewing, path copying, recognition, metadata edits, and permission-gated soft deletion.
+
 ## v0.7.2-rc14 - 2026-08-15
 
 - Compact project-library view now keeps the newest two materials visible, matching the full list order.

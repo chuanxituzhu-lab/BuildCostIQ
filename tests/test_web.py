@@ -612,6 +612,37 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("招标阶段", archive_storage_path.parts)
         self.assertTrue(Path(result["source"]["storage_path"]).is_file())
 
+    def test_source_upload_can_defer_local_recognition_after_fast_save(self):
+        project_id = f"deferred-source-{uuid4().hex[:10]}"
+        boundary = "----BuildCostIQDeferredRecognition"
+        chunks = [
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"project_id\"\r\n\r\n{project_id}\r\n".encode("utf-8"),
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\ndeferred-source\r\n".encode("utf-8"),
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"recognize\"\r\n\r\nfalse\r\n".encode("utf-8"),
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"deferred.txt\"\r\nContent-Type: text/plain\r\n\r\n本地先保存，识别稍后进行。\r\n".encode("utf-8"),
+            f"--{boundary}--\r\n".encode("utf-8"),
+        ]
+        request = Request(
+            f"{self.base_url}/api/source/upload",
+            data=b"".join(chunks),
+            headers=self.auth_headers(f"multipart/form-data; boundary={boundary}"),
+            method="POST",
+        )
+        with urlopen(request, timeout=2) as response:
+            saved = json.load(response)
+        self.assertNotEqual((saved["source"].get("recognition") or {}).get("status"), "completed")
+        self.assertTrue(Path(saved["source"]["storage_path"]).is_file())
+
+        recognized = Request(
+            f"{self.base_url}/api/source/recognize",
+            data=json.dumps({"project_id": project_id, "source_id": "deferred-source", "connector_id": "local-auto"}).encode("utf-8"),
+            headers=self.auth_headers("application/json"),
+            method="POST",
+        )
+        with urlopen(recognized, timeout=2) as response:
+            result = json.load(response)
+        self.assertEqual(result["recognition"]["status"], "completed")
+
     def test_connector_catalog_and_bidirectional_project_exchange(self):
         with urlopen(f"{self.base_url}/api/connectors", timeout=2) as response:
             catalog = json.load(response)["connectors"]

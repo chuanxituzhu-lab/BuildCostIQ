@@ -413,6 +413,10 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .source-item small { margin-top: 2px; color: var(--muted); font-size: 10px; }
 .source-path { max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; color: #718096 !important; }
 .source-state { color: var(--green); font-size: 10px; white-space: nowrap; }
+.source-actions-menu { position: relative; flex: 0 0 auto; }
+.source-actions-menu > summary { list-style: none; cursor: pointer; }
+.source-actions-menu > summary::-webkit-details-marker { display: none; }
+.source-actions-menu[open] > .source-actions { position: absolute; top: calc(100% + 5px); right: 0; z-index: 5; min-width: 230px; padding: 8px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 8px 24px #0008; }
 .source-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .source-pending, .source-unavailable { color: var(--muted); }
 .source-needs_ocr { color: var(--yellow); }
