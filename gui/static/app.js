@@ -42,6 +42,7 @@ const state = {
     response: null,
   },
   intakeReports: [],
+  basisIntakeReports: [],
   exportWorkspace: { kind: "report", filename: "", directoryHandle: null },
   personnel: { users: [], audit_log: [] },
 };
@@ -899,6 +900,7 @@ function renderOverview() {
   sourcePanel.innerHTML = `
     <div class="surface-title"><div><span class="panel-label">PROJECT FILES</span><h3>项目资料库</h3></div><button id="uploadSource" class="button button-quiet" type="button">＋接入资料</button></div>
     <p class="business-note">文件先在本地保存并自动识别归档；本地识别不外发，外部 OCR 只有在明确确认后才会发送指定文件。</p>
+    <div class="archive-location"><span>本入口归档位置</span><strong>${PROJECT_ARCHIVE_AREAS.overview}</strong></div>
     <div class="source-search-bar"><label for="sourceSearch">搜索项目资料</label><div class="source-search-controls"><input id="sourceSearch" type="search" placeholder="文件名、资料分类或本地路径" /><button id="sourceSearchButton" class="button button-quiet" type="button">搜索资料</button><button id="sourceSearchClear" class="button button-quiet" type="button">清除</button></div><small id="sourceSearchSummary" class="source-search-summary"></small></div>
     <div id="sourceList" class="source-list"></div>
     <div id="sourceIntakeSummary" class="intake-report-list"></div>
@@ -1201,15 +1203,41 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
   }));
 }
 
-function renderIntakeReports(targetId = "boqIntakeSummary") {
+function renderIntakeProgress(targetId, files, archiveArea) {
   const target = $(targetId);
   if (!target) return;
-  if (!state.intakeReports.length) {
+  target.className = "intake-report-list";
+  target.replaceChildren(...files.map((file) => {
+    const item = document.createElement("div");
+    item.className = "intake-report intake-pending";
+    const title = document.createElement("strong");
+    title.textContent = file.name;
+    const message = document.createElement("span");
+    message.textContent = "正在保存并进行本地识别…";
+    const path = document.createElement("small");
+    path.className = "intake-path";
+    path.textContent = `计划归档位置：${archiveArea}/${file.name}`;
+    item.append(title, message, path);
+    return item;
+  }));
+}
+
+function intakeCompletionMessage(files, reports, label = "资料") {
+  const failures = reports.filter((report) => report.status === "error").length;
+  const saved = reports.length - failures;
+  if (failures) return `${saved} 个${label}已保存，${failures} 个失败，请查看下方结果`;
+  return `${files.length} 个${label}已保存到本地，识别结果见下方`;
+}
+
+function renderIntakeReports(targetId = "boqIntakeSummary", reports = state.intakeReports) {
+  const target = $(targetId);
+  if (!target) return;
+  if (!reports.length) {
     target.replaceChildren();
     return;
   }
   target.className = "intake-report-list";
-  target.replaceChildren(...state.intakeReports.map((report) => {
+  target.replaceChildren(...reports.map((report) => {
     const item = document.createElement("div");
     item.className = `intake-report intake-${report.status}`;
     const title = document.createElement("strong");
@@ -1217,10 +1245,16 @@ function renderIntakeReports(targetId = "boqIntakeSummary") {
     const message = document.createElement("span");
     message.textContent = report.message;
     item.append(title, message);
+    if (report.archive_path || report.archive_area) {
+      const archive = document.createElement("small");
+      archive.className = "intake-path";
+      archive.textContent = `归档位置：${report.archive_path || report.archive_area}`;
+      item.append(archive);
+    }
     if (report.storage_path) {
       const path = document.createElement("small");
       path.className = "intake-path";
-      path.textContent = `保存路径：${report.storage_path}`;
+      path.textContent = `本地原件：${report.storage_path}`;
       item.append(path);
     }
     return item;
@@ -1477,7 +1511,19 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, me
   form.append("file", file, file.name);
   if (parseBoq && isTableSource(file)) {
     const result = await apiJson("/api/boq/upload", { method: "POST", body: form });
-    return { sourceId, result, source: null, report: { status: "table", message: `已读取 ${result.item_count} 项清单，进入清单核对。` } };
+    const source = result.source || null;
+    return {
+      sourceId,
+      result,
+      source,
+      report: {
+        status: "table",
+        message: `已读取 ${result.item_count} 项清单并保存到本地，进入清单核对。`,
+        archive_area: source?.archive_area,
+        archive_path: source?.archive_path || result.archive?.path,
+        storage_path: source?.storage_path || result.archive?.storage_path,
+      },
+    };
   }
   const response = await apiJson("/api/source/upload", { method: "POST", body: form });
   return {
@@ -1486,6 +1532,8 @@ async function uploadSourceFile(file, projectId, index = 0, parseBoq = false, me
     source: response.source,
     report: {
       ...recognitionReport(response.source),
+      archive_area: response.source.archive_area,
+      archive_path: response.source.archive_path,
       storage_path: response.source.storage_path,
     },
   };
@@ -1496,6 +1544,7 @@ async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveC
   const items = [];
   const reports = [];
   for (const [index, file] of files.entries()) {
+    setStatus(`正在保存第 ${index + 1}/${files.length} 个资料：${file.name}`);
     try {
       const uploaded = await uploadSourceFile(file, context.project_id, index, parseBoq, { archiveArea, archiveCategory });
       items.push(...(uploaded.result?.items || []));
@@ -1509,6 +1558,8 @@ async function uploadFiles(files, { parseBoq = false, archiveArea = "", archiveC
   for (const report of reports) {
     const source = sourceMap.get(report.source_id);
     const recognition = source?.recognition;
+    if (source?.archive_area) report.archive_area = source.archive_area;
+    if (source?.archive_path) report.archive_path = source.archive_path;
     if (source?.storage_path) report.storage_path = source.storage_path;
     if (report.status === "table" && recognition && recognition.status !== "completed") {
       report.status = recognition.status || "unavailable";
@@ -1539,13 +1590,15 @@ async function handleSourceFile(event) {
   const files = [...(event.target.files || [])];
   if (!files.length) return;
   setError("");
+  renderIntakeProgress("sourceIntakeSummary", files, PROJECT_ARCHIVE_AREAS.overview);
+  setStatus(`已选择 ${files.length} 个资料，准备保存到 ${PROJECT_ARCHIVE_AREAS.overview}`);
   try {
-    await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
+    const { reports } = await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
     renderSourceList();
     updateContextBar();
     renderIntakeReports("sourceIntakeSummary");
-    setStatus(`${files.length} 个资料文件已保存并完成本地识别`);
-    $("projectSaveStatus").textContent = `${files.length} 个资料已归档`;
+    setStatus(intakeCompletionMessage(files, reports));
+    $("projectSaveStatus").textContent = intakeCompletionMessage(files, reports, "资料");
   } catch (error) {
     setError(error.message);
   } finally {
@@ -1557,15 +1610,18 @@ async function handleContractSourceFiles(event) {
   const files = [...(event.target.files || [])];
   if (!files.length) return;
   setError("");
+  const archiveArea = "项目资料库/合同与招采依据";
+  renderIntakeProgress("contractIntakeSummary", files, archiveArea);
+  setStatus(`已选择 ${files.length} 个合同资料，准备保存到 ${archiveArea}`);
   try {
-    await uploadFiles(files, {
-      archiveArea: "项目资料库/合同与招采依据",
+    const { reports } = await uploadFiles(files, {
+      archiveArea,
       archiveCategory: $("contractArchiveCategory")?.value || "合同阶段",
     });
-    renderSourceList("contractSourceList", { archiveArea: "项目资料库/合同与招采依据" });
+    renderSourceList("contractSourceList", { archiveArea });
     renderIntakeReports("contractIntakeSummary");
     updateContextBar();
-    setStatus(`${files.length} 个合同与招采依据文件已保存并完成本地识别`);
+    setStatus(intakeCompletionMessage(files, reports, "合同资料"));
     renderAssist();
   } catch (error) {
     setError(error.message);
@@ -1600,13 +1656,16 @@ async function handleStageSourceFiles(event, { label, listId, summaryId }) {
   const files = [...(event.target.files || [])];
   if (!files.length) return;
   setError("");
+  const stage = event.target.dataset.stage || "";
+  const archiveArea = PROJECT_ARCHIVE_AREAS[stage] || "项目资料库/待分类";
+  renderIntakeProgress(summaryId, files, archiveArea);
+  setStatus(`已选择 ${files.length} 个${label}文件，准备保存到 ${archiveArea}`);
   try {
-    const stage = event.target.dataset.stage || "";
-    await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS[stage] || "项目资料库/待分类", archiveCategory: `${label}资料` });
-    renderSourceList(listId, { archiveArea: PROJECT_ARCHIVE_AREAS[stage] });
+    const { reports } = await uploadFiles(files, { archiveArea, archiveCategory: `${label}资料` });
+    renderSourceList(listId, { archiveArea });
     renderIntakeReports(summaryId);
     updateContextBar();
-    setStatus(`${files.length} 个${label}文件已保存并完成本地识别`);
+    setStatus(intakeCompletionMessage(files, reports, label));
     renderAssist();
   } catch (error) {
     setError(error.message);
@@ -1619,10 +1678,13 @@ async function handleProjectInfoFiles(event) {
   const files = [...(event.target.files || [])];
   if (!files.length) return;
   setError("");
+  renderIntakeProgress("sourceIntakeSummary", files, PROJECT_ARCHIVE_AREAS.overview);
+  setStatus(`已选择 ${files.length} 个初步资料，准备保存到 ${PROJECT_ARCHIVE_AREAS.overview}`);
   try {
-    await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
+    const { reports } = await uploadFiles(files, { archiveArea: PROJECT_ARCHIVE_AREAS.overview, archiveCategory: "项目初步信息" });
     renderOverview();
-    setStatus(`${files.length} 个初步资料已保存并自动归档`);
+    renderIntakeReports("sourceIntakeSummary");
+    setStatus(intakeCompletionMessage(files, reports, "初步资料"));
   } catch (error) {
     setError(error.message);
   } finally {
@@ -2005,37 +2067,72 @@ function renderBasis() {
         '<label>有效期起<input id="basisEffectiveFrom" type="date" /></label>' +
         '<label>有效期止<input id="basisEffectiveTo" type="date" /></label>' +
       '</div>' +
-      '<div class="intake-banner basis-file-picker"><div><strong id="basisFileName">尚未选择依据文件</strong><span>支持 PDF、Word、Excel、CSV、图片、文章和接口快照文件。</span></div><button id="chooseBasisFile" class="button button-quiet" type="button">选择依据文件</button></div>' +
+      '<div class="intake-banner basis-file-picker"><div><strong id="basisFileName">尚未选择依据文件</strong><span>支持一次选择多个 PDF、Word、Excel、CSV、图片、文章和接口快照文件。</span></div><button id="chooseBasisFile" class="button button-quiet" type="button">选择依据文件</button></div>' +
+      '<div class="archive-location"><span>选择后保存位置</span><strong id="basisSaveLocation">外部依据库/请选择分类/待选择文件</strong></div>' +
+      '<div id="basisIntakeSummary" class="intake-report-list"></div>' +
       '<div class="action-row"><button id="saveBasis" class="button button-primary" type="button">保存到外部依据库</button><span id="basisUploadStatus" class="request-status"></span></div></section>' +
       '<aside class="basis-panel basis-boundary"><span class="panel-label">BOUNDARY</span><h3>资料边界</h3><div class="basis-boundary-row"><strong>项目资料库</strong><span>合同、清单、图纸、台账、变更、结算和证据</span></div><div class="basis-boundary-row"><strong>外部依据库</strong><span>政策、定额、信息价、市场价和接口快照</span></div><div class="basis-boundary-row"><strong>项目引用</strong><span>P04 建基线 · P05 编成本 · P08 做初审</span></div></aside>' +
     '</div>' +
     '<section class="basis-panel basis-catalog-panel"><div class="data-entry-heading"><div><span class="panel-label">LOCAL BASIS CATALOG</span><h3>本地依据目录</h3></div><label class="basis-filter">筛选分类<select id="basisCategoryFilter"><option value="">全部</option>' + categoryOptions + '</select></label></div><div id="basisCatalogList" class="basis-catalog-list"></div></section>';
   $("chooseBasisFile").addEventListener("click", () => $("basisInput").click());
-  $("basisInput").onchange = (event) => { $("basisFileName").textContent = event.target.files?.[0]?.name || "尚未选择依据文件"; };
+  const updateBasisSelection = () => {
+    const files = [...($("basisInput").files || [])];
+    const category = basisCategoryLabel($("basisCategory")?.value || "policy");
+    $("basisFileName").textContent = files.length === 1 ? files[0].name : files.length ? files.length + " 个依据文件已选择" : "尚未选择依据文件";
+    $("basisSaveLocation").textContent = files.length === 1
+      ? "外部依据库/" + category + "/" + files[0].name
+      : files.length ? "外部依据库/" + category + "/（" + files.length + " 个文件，保存后逐项显示）" : "外部依据库/" + category + "/待选择文件";
+    $("basisUploadStatus").textContent = files.length ? "已选择，点击“保存到外部依据库”后写入本地" : "";
+  };
+  $("basisInput").onchange = updateBasisSelection;
+  $("basisCategory").addEventListener("change", updateBasisSelection);
   $("basisCategoryFilter").addEventListener("change", renderBasisCatalog);
   $("saveBasis").addEventListener("click", saveBasisFile);
+  renderIntakeReports("basisIntakeSummary", state.basisIntakeReports);
   renderBasisCatalog();
 }
 
 async function saveBasisFile() {
-  const file = $("basisInput").files?.[0];
-  if (!file) { $("basisUploadStatus").textContent = "请先选择依据文件"; return; }
-  const form = new FormData();
-  form.append("file", file, file.name);
+  const files = [...($("basisInput").files || [])];
+  if (!files.length) { $("basisUploadStatus").textContent = "请先选择依据文件"; return; }
   const fields = {
     category: "basisCategory", title: "basisTitle", source_org: "basisSourceOrg", source_url: "basisSourceUrl",
     published_at: "basisPublishedAt", version: "basisVersion", region: "basisRegion", tax_mode: "basisTaxMode",
     pricing_mode: "basisPricingMode", effective_from: "basisEffectiveFrom", effective_to: "basisEffectiveTo",
   };
-  Object.entries(fields).forEach(([key, id]) => form.append(key, $(id).value));
+  const reports = [];
   try {
-    const response = await apiJson("/api/basis/upload", { method: "POST", body: form });
-    state.basisCatalog.items = response.items || [];
-    $("basisUploadStatus").textContent = "依据已保存，原件和识别稿均留在本地";
+    for (const [index, file] of files.entries()) {
+      setStatus("正在保存第 " + (index + 1) + "/" + files.length + " 个依据文件：" + file.name);
+      const form = new FormData();
+      form.append("file", file, file.name);
+      Object.entries(fields).forEach(([key, id]) => form.append(key, $(id).value));
+      try {
+        const response = await apiJson("/api/basis/upload", { method: "POST", body: form });
+        const basis = response.basis || {};
+        state.basisCatalog.items = response.items || state.basisCatalog.items;
+        const recognition = recognitionReport(basis);
+        reports.push({
+          name: file.name,
+          status: recognition.status,
+          message: recognition.message,
+          archive_area: basis.archive_area,
+          archive_path: basis.archive_path,
+          storage_path: basis.storage_path,
+        });
+      } catch (error) {
+        reports.push({ name: file.name, status: "error", message: error.message || "依据文件保存失败" });
+      }
+    }
+    state.basisIntakeReports = reports;
+    renderIntakeReports("basisIntakeSummary", state.basisIntakeReports);
+    $("basisUploadStatus").textContent = intakeCompletionMessage(files, reports, "依据资料");
     $("basisInput").value = "";
     $("basisFileName").textContent = "尚未选择依据文件";
+    $("basisSaveLocation").textContent = "已保存到外部依据库；具体归档位置见下方";
     renderBasisCatalog();
-    setStatus("外部依据已录入本地依据库");
+    setStatus(intakeCompletionMessage(files, reports, "依据资料"));
+    if (reports.every((report) => report.status === "error")) setError("所有依据文件保存失败，请查看下方结果");
   } catch (error) {
     $("basisUploadStatus").textContent = "保存失败";
     setError(error.message);
@@ -2144,15 +2241,17 @@ async function handleFile(event) {
   const files = [...(event.target.files || [])];
   if (!files.length) return;
   setError("");
+  renderIntakeProgress("boqIntakeSummary", files, PROJECT_ARCHIVE_AREAS.boq);
+  setStatus(`已选择 ${files.length} 个清单资料，准备保存到 ${PROJECT_ARCHIVE_AREAS.boq}`);
   try {
-    await uploadFiles(files, { parseBoq: true, archiveArea: PROJECT_ARCHIVE_AREAS.boq, archiveCategory: "清单与计价资料" });
+    const { reports } = await uploadFiles(files, { parseBoq: true, archiveArea: PROJECT_ARCHIVE_AREAS.boq, archiveCategory: "清单与计价资料" });
     $("fileName").textContent = files.length === 1 ? files[0].name : `${files.length} 个文件`;
     renderBoqEditor();
     renderIntakeReports();
     if (state.boqResult) renderBoqOutput(state.boqResult);
     updateContextBar();
     renderAssist();
-    setStatus(`${files.length} 个资料文件已处理`);
+    setStatus(intakeCompletionMessage(files, reports, "清单资料"));
   } catch (error) {
     setError(error.message);
     setStatus("资料读取失败");
@@ -2267,6 +2366,7 @@ function renderContract() {
       <div class="surface-title"><div><span class="panel-label">CONTRACT FILE INTAKE</span><h3>合同与招采依据录入</h3></div><button id="uploadContractSource" class="button button-quiet" type="button">＋录入合同与招采依据</button></div>
       <p class="business-note">可多选招标、投标、定标、合同和执行解释资料；原件保存在本地资料库并自动识别，合同主数据仍需人工核对后保存。</p>
       <label class="archive-selector">本次资料分类<select id="contractArchiveCategory">${contractCategoryOptions}</select><small class="select-note">优先显示使用量高或近期使用的分类；其他分类仍可在下拉菜单中选择。</small></label>
+      <div class="archive-location"><span>本入口归档位置</span><strong>项目资料库/合同与招采依据</strong></div>
       <div id="contractSourceList" class="source-list"></div>
       <div id="contractIntakeSummary" class="intake-report-list"></div>
     </section>

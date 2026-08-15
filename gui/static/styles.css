@@ -424,6 +424,7 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .intake-needs_ocr { border-left-color: var(--yellow); background: #322a181f; }
 .intake-unavailable, .intake-error { border-left-color: var(--red); background: #321b1d; }
 .intake-table { border-left-color: var(--blue); background: #1a263855; }
+.intake-pending { border-left-color: var(--blue); background: #1a263855; }
 .recognition-entry { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .recognizer-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 10px; }
 .recognizer-item { min-height: 75px; padding: 10px; border: 1px solid var(--line-soft); background: var(--surface-alt); }

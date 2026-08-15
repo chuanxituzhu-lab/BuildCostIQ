@@ -51,6 +51,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("清单资料", body)
         self.assertIn('id="fileInput"', body)
         self.assertIn('id="projectInfoInput"', body)
+        self.assertIn('id="basisInput"', body)
+        self.assertIn('id="basisInput" class="visually-hidden" type="file" multiple', body)
         self.assertIn("multiple", body)
         self.assertIn(".pdf", body)
         self.assertIn('id="loginForm"', body)
@@ -533,6 +535,9 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(result["capability_id"], "P02")
         self.assertEqual(result["item_count"], 1)
         self.assertEqual(result["items"][0]["name"], "矩形柱")
+        self.assertEqual(result["source"]["archive_area"], "清单与计价资料")
+        self.assertIn("archive_path", result["source"])
+        self.assertIn("storage_path", result["source"])
 
     def test_project_workspace_persists_stage_and_exports(self):
         project_id = "workspace-test"

@@ -405,6 +405,7 @@ def _boq_upload(
     project_id = fields.get("project_id", ("", b""))[1].decode("utf-8").strip()
     source_id = fields.get("source_id", ("", b""))[1].decode("utf-8").strip()
     archive_area = fields.get("archive_area", ("", b""))[1].decode("utf-8").strip() or "清单与计价资料"
+    archive_category = fields.get("archive_category", ("", b""))[1].decode("utf-8").strip()
     filename, content = fields.get("file", ("", b""))
     if not project_id or not source_id:
         raise ValueError("资料上传缺少项目或资料标识")
@@ -442,11 +443,12 @@ def _boq_upload(
             "storage_path": str(SOURCE_STORE.path_for(source)),
             "archive_area": archive_area,
             "archive_path": f"{archive_area}/{filename}",
+            "archive_category": archive_category,
             "size": len(content),
         },
     )
     source_metadata = PROJECT_WORKSPACE.load(project_id)["sources"][-1]
-    _auto_recognize_source(project_id, source_metadata)
+    source_metadata, _ = _auto_recognize_source(project_id, source_metadata)
     PROJECT_WORKSPACE.set_stage(project_id, "boq", result)
     if actor:
         PROJECT_WORKSPACE.append_audit(
@@ -456,7 +458,15 @@ def _boq_upload(
             source_id,
             {"name": filename, "kind": "清单资料", "item_count": result.get("item_count", 0)},
         )
-    return result
+    return {
+        **result,
+        "source": source_metadata,
+        "archive": {
+            "area": source_metadata.get("archive_area", archive_area),
+            "path": source_metadata.get("archive_path", f"{archive_area}/{filename}"),
+            "storage_path": source_metadata.get("storage_path", ""),
+        },
+    }
 
 
 def _cost_plan(payload: object, actor: Mapping[str, Any] | None = None) -> dict[str, Any]:

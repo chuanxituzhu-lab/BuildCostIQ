@@ -2,6 +2,13 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc11 — 2026-08-15
+
+- Fixed multi-file intake feedback across project files, P01–P08 material entries, and the external basis library.
+- BOQ uploads now return their saved source metadata, archive location, and local original path to the WebUI.
+- Added immediate “正在保存” feedback, per-file completion results, and visible logical archive locations before and after upload.
+- External basis intake now supports multiple files and reports each file’s local save path while preserving the existing metadata and consent boundaries.
+
 ## v0.7.2-rc10 — 2026-08-14
 
 - Added a global “资料与问题” search entry and dedicated WebUI workspace for project materials, external basis snapshots, and saved P01–P08 records.
