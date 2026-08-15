@@ -2,6 +2,10 @@
 
 Project: BuildCostIQ
 
+## v0.7.2-rc14 - 2026-08-15
+
+- Compact project-library view now keeps the newest two materials visible, matching the full list order.
+
 ## v0.7.2-rc13 - 2026-08-15
 
 - Project library defaults to two visible materials and provides an explicit expand/collapse control for the remaining files.

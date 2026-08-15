@@ -12,5 +12,5 @@ class Runtime:
             self.gateway.register(capability)
 
     def health(self) -> dict[str, object]:
-        return {"status": "ok", "version": "0.7.2-rc13", "capabilities": self.gateway.registered}
+        return {"status": "ok", "version": "0.7.2-rc14", "capabilities": self.gateway.registered}
 

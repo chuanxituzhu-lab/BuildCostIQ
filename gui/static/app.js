@@ -1111,7 +1111,7 @@ function renderSourceList(targetId = "sourceList", filter = {}) {
   const isProjectLibrary = targetId === "sourceList";
   const collapsedCount = Math.max(0, visibleSources.length - 2);
   const showCollapsed = isProjectLibrary && collapsedCount > 0 && !state.sourceListExpanded;
-  const displayedSources = showCollapsed ? visibleSources.slice(0, 2) : visibleSources;
+  const displayedSources = showCollapsed ? visibleSources.slice(-2) : visibleSources;
   const searchSummary = $("sourceSearchSummary");
   if (targetId === "sourceList" && searchSummary) {
     const resultSummary = searchTerm
