@@ -40,6 +40,8 @@ const state = {
   sources: [],
   connectors: [],
   recognizers: [],
+  connectorFocusId: "",
+  basisFocusCategory: "",
   basisCatalog: { categories: [], items: [] },
   basisReferences: [],
   sourceSearchTerm: "",
@@ -218,7 +220,7 @@ function showWorkspace(user) {
       ? !isCostManager()
       : view === "personnel"
         ? !canManagePersonnel()
-        : isKpiOnly() && !["overview", "dashboard", "search", "events"].includes(view);
+        : isKpiOnly() && !["overview", "dashboard", "search", "events", "connectors"].includes(view);
   });
 }
 
@@ -962,8 +964,8 @@ function renderOverview() {
     <div class="source-search-bar"><label for="sourceSearch">搜索项目资料</label><div class="source-search-controls"><input id="sourceSearch" type="search" placeholder="文件名、资料分类或本地路径" /><button id="sourceSearchButton" class="button button-quiet" type="button">搜索资料</button><button id="sourceSearchClear" class="button button-quiet" type="button">清除</button></div><small id="sourceSearchSummary" class="source-search-summary"></small></div>
     <div id="sourceList" class="source-list"></div>
     <div id="sourceIntakeSummary" class="intake-report-list"></div>
-    <div class="recognition-entry"><span class="panel-label">RECOGNITION</span><div id="recognizerCatalog" class="recognizer-list"></div></div>
-    <div class="tool-entry"><span class="panel-label">TOOL ENTRY</span><div id="connectorCatalog" class="tool-entry-grid"></div></div>
+    <div class="recognition-entry"><div class="tool-entry-heading"><div><span class="panel-label">RECOGNITION</span><strong>识别工具</strong></div><span class="surface-caption">点击工具进入下一步</span></div><div id="recognizerCatalog" class="recognizer-list"></div></div>
+    <div class="tool-entry"><div class="tool-entry-heading"><div><span class="panel-label">TOOL ENTRY</span><strong>三方工具接入中心</strong></div><span class="surface-caption">像插件目录一样选择软件，再进入接入向导</span></div><div id="connectorCatalog" class="tool-entry-grid"></div></div>
     <div class="export-actions"><button id="exportReport" class="button button-quiet" type="button">导出 Word 兼容报告</button><button id="exportBoq" class="button button-quiet" type="button">导出 Excel 清单</button><button id="exportPlan" class="button button-quiet" type="button">导出 Excel 成本计划</button><button id="exportBundle" class="button button-primary" type="button">导出项目交换包</button><button id="importBundle" class="button button-quiet" type="button">导入项目交换包</button></div>`;
   $("workspaceContent").append(sourcePanel);
   if (!canViewCostDetail()) {
@@ -1032,7 +1034,8 @@ function renderConnectorCatalog() {
     { name: "预算软件", description: "通过项目交换包共享清单、价册和结果。", formats: [".xlsx", ".csv", ".zip"], status: "exchange" },
   ];
   target.replaceChildren(...connectors.map((connector) => {
-    const item = document.createElement("div");
+    const item = document.createElement("button");
+    item.type = "button";
     item.className = "connector-item";
     const name = document.createElement("strong");
     name.textContent = connector.name;
@@ -1041,9 +1044,111 @@ function renderConnectorCatalog() {
     const status = document.createElement("span");
     status.className = `connector-status connector-${connector.status}`;
     status.textContent = connector.status === "ready" ? "可直接使用" : connector.status === "consent" ? "明确授权后取得快照" : "通过交换包";
-    item.append(name, note, status);
+    const action = document.createElement("span");
+    action.className = "connector-open";
+    action.textContent = "点击进入接入 →";
+    item.append(name, note, status, action);
+    item.addEventListener("click", () => openConnectorWorkspace(connector.id));
     return item;
   }));
+}
+
+function openConnectorWorkspace(id) {
+  state.connectorFocusId = id;
+  setView("connectors");
+}
+
+function connectorDescriptor(id) {
+  const fallback = [
+    { id: "excel-csv", name: "Excel / CSV", description: "清单、价册和成本计划的双向表格交换。", formats: [".xlsx", ".csv"], directions: ["import", "export"], status: "ready" },
+    { id: "word-report", name: "Word", description: "合同资料归档与项目报告导出。", formats: [".docx", ".html"], directions: ["import", "export"], status: "ready" },
+    { id: "cad-quantity", name: "CAD / 算量", description: "图纸和算量文件进入项目资料库，通过交换包共享标准化结果。", formats: [".dwg", ".dxf", ".xlsx", ".csv"], directions: ["import", "export"], status: "exchange" },
+    { id: "budget-software", name: "预算软件", description: "预算清单、价册和项目包的双向交换入口。", formats: [".xlsx", ".csv", ".zip"], directions: ["import", "export"], status: "exchange" },
+    { id: "project-bundle", name: "BuildCostIQ 项目包", description: "携带项目状态、标准化数据、报告和原始资料的本地交换包。", formats: [".zip", ".json", ".csv"], directions: ["import", "export"], status: "ready" },
+    { id: "government-basis", name: "政府政策/计价依据接口", description: "按明确指令取得政策和计价文件的本地快照。", formats: [".json", ".csv", ".pdf"], directions: ["import"], status: "consent" },
+    { id: "quota-basis", name: "定额接口", description: "取得定额、费用定额和编码换算数据后保存为本地版本快照。", formats: [".json", ".csv", ".xlsx"], directions: ["import"], status: "consent" },
+    { id: "price-information", name: "造价信息接口", description: "取得人材机信息价和地区价格，记录发布日期、有效期和适用区域。", formats: [".json", ".csv", ".xlsx"], directions: ["import"], status: "consent" },
+  ];
+  return [...state.connectors, ...state.recognizers, ...fallback].find((item) => item.id === id) || null;
+}
+
+function connectorStatusLabel(connector) {
+  if (connector.requires_explicit_consent || connector.status === "consent") return "明确授权后取得本地快照";
+  if (connector.status === "exchange") return "通过本地交换包";
+  if (connector.status === "configured") return "已配置，可按文件使用";
+  if (connector.status === "requires_configuration") return "尚未配置，默认不发送";
+  if (connector.status === "optional") return "本地可选工具";
+  return "本地可直接使用";
+}
+
+function connectorActions(connector) {
+  const id = connector.id;
+  if (id === "excel-csv") return [
+    { id: "pick-boq", label: "选择 Excel / CSV", note: "进入 P02 清单资料，支持多文件选择和检查。" },
+    { id: "pick-source", label: "存入项目资料库", note: "把价册、成本表等作为项目资料保存并本地识别。" },
+  ];
+  if (id === "word-report") return [
+    { id: "pick-source", label: "接入 Word 资料", note: "进入项目资料库，保存原件并生成本地识别稿。" },
+    { id: "export-report", label: "导出 Word 兼容报告", note: "进入导出工作面，选择文件名和本地目标文件夹。" },
+  ];
+  if (id === "cad-quantity") return [
+    { id: "pick-drawings", label: "接入 CAD / 图纸", note: "进入 P03 图纸资料登记台，登记版本和审阅状态。" },
+    { id: "import-bundle", label: "导入算量交换包", note: "从本地项目交换包恢复标准化清单和结果。" },
+    { id: "export-bundle", label: "导出给算量软件", note: "选择本地文件夹，生成可共享的项目交换包。" },
+  ];
+  if (id === "budget-software") return [
+    { id: "import-bundle", label: "导入预算软件项目包", note: "读取本地 ZIP 交换包，不上传项目资料。" },
+    { id: "export-bundle", label: "导出给预算软件", note: "导出清单、成本计划、报告和资料索引。" },
+  ];
+  if (id === "project-bundle") return [
+    { id: "import-bundle", label: "导入项目交换包", note: "从本地 ZIP 恢复项目状态和资料。" },
+    { id: "export-bundle", label: "导出项目交换包", note: "将当前项目保存为可交接的本地 ZIP。" },
+  ];
+  if (id === "government-basis") return [{ id: "open-policy-basis", label: "录入政府政策快照", note: "进入外部依据库，保存来源、时间、版本和本地路径。" }];
+  if (id === "quota-basis") return [{ id: "open-pricing-basis", label: "录入定额快照", note: "进入外部依据库，作为 P04/P05/P08 的计价依据。" }];
+  if (id === "price-information") return [{ id: "open-price-basis", label: "录入造价信息快照", note: "进入外部依据库，保存信息价有效期和适用地区。" }];
+  if (id === "baidu-ocr") return [{ id: "pick-source", label: "选择待 OCR 图片", note: "先把图片保存到项目资料库，再对指定文件明确授权外发。" }];
+  return [{ id: "pick-source", label: "进入项目资料库", note: "选择文件后使用本地识别工具。" }];
+}
+
+function runConnectorAction(actionId) {
+  const actions = {
+    "pick-boq": () => { setView("boq"); requestAnimationFrame(() => $("fileInput")?.click()); },
+    "pick-source": () => { setView("overview"); requestAnimationFrame(() => $("sourceInput")?.click()); },
+    "pick-drawings": () => { setView("drawings"); requestAnimationFrame(() => $("upload-drawings-source")?.click()); },
+    "import-bundle": () => { setView("overview"); requestAnimationFrame(() => $("bundleInput")?.click()); },
+    "export-bundle": () => openExportWorkspace("bundle"),
+    "export-report": () => openExportWorkspace("report"),
+    "open-policy-basis": () => { state.basisFocusCategory = "policy"; setView("basis"); },
+    "open-pricing-basis": () => { state.basisFocusCategory = "pricing_basis"; setView("basis"); },
+    "open-price-basis": () => { state.basisFocusCategory = "price_info"; setView("basis"); },
+  };
+  if (actions[actionId]) actions[actionId]();
+}
+
+function renderConnectorWorkspace() {
+  const connector = connectorDescriptor(state.connectorFocusId) || state.connectors[0];
+  if (!connector) {
+    setView("overview");
+    return;
+  }
+  const actions = connectorActions(connector);
+  const disabled = isKpiOnly() ? " disabled" : "";
+  const consentNote = connector.requires_explicit_consent || connector.status === "consent"
+    ? "本次操作只取得你明确选择的外部依据或图片；项目资料默认不外发。"
+    : "数据先留在本地；需要与外部软件交换时，由你主动导入或导出本地文件。";
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">CONNECTOR WORKSPACE</span><h3>${escapeHtml(connector.name)}</h3></div><button id="backFromConnector" class="button button-quiet" type="button">返回工具目录</button></div>
+    <div class="capability-intro"><strong>${escapeHtml(connector.description || "选择后进入对应接入流程")}</strong><span>${escapeHtml(consentNote)}</span></div>
+    <div class="connector-summary-grid">
+      <div><span>支持格式</span><strong>${escapeHtml((connector.formats || []).join(" / ") || "按工具说明")}</strong></div>
+      <div><span>接入方向</span><strong>${escapeHtml((connector.directions || []).map((item) => item === "import" ? "导入" : item === "export" ? "导出" : item).join(" · ") || "本地处理")}</strong></div>
+      <div><span>数据边界</span><strong>${escapeHtml(connectorStatusLabel(connector))}</strong></div>
+    </div>
+    <section class="connector-workspace-panel"><div class="data-entry-heading"><div><span class="panel-label">NEXT STEP</span><h3>选择后续操作</h3></div><span class="request-status">${isKpiOnly() ? "项目经理只读，不能执行接入" : "每一步都会回到本地工作台"}</span></div><div class="connector-action-list">${actions.map((action) => `<button class="connector-action" data-connector-action="${escapeHtml(action.id)}" type="button"${disabled}><strong>${escapeHtml(action.label)}</strong><small>${escapeHtml(action.note)}</small><span>进入 →</span></button>`).join("")}</div></section>
+    <aside class="connector-boundary"><span class="panel-label">LOCAL-FIRST BOUNDARY</span><strong>文件先保存到本地，再由你决定是否交换</strong><span>原始文件、识别稿、交换包和来源路径仍由当前项目管理；外部 OCR 或外部依据接口只在明确授权后使用。</span></aside>`;
+  $("backFromConnector").addEventListener("click", () => setView("overview"));
+  document.querySelectorAll("[data-connector-action]").forEach((button) => button.addEventListener("click", () => runConnectorAction(button.dataset.connectorAction)));
 }
 
 function sourceViewUrl(source, derived = false) {
@@ -1519,11 +1624,13 @@ function renderRecognizerCatalog() {
   const target = $("recognizerCatalog");
   if (!target) return;
   const recognizers = state.recognizers.length ? state.recognizers : [
-    { name: "本地自动识别", status: "ready", description: "先在本机提取文字并归档分类。", requires_explicit_consent: false },
-    { name: "百度 OCR", status: "requires_configuration", description: "明确确认后才发送指定图片。", requires_explicit_consent: true },
+    { id: "local-auto", name: "本地自动识别", status: "ready", description: "先在本机提取文字并归档分类。", requires_explicit_consent: false },
+    { id: "microsoft-markitdown", name: "Microsoft MarkItDown（本地）", status: "optional", description: "在本机把 PDF、Office、HTML、CSV 等资料转换为 Markdown。", requires_explicit_consent: false },
+    { id: "baidu-ocr", name: "百度 OCR", status: "requires_configuration", description: "明确确认后才发送指定图片。", requires_explicit_consent: true },
   ];
   target.replaceChildren(...recognizers.map((recognizer) => {
-    const item = document.createElement("div");
+    const item = document.createElement("button");
+    item.type = "button";
     item.className = "recognizer-item";
     const title = document.createElement("strong");
     title.textContent = recognizer.name;
@@ -1532,7 +1639,11 @@ function renderRecognizerCatalog() {
     const status = document.createElement("span");
     status.className = `recognizer-status recognizer-${recognizer.status}`;
     status.textContent = recognizer.requires_explicit_consent ? "需明确授权" : recognizer.status === "ready" ? "本地可用" : "可选安装";
-    item.append(title, note, status);
+    const action = document.createElement("span");
+    action.className = "connector-open";
+    action.textContent = "点击查看接入方式 →";
+    item.append(title, note, status, action);
+    item.addEventListener("click", () => openConnectorWorkspace(recognizer.id));
     return item;
   }));
 }
@@ -2241,6 +2352,11 @@ function renderBasis() {
   $("basisInput").onchange = updateBasisSelection;
   $("basisCategory").addEventListener("change", updateBasisSelection);
   $("basisCategoryFilter").addEventListener("change", renderBasisCatalog);
+  if (state.basisFocusCategory) {
+    $("basisCategory").value = state.basisFocusCategory;
+    $("basisCategoryFilter").value = state.basisFocusCategory;
+    state.basisFocusCategory = "";
+  }
   $("saveBasis").addEventListener("click", saveBasisFile);
   renderIntakeReports("basisIntakeSummary", state.basisIntakeReports);
   renderBasisCatalog();
@@ -3215,7 +3331,7 @@ function bindViewButtons() {
 }
 
 function setView(view) {
-  if (isKpiOnly() && !["overview", "dashboard", "search", "events", "personnel"].includes(view)) view = "dashboard";
+  if (isKpiOnly() && !["overview", "dashboard", "search", "events", "connectors", "personnel"].includes(view)) view = "dashboard";
   if (view === "personnel" && !canManagePersonnel()) view = isKpiOnly() ? "dashboard" : "overview";
   state.view = view;
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
@@ -3231,6 +3347,7 @@ function setView(view) {
   if (view === "evidence") renderEvidence();
   if (view === "review") renderReview();
   if (view === "export") renderExportWorkspace();
+  if (view === "connectors") renderConnectorWorkspace();
   if (view === "basis") renderBasis();
   if (view === "dashboard") renderDashboard();
   if (view === "personnel") renderPersonnel();

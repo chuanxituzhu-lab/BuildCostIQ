@@ -59,6 +59,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('id="personnelTab"', body)
         self.assertIn("项目经理工作台", body)
         self.assertIn("经营看板", body)
+        self.assertIn('data-view="connectors"', body)
+        self.assertIn("三方工具接入", body)
 
         with urlopen(f"{self.base_url}/api/health", timeout=2) as response:
             health = json.load(response)
