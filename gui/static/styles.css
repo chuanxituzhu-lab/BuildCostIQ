@@ -209,6 +209,10 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .assist-done .assist-marker { border-color: var(--green); background: var(--green); }
 .assist-next .assist-marker { border-color: var(--amber); background: var(--amber); }
 .assist-warn .assist-marker { border-color: var(--red); background: var(--red); }
+.assist-plugin { border-color: #6b5730; background: #1b2530; }
+.assist-plugin:hover { border-color: var(--amber); background: #243241; }
+.assist-plugin .assist-marker { border-color: var(--amber-bright); background: var(--amber-bright); }
+.assist-plugin strong { color: var(--amber-bright); }
 .assist-item strong, .assist-item small { display: block; }
 .assist-item strong { font-size: 12px; }
 .assist-item small { margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.45; }
@@ -450,6 +454,7 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .connector-item { position: relative; display: block; width: 100%; min-height: 118px; padding: 10px; border: 1px solid var(--line-soft); color: var(--ink); background: var(--surface-alt); text-align: left; cursor: pointer; }
 .connector-item:hover, .connector-item:focus-visible { border-color: var(--amber); background: #1b2530; outline: none; }
 .connector-item strong, .connector-item small, .connector-status { display: block; }
+.connector-kind { display: block; margin-bottom: 6px; color: var(--blue); font: 10px "SFMono-Regular", Consolas, monospace; letter-spacing: .04em; }
 .connector-item strong { color: var(--amber-bright); font-size: 11px; }
 .connector-item small { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .connector-status { margin-top: 7px; color: var(--green); font-size: 10px; }
@@ -473,6 +478,10 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
 .connector-boundary { display: grid; gap: 5px; margin-top: 14px; padding: 12px; border-left: 2px solid var(--blue); background: #1a263855; }
 .connector-boundary strong { font-size: 12px; }
 .connector-boundary > span:last-child { color: var(--muted); font-size: 11px; }
+.plugin-marketplace-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--line-soft); color: var(--muted); background: #101a25; font-size: 11px; }
+.plugin-marketplace-meta span:first-child { color: var(--amber-bright); }
+.plugin-marketplace-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 12px; }
+.plugin-marketplace-item { min-height: 154px; }
 .archive-location { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 9px 11px; border: 1px solid var(--line-soft); background: #101a25; }
 .archive-location span, .archive-location strong { font-size: 11px; }
 .archive-location span { color: var(--muted); }
@@ -627,6 +636,7 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
   .export-workspace { grid-template-columns: 1fr; }
   .basis-layout { grid-template-columns: 1fr; }
   .connector-action-list { grid-template-columns: repeat(2, 1fr); }
+  .plugin-marketplace-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .global-search { width: 100%; min-width: 0; }
@@ -637,6 +647,7 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
   .connector-summary-grid > div { border-right: 0; border-bottom: 1px solid var(--line); }
   .connector-summary-grid > div:last-child { border-bottom: 0; }
   .connector-action-list { grid-template-columns: 1fr; }
+  .plugin-marketplace-grid { grid-template-columns: 1fr; }
   .auth-shell { margin: 28px 16px 0; padding: 20px; }
   .auth-grid, .control-grid { grid-template-columns: 1fr; }
   .audit-row { grid-template-columns: 1fr; gap: 2px; }

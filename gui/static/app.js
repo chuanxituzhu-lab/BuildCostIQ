@@ -467,11 +467,13 @@ function renderAssist() {
     tasks.push({ tone: "next", title: "查找资料或提问", note: "只基于本地项目资料显示可追溯依据。", view: "search" });
     tasks.push({ tone: "next", title: "查看项目经营看板", note: "项目经理仅显示重要指标、风险预警和经营趋势。", view: "dashboard" });
     if (state.events.length) tasks.push({ tone: state.events.some((event) => event.alerts?.length) ? "warn" : "done", title: `查看 ${state.events.length} 项工程事件`, note: "只显示状态向量、重要风险和三证互证结果。", view: "events" });
+    tasks.push({ tone: "plugin", title: "插件中心", note: "像插件市场一样选择可接入工具；项目经理只读。", view: "connectors", pluginMarketplace: true });
     $("assistList").replaceChildren(...tasks.map((task) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = `assist-item assist-${task.tone}`;
       button.dataset.view = task.view;
+      if (task.pluginMarketplace) button.dataset.pluginMarketplace = "true";
       const marker = document.createElement("span");
       marker.className = "assist-marker";
       const body = document.createElement("span");
@@ -517,11 +519,13 @@ function renderAssist() {
   } else {
     tasks.push({ tone: state.reviewResult.publishable ? "done" : "warn", title: state.reviewResult.publishable ? "初审通过发布闸门" : "初审发现需要处理的问题", note: state.reviewResult.publishable ? "可以进入发布流程。" : "查看下方审查事项并回到资料核对。", view: "review" });
   }
+  tasks.push({ tone: "plugin", title: "插件中心", note: "像插件市场一样选择 Excel、Word、CAD/算量、预算软件和识别工具。", view: "connectors", pluginMarketplace: true });
   $("assistList").replaceChildren(...tasks.map((task) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `assist-item assist-${task.tone}`;
     button.dataset.view = task.view;
+    if (task.pluginMarketplace) button.dataset.pluginMarketplace = "true";
     const marker = document.createElement("span");
     marker.className = "assist-marker";
     const body = document.createElement("span");
@@ -1027,12 +1031,7 @@ function renderOverview() {
 function renderConnectorCatalog() {
   const target = $("connectorCatalog");
   if (!target) return;
-  const connectors = state.connectors.length ? state.connectors : [
-    { name: "Excel / CSV", description: "清单、价册和成本计划的双向表格交换。", formats: [".xlsx", ".csv"], status: "ready" },
-    { name: "Word", description: "合同资料归档与项目报告导出。", formats: [".docx", ".html"], status: "ready" },
-    { name: "CAD / 算量", description: "图纸和算量文件进入项目资料库。", formats: [".dwg", ".dxf"], status: "exchange" },
-    { name: "预算软件", description: "通过项目交换包共享清单、价册和结果。", formats: [".xlsx", ".csv", ".zip"], status: "exchange" },
-  ];
+  const connectors = connectorCatalogEntries().filter((connector) => !["local-auto", "microsoft-markitdown", "baidu-ocr"].includes(connector.id));
   target.replaceChildren(...connectors.map((connector) => {
     const item = document.createElement("button");
     item.type = "button";
@@ -1040,10 +1039,10 @@ function renderConnectorCatalog() {
     const name = document.createElement("strong");
     name.textContent = connector.name;
     const note = document.createElement("small");
-    note.textContent = `${connector.description} ${connector.formats.join(" / ")}`;
+    note.textContent = `${connector.description} ${(connector.formats || []).join(" / ")}`;
     const status = document.createElement("span");
     status.className = `connector-status connector-${connector.status}`;
-    status.textContent = connector.status === "ready" ? "可直接使用" : connector.status === "consent" ? "明确授权后取得快照" : "通过交换包";
+    status.textContent = connectorCatalogStatus(connector);
     const action = document.createElement("span");
     action.className = "connector-open";
     action.textContent = "点击进入接入 →";
@@ -1053,13 +1052,8 @@ function renderConnectorCatalog() {
   }));
 }
 
-function openConnectorWorkspace(id) {
-  state.connectorFocusId = id;
-  setView("connectors");
-}
-
-function connectorDescriptor(id) {
-  const fallback = [
+function fallbackConnectorEntries() {
+  return [
     { id: "excel-csv", name: "Excel / CSV", description: "清单、价册和成本计划的双向表格交换。", formats: [".xlsx", ".csv"], directions: ["import", "export"], status: "ready" },
     { id: "word-report", name: "Word", description: "合同资料归档与项目报告导出。", formats: [".docx", ".html"], directions: ["import", "export"], status: "ready" },
     { id: "cad-quantity", name: "CAD / 算量", description: "图纸和算量文件进入项目资料库，通过交换包共享标准化结果。", formats: [".dwg", ".dxf", ".xlsx", ".csv"], directions: ["import", "export"], status: "exchange" },
@@ -1069,7 +1063,70 @@ function connectorDescriptor(id) {
     { id: "quota-basis", name: "定额接口", description: "取得定额、费用定额和编码换算数据后保存为本地版本快照。", formats: [".json", ".csv", ".xlsx"], directions: ["import"], status: "consent" },
     { id: "price-information", name: "造价信息接口", description: "取得人材机信息价和地区价格，记录发布日期、有效期和适用区域。", formats: [".json", ".csv", ".xlsx"], directions: ["import"], status: "consent" },
   ];
-  return [...state.connectors, ...state.recognizers, ...fallback].find((item) => item.id === id) || null;
+}
+
+function fallbackRecognizerEntries() {
+  return [
+    { id: "local-auto", name: "本地自动识别", status: "ready", description: "先在本机提取文字并归档分类。", formats: ["本地文件"], directions: ["local"], requires_explicit_consent: false },
+    { id: "microsoft-markitdown", name: "Microsoft MarkItDown（本地）", status: "optional", description: "在本机把 PDF、Office、HTML、CSV 等资料转换为 Markdown。", formats: [".pdf", ".docx", ".xlsx", ".html", ".csv"], directions: ["local"], requires_explicit_consent: false },
+    { id: "baidu-ocr", name: "百度 OCR", status: "requires_configuration", description: "明确确认后才发送指定图片。", formats: [".png", ".jpg", ".jpeg", ".pdf"], directions: ["import"], requires_explicit_consent: true },
+  ];
+}
+
+function connectorCatalogEntries() {
+  const configured = [...state.connectors, ...state.recognizers].filter((item) => item?.id);
+  const configuredIds = new Set(configured.map((item) => item.id));
+  return [...configured, ...fallbackConnectorEntries(), ...fallbackRecognizerEntries()]
+    .filter((item, index, entries) => !configuredIds.has(item.id) || entries.findIndex((candidate) => candidate.id === item.id) === index);
+}
+
+function connectorCatalogStatus(connector) {
+  if (connector.requires_explicit_consent || connector.status === "consent") return "明确授权后取得快照";
+  if (connector.status === "exchange") return "通过本地交换包";
+  if (connector.status === "optional") return "本地可选工具";
+  if (connector.status === "requires_configuration") return "需配置后使用";
+  return "本地可直接使用";
+}
+
+function renderPluginMarketplace() {
+  const entries = connectorCatalogEntries();
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">PLUGIN MARKETPLACE</span><h3>插件中心</h3></div><button id="backFromMarketplace" class="button button-quiet" type="button">返回项目总览</button></div>
+    <div class="capability-intro"><strong>先选择插件，再进入二级接入工作面。</strong><span>像 Codex 插件市场一样集中选择 Excel、Word、CAD/算量、预算软件、识别工具和外部依据接口；打开插件不会上传资料。</span></div>
+    <div class="plugin-marketplace-meta"><span>可用插件 ${entries.length} 个</span><span>数据默认留在本地 · 外部传输需明确授权</span></div>
+    <div id="pluginMarketplaceGrid" class="plugin-marketplace-grid"></div>`;
+  const target = $("pluginMarketplaceGrid");
+  target.replaceChildren(...entries.map((connector) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "connector-item plugin-marketplace-item";
+    const kind = document.createElement("span");
+    kind.className = "connector-kind";
+    kind.textContent = ["local-auto", "microsoft-markitdown", "baidu-ocr"].includes(connector.id) ? "识别工具" : "业务接入";
+    const name = document.createElement("strong");
+    name.textContent = connector.name;
+    const note = document.createElement("small");
+    note.textContent = connector.description || "进入二级接入工作面";
+    const status = document.createElement("span");
+    status.className = `connector-status connector-${connector.status || "ready"}`;
+    status.textContent = connectorCatalogStatus(connector);
+    const action = document.createElement("span");
+    action.className = "connector-open";
+    action.textContent = "选择并进入 →";
+    item.append(kind, name, note, status, action);
+    item.addEventListener("click", () => openConnectorWorkspace(connector.id));
+    return item;
+  }));
+  $("backFromMarketplace").addEventListener("click", () => setView("overview"));
+}
+
+function openConnectorWorkspace(id) {
+  state.connectorFocusId = id;
+  setView("connectors");
+}
+
+function connectorDescriptor(id) {
+  return connectorCatalogEntries().find((item) => item.id === id) || null;
 }
 
 function connectorStatusLabel(connector) {
@@ -1127,9 +1184,14 @@ function runConnectorAction(actionId) {
 }
 
 function renderConnectorWorkspace() {
-  const connector = connectorDescriptor(state.connectorFocusId) || state.connectors[0];
+  if (!state.connectorFocusId) {
+    renderPluginMarketplace();
+    return;
+  }
+  const connector = connectorDescriptor(state.connectorFocusId);
   if (!connector) {
-    setView("overview");
+    state.connectorFocusId = "";
+    renderPluginMarketplace();
     return;
   }
   const actions = connectorActions(connector);
@@ -1138,7 +1200,7 @@ function renderConnectorWorkspace() {
     ? "本次操作只取得你明确选择的外部依据或图片；项目资料默认不外发。"
     : "数据先留在本地；需要与外部软件交换时，由你主动导入或导出本地文件。";
   $("workspaceContent").innerHTML = `
-    <div class="surface-title"><div><span class="panel-label">CONNECTOR WORKSPACE</span><h3>${escapeHtml(connector.name)}</h3></div><button id="backFromConnector" class="button button-quiet" type="button">返回工具目录</button></div>
+    <div class="surface-title"><div><span class="panel-label">PLUGIN CONNECTOR</span><h3>${escapeHtml(connector.name)}</h3></div><button id="backFromConnector" class="button button-quiet" type="button">返回插件中心</button></div>
     <div class="capability-intro"><strong>${escapeHtml(connector.description || "选择后进入对应接入流程")}</strong><span>${escapeHtml(consentNote)}</span></div>
     <div class="connector-summary-grid">
       <div><span>支持格式</span><strong>${escapeHtml((connector.formats || []).join(" / ") || "按工具说明")}</strong></div>
@@ -1147,7 +1209,7 @@ function renderConnectorWorkspace() {
     </div>
     <section class="connector-workspace-panel"><div class="data-entry-heading"><div><span class="panel-label">NEXT STEP</span><h3>选择后续操作</h3></div><span class="request-status">${isKpiOnly() ? "项目经理只读，不能执行接入" : "每一步都会回到本地工作台"}</span></div><div class="connector-action-list">${actions.map((action) => `<button class="connector-action" data-connector-action="${escapeHtml(action.id)}" type="button"${disabled}><strong>${escapeHtml(action.label)}</strong><small>${escapeHtml(action.note)}</small><span>进入 →</span></button>`).join("")}</div></section>
     <aside class="connector-boundary"><span class="panel-label">LOCAL-FIRST BOUNDARY</span><strong>文件先保存到本地，再由你决定是否交换</strong><span>原始文件、识别稿、交换包和来源路径仍由当前项目管理；外部 OCR 或外部依据接口只在明确授权后使用。</span></aside>`;
-  $("backFromConnector").addEventListener("click", () => setView("overview"));
+  $("backFromConnector").addEventListener("click", () => { state.connectorFocusId = ""; setView("connectors"); });
   document.querySelectorAll("[data-connector-action]").forEach((button) => button.addEventListener("click", () => runConnectorAction(button.dataset.connectorAction)));
 }
 
@@ -3327,7 +3389,10 @@ function renderBlockedStep(title, message, actionLabel, view) {
 }
 
 function bindViewButtons() {
-  document.querySelectorAll("#workspaceContent [data-view], #assistList [data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+  document.querySelectorAll("#workspaceContent [data-view], #assistList [data-view]").forEach((button) => button.addEventListener("click", () => {
+    if (button.dataset.pluginMarketplace === "true") state.connectorFocusId = "";
+    setView(button.dataset.view);
+  }));
 }
 
 function setView(view) {
@@ -3402,12 +3467,18 @@ async function loadDemo() {
 
 $("workspaceTabs").addEventListener("click", (event) => {
   const tab = event.target.closest("[data-view]");
-  if (tab) setView(tab.dataset.view);
+  if (tab) {
+    if (tab.dataset.view === "connectors") state.connectorFocusId = "";
+    setView(tab.dataset.view);
+  }
 });
 
 $("assistList").addEventListener("click", (event) => {
   const item = event.target.closest("[data-view]");
-  if (item) setView(item.dataset.view);
+  if (item) {
+    if (item.dataset.pluginMarketplace === "true") state.connectorFocusId = "";
+    setView(item.dataset.view);
+  }
 });
 
 $("loginForm").addEventListener("submit", submitLogin);
