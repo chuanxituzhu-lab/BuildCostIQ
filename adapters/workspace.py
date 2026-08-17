@@ -58,6 +58,8 @@ class LocalProjectWorkspace:
             "changes": None,
             "evidence": None,
             "review": None,
+            "events": [],
+            "event_distillation": None,
             "basis_references": [],
             "alert_snapshots": [],
             "audit_log": [],
@@ -85,6 +87,52 @@ class LocalProjectWorkspace:
     def set_stage(self, project_id: str, stage: str, result: Mapping[str, Any]) -> dict[str, Any]:
         state = self.load(project_id) or self.create(project_id, project_id)
         state[stage] = {"status": "completed", "updated_at": _now(), "result": dict(result)}
+        return self.save(state)
+
+    def next_event_id(self, project_id: str) -> str:
+        """Return the next human-readable permanent event id for a project."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        year = datetime.now(timezone.utc).year
+        prefix = f"EV-{year}-"
+        numbers = []
+        for event in list(state.get("events") or []):
+            value = str(event.get("event_id", ""))
+            if value.startswith(prefix):
+                try:
+                    numbers.append(int(value.removeprefix(prefix)))
+                except ValueError:
+                    continue
+        return f"{prefix}{(max(numbers, default=0) + 1):04d}"
+
+    def save_event(self, project_id: str, event: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist an event without replacing its append-only history."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        events = [dict(item) for item in list(state.get("events") or [])]
+        event_payload = dict(event)
+        event_id = str(event_payload.get("event_id", "")).strip()
+        if not event_id:
+            raise ValueError("工程事件缺少永久编号")
+        replaced = False
+        for index, existing in enumerate(events):
+            if str(existing.get("event_id", "")) == event_id:
+                previous_history = list((existing.get("governance") or {}).get("status_history") or [])
+                current_history = list((event_payload.get("governance") or {}).get("status_history") or [])
+                if len(current_history) < len(previous_history):
+                    event_payload.setdefault("governance", {})["status_history"] = previous_history
+                events[index] = event_payload
+                replaced = True
+                break
+        if not replaced:
+            events.append(event_payload)
+        state["events"] = events
+        return self.save(state)
+
+    def set_event_distillation(self, project_id: str, result: Mapping[str, Any]) -> dict[str, Any]:
+        """Save the latest local/text/fused snapshot separately from events."""
+        state = self.load(project_id) or self.create(project_id, project_id)
+        snapshot = dict(result)
+        snapshot["updated_at"] = _now()
+        state["event_distillation"] = snapshot
         return self.save(state)
 
     def record_alert_snapshot(

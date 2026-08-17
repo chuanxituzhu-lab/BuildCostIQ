@@ -33,7 +33,24 @@ from adapters import (
 from adapters.connectors import build_project_bundle, connector_catalog
 from adapters.recognition import RecognitionError, recognition_catalog, recognize_source
 from adapters.search import build_evidence_answer, search_local_evidence
-from core import Runtime
+from core import (
+    DIMENSIONS,
+    EVENT_SOURCE_TYPES,
+    EVENT_STATUSES,
+    EVENT_TYPES,
+    SEVERITIES,
+    EventKernelError,
+    build_state_vector,
+    distill_local_data,
+    distill_text,
+    evaluate_event_rules,
+    fuse_distillations,
+    new_event,
+    run_cross_check,
+    transition_event,
+    validate_event,
+    Runtime,
+)
 from core.models import SourceDocument
 from plugins import build_default_plugins
 
@@ -239,11 +256,27 @@ _COST_DETAIL_KEYS = {
     "unit_price",
     "variance_amount",
     "zero_ledger_total",
+    "baseline_cost",
+    "forecast_cost",
+    "estimated_revenue",
+    "submitted_amount",
+    "approved_measurement",
+    "audit_1",
+    "audit_2",
+    "final_certified",
+    "cash_collected",
+    "expected_profit",
+    "incremental_cost",
+    "risk_cost",
 }
 
 
 def _can(actor: Mapping[str, Any] | None, permission: str) -> bool:
     return permission in set((actor or {}).get("permissions", []))
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _redact_sensitive(value: Any, actor: Mapping[str, Any] | None) -> Any:
@@ -1002,6 +1035,8 @@ def _workspace(project_id: str) -> dict[str, Any]:
     if state is None:
         raise FileNotFoundError("项目尚未建立")
     state.setdefault("basis_references", [])
+    state.setdefault("events", [])
+    state.setdefault("event_distillation", None)
     changed = False
     for source in state.get("sources", []):
         archive_area = str(source.get("archive_area") or "").strip()
@@ -1042,6 +1077,160 @@ def _workspace(project_id: str) -> dict[str, Any]:
     if changed:
         state = PROJECT_WORKSPACE.save(state)
     return state
+
+
+def _event_public(event: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose business-readable event data while keeping role boundaries."""
+    vector = build_state_vector(event)
+    alerts = evaluate_event_rules(event)
+    if (actor or {}).get("role") == ROLE_PROJECT_MANAGER:
+        identity = event.get("identity") if isinstance(event.get("identity"), Mapping) else {}
+        classification = event.get("classification") if isinstance(event.get("classification"), Mapping) else {}
+        return {
+            "event_id": event.get("event_id", ""),
+            "project_id": event.get("project_id", ""),
+            "title": identity.get("title", ""),
+            "summary": identity.get("summary", ""),
+            "event_type": classification.get("event_type", ""),
+            "severity": classification.get("severity", ""),
+            "state_vector": vector,
+            "alerts": alerts,
+            "status_history_count": len((_mapping(event.get("governance")).get("status_history") or [])),
+        }
+    visible = _redact_sensitive(dict(event), actor)
+    visible["state_vector"] = vector
+    visible["alerts"] = alerts
+    return visible
+
+
+def _event_kernel_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
+    snapshot = state.get("event_distillation")
+    if (actor or {}).get("role") == ROLE_PROJECT_MANAGER:
+        visible_snapshot = None
+        if isinstance(snapshot, Mapping):
+            summary = dict(snapshot.get("summary") or {})
+            visible_snapshot = {"summary": summary, "updated_at": snapshot.get("updated_at"), "local_only": True}
+    else:
+        visible_snapshot = _redact_sensitive(snapshot, actor) if isinstance(snapshot, Mapping) else None
+    return {
+        "project": dict(state.get("project") or {}),
+        "events": [_event_public(event, actor) for event in state.get("events") or [] if isinstance(event, Mapping)],
+        "distillation": visible_snapshot,
+        "catalog": {
+            "statuses": list(EVENT_STATUSES),
+            "source_types": list(EVENT_SOURCE_TYPES),
+            "event_types": list(EVENT_TYPES),
+            "severities": list(SEVERITIES),
+            "dimensions": list(DIMENSIONS),
+        },
+        "privacy": {"local_only": True, "external_sent": False},
+    }
+
+
+def _event_input_mapping(payload: Mapping[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _create_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("工程事件请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    if not project_id:
+        raise ValueError("工程事件缺少项目标识")
+    source_refs = payload.get("source_refs") or []
+    if isinstance(source_refs, str):
+        source_refs = [item.strip() for item in source_refs.split(",") if item.strip()]
+    event = new_event(
+        project_id,
+        event_id=PROJECT_WORKSPACE.next_event_id(project_id),
+        title=str(payload.get("title", "")),
+        summary=str(payload.get("summary", "")),
+        source_type=str(payload.get("source_type", "SITE_DISCOVERY")),
+        event_type=str(payload.get("event_type", "SITE_CONDITION")),
+        severity=str(payload.get("severity", "MEDIUM")),
+        discovered_by=str(payload.get("discovered_by", "")),
+        discovered_at=str(payload.get("discovered_at", "")),
+        location=_event_input_mapping(payload, "location"),
+        tags=payload.get("tags") if isinstance(payload.get("tags"), list) else [item.strip() for item in str(payload.get("tags", "")).split(",") if item.strip()],
+        dimensions=_event_input_mapping(payload, "dimensions"),
+        source_refs=source_refs,
+    )
+    for section in ("baseline_impact", "production_track", "technical_track", "commercial_track", "decision", "evidence", "settlement", "audit_cash"):
+        value = payload.get(section)
+        if isinstance(value, Mapping):
+            event[section].update(copy.deepcopy(dict(value)))
+    governance = payload.get("governance")
+    if isinstance(governance, Mapping):
+        for key in ("responsibility", "formal_basis", "emergency_override", "external_approval"):
+            if key in governance:
+                event["governance"][key] = copy.deepcopy(governance[key])
+    validate_event(event)
+    state = PROJECT_WORKSPACE.save_event(project_id, event)
+    PROJECT_WORKSPACE.append_audit(project_id, "event.created", actor, event["event_id"], {"event_type": event["classification"]["event_type"], "source_refs": event["origin"]["source_refs"]})
+    return {"event": _event_public(event, actor), "workspace": state}
+
+
+def _distill_event_kernel(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("蒸馏请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    if not project_id:
+        raise ValueError("蒸馏请求缺少项目标识")
+    state = _workspace(project_id)
+    local = distill_local_data(state)
+    text_value = str(payload.get("text", ""))
+    text_source_ref = str(payload.get("text_source_ref", "文本输入")).strip() or "文本输入"
+    text = distill_text(text_value, text_source_ref, project_id)
+    fused = fuse_distillations(local, text, project_id)
+    result = {
+        "project_id": project_id,
+        "local": local,
+        "text": text,
+        "fused": fused,
+        "summary": {
+            "local_fact_count": len(local.get("facts") or []),
+            "text_fact_count": len(text.get("facts") or []),
+            "fused_fact_count": len(fused.get("fused_facts") or []),
+            "conflict_count": len(fused.get("conflicts") or []),
+            "claim_count": len(fused.get("claims") or []),
+        },
+        "local_only": True,
+        "external_sent": False,
+    }
+    state = PROJECT_WORKSPACE.set_event_distillation(project_id, result)
+    PROJECT_WORKSPACE.append_audit(project_id, "event.distilled", actor, project_id, {"local_fact_count": result["summary"]["local_fact_count"], "text_fact_count": result["summary"]["text_fact_count"], "conflict_count": result["summary"]["conflict_count"]})
+    return {"distillation": _redact_sensitive(result, actor), "events": [_event_public(event, actor) for event in state.get("events") or []]}
+
+
+def _transition_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("状态推进请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    event_id = str(payload.get("event_id", "")).strip()
+    target_status = str(payload.get("target_status", "")).strip()
+    state = _workspace(project_id)
+    event = next((item for item in state.get("events") or [] if str(item.get("event_id")) == event_id), None)
+    if event is None:
+        raise FileNotFoundError("工程事件不存在")
+    updated = transition_event(event, target_status, actor=actor)
+    state = PROJECT_WORKSPACE.save_event(project_id, updated)
+    PROJECT_WORKSPACE.append_audit(project_id, "event.transitioned", actor, event_id, {"from": build_state_vector(event)["event"], "to": target_status})
+    return {"event": _event_public(updated, actor), "workspace": state}
+
+
+def _cross_check_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("互证请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    event_id = str(payload.get("event_id", "")).strip()
+    state = _workspace(project_id)
+    event = next((item for item in state.get("events") or [] if str(item.get("event_id")) == event_id), None)
+    if event is None:
+        raise FileNotFoundError("工程事件不存在")
+    result = run_cross_check(event)
+    PROJECT_WORKSPACE.append_audit(project_id, "event.cross_checked", actor, event_id, {"status": result.get("status"), "conflict_count": result.get("conflict_count", 0)})
+    return {"event_id": event_id, "cross_check": result}
 
 
 def _local_search(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -1150,6 +1339,10 @@ def _dashboard_period(snapshots: list[dict[str, Any]], days: int, now: datetime)
             for rule_id, count in rule_counts.most_common(5)
         ],
     }
+
+
+def _dashboard_event_status(event: Mapping[str, Any]) -> str:
+    return str(event.get("status") or _mapping(event.get("governance")).get("status") or "DISCOVERED")
 
 
 def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -1289,6 +1482,21 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
     if evidence_summary.get("unverified_count", 0):
         add_alert("info", "DASH-P07-01", "存在待核验证据关联", f"有 {evidence_summary.get('unverified_count')} 条证据关联尚未核验。", "evidence")
 
+    events = [item for item in state.get("events") or [] if isinstance(item, Mapping)]
+    event_alerts = []
+    event_statuses: Counter[str] = Counter()
+    for event in events:
+        event_statuses[_dashboard_event_status(event)] += 1
+        for event_alert in evaluate_event_rules(event):
+            event_alerts.append({"event_id": event.get("event_id", ""), **event_alert})
+            add_alert(
+                str(event_alert.get("severity", "info")),
+                f"{event_alert.get('rule_id', 'EVENT')}-{event.get('event_id', '')}",
+                str(event_alert.get("title", "工程事件提醒")),
+                f"{event.get('event_id', '')}：{event_alert.get('message', '')}",
+                "events",
+            )
+
     alerts.sort(key=lambda item: item["risk"]["priority"], reverse=True)
     dashboard = {
         "project": state.get("project") or {},
@@ -1321,6 +1529,15 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
             "current_summary": review.get("summary") or {},
         },
         "periods": {"week": week, "month": month},
+        "events": {
+            "count": len(events),
+            "status_counts": dict(event_statuses),
+            "alert_count": len(event_alerts),
+            "state_vectors": [
+                {"event_id": event.get("event_id", ""), "title": _mapping(event.get("identity")).get("title", ""), "state_vector": build_state_vector(event)}
+                for event in events[:12]
+            ],
+        },
         "alerts": alerts[:12],
         "recent_issues": (review.get("findings") or [])[:12],
     }
@@ -1563,7 +1780,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "资料先快速保存到本地分类文件夹、识别后台更新；P01-P08 资料列表默认显示最新 2 项并可用三点展开；每份资料操作进入二级菜单；本地资料与问题检索、证据摘要与溯源标注、无依据不回答、中文文件名可打开、P01-P08 资料分区归档",
+        "release_highlights": "Core 工程事件内核 v1.0：先蒸馏本地 P01-P08 资料，再蒸馏文本并保留来源、冲突和待核对主张；工程事件状态向量、三证互证、状态 Guard 与本地预警已进入工作台；原有本地资料快速保存、识别后台更新和 P01-P08 分区归档继续保留",
     }
 
 
@@ -1723,6 +1940,15 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": str(exc)}, 403)
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
+        elif path == "/api/event-kernel":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                self._write_json(_event_kernel_response(_workspace(project_id), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
         elif path == "/api/workspace":
             try:
                 actor = _require_actor(self.headers, "view_workspace")
@@ -1813,6 +2039,53 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/event-kernel/distill":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_distill_event_kernel(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, EventKernelError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/event-kernel/events":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_create_engineering_event(self._read_json(), actor), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, EventKernelError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/event-kernel/transition":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                payload = self._read_json()
+                if isinstance(payload, dict) and str(payload.get("target_status", "")) in {"DECIDED", "APPROVAL", "EXECUTING", "CLOSED"} and not _can(actor, "view_cost_detail"):
+                    raise PermissionError("状态决策和关闭需要造价经理权限")
+                self._write_json(_redact_sensitive(_transition_engineering_event(payload, actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, EventKernelError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/event-kernel/check":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                self._write_json(_cross_check_engineering_event(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, EventKernelError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)

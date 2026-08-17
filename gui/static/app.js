@@ -23,6 +23,16 @@ const state = {
   planResult: null,
   changesResult: null,
   evidenceResult: null,
+  events: [],
+  eventDistillation: null,
+  eventDistillText: "",
+  eventCrossChecks: {},
+  eventDraft: {
+    title: "", summary: "", source_type: "SITE_DISCOVERY", event_type: "SITE_CONDITION", severity: "MEDIUM",
+    discovered_by: "", zone: "", axis: "", level: "", tags: "", source_refs: "", dimensions: {},
+    baseline: { contract: false, price: false, quantity: false, cost: false },
+    technical_needed: false, technical_assessment: "", technical_feasible: false,
+  },
   changesDraft: [],
   evidenceDraft: [],
   reviewResult: null,
@@ -82,6 +92,31 @@ const BASIS_CATEGORIES = [
   ["market_price", "市场价格"],
   ["interface_snapshot", "外部接口快照"],
 ];
+
+const EVENT_STATUS_LABELS = {
+  DISCOVERED: "已发现", ASSESSED: "已判断", PLANNING: "方案规划", COMMERCIAL_REVIEW: "造价复核",
+  DECIDED: "已决策", APPROVAL: "待/已批准", EXECUTING: "执行中", VERIFIED: "已验证",
+  CLAIMING: "商务申报", SETTLEMENT: "结算中", AUDITING: "审计中", COLLECTION: "回收中", CLOSED: "已关闭",
+};
+const EVENT_TYPE_LABELS = {
+  SITE_CONDITION: "现场条件", DESIGN_CHANGE: "设计变化", CONTRACT_REVIEW: "合同审查", COST_VARIANCE: "成本偏差",
+  QUANTITY_VARIANCE: "数量偏差", SCHEDULE_VARIANCE: "工期偏差", TECH_OPTIMIZATION: "技术优化", AUDIT_FEEDBACK: "审计反馈",
+};
+const EVENT_SOURCE_LABELS = {
+  SITE_DISCOVERY: "现场发现", DRAWING_REVIEW: "图纸审查", OWNER_INSTRUCTION: "业主指令", DESIGN_CHANGE: "设计变化",
+  COST_VARIANCE: "成本偏差", QUANTITY_VARIANCE: "数量偏差", SCHEDULE_VARIANCE: "工期偏差", CONTRACT_REVIEW: "合同审查",
+  TECH_OPTIMIZATION: "技术优化", AUDIT_FEEDBACK: "审计反馈",
+};
+const EVENT_NEXT_STATUS = {
+  DISCOVERED: ["ASSESSED"], ASSESSED: ["PLANNING"], PLANNING: ["COMMERCIAL_REVIEW"],
+  COMMERCIAL_REVIEW: ["PLANNING", "DECIDED"], DECIDED: ["APPROVAL"], APPROVAL: ["EXECUTING"],
+  EXECUTING: ["VERIFIED"], VERIFIED: ["CLAIMING"], CLAIMING: ["SETTLEMENT"], SETTLEMENT: ["AUDITING"],
+  AUDITING: ["COLLECTION"], COLLECTION: ["CLOSED"], CLOSED: [],
+};
+
+function escapeHtml(value) {
+  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
 
 function prioritizedCategoryIds(items, fallbackOrder, limit = 5) {
   const counts = new Map();
@@ -183,7 +218,7 @@ function showWorkspace(user) {
       ? !isCostManager()
       : view === "personnel"
         ? !canManagePersonnel()
-        : isKpiOnly() && !["overview", "dashboard", "search"].includes(view);
+        : isKpiOnly() && !["overview", "dashboard", "search", "events"].includes(view);
   });
 }
 
@@ -297,6 +332,8 @@ function setStatus(text) {
 }
 
 function restoredStatus() {
+  if (state.events.some((event) => event.alerts?.length)) return "工程事件存在预警";
+  if (state.events.length) return `工程事件 ${state.events.length} 项`;
   if (state.reviewResult) return state.reviewResult.publishable ? "初审通过" : "初审发现需处理事项";
   if (state.changesResult?.summary?.pending_count) return "存在待审批变更";
   if (state.planResult) return "成本计划已生成";
@@ -312,6 +349,8 @@ function applyWorkspace(workspace) {
   state.projectName = workspace.project?.name || state.projectName;
   state.sources = workspace.sources || [];
   state.basisReferences = workspace.basis_references || [];
+  state.events = workspace.events || state.events || [];
+  state.eventDistillation = workspace.event_distillation || state.eventDistillation || null;
   if (state.sources.length && !state.fileName) state.sourceName = state.sources[state.sources.length - 1].name;
   const boq = workspace.boq?.result;
   const contract = workspace.contract?.result;
@@ -355,17 +394,32 @@ async function ensureProject() {
 async function loadWorkspace() {
   try {
     applyWorkspace(await apiJson(`/api/workspace?project_id=${encodeURIComponent(state.projectId)}`));
+    await loadEventKernel();
     await refreshDashboard();
   } catch (error) {
     await ensureProject();
+    await loadEventKernel();
     await refreshDashboard();
   }
 }
 
 async function refreshWorkspace() {
   applyWorkspace(await apiJson(`/api/workspace?project_id=${encodeURIComponent(state.projectId)}`));
+  await loadEventKernel();
   await refreshDashboard();
   renderDashboardIfVisible();
+}
+
+async function loadEventKernel() {
+  try {
+    const response = await apiJson(`/api/event-kernel?project_id=${encodeURIComponent(state.projectId)}`);
+    state.events = response.events || [];
+    state.eventDistillation = response.distillation || null;
+    state.eventCatalog = response.catalog || state.eventCatalog;
+  } catch (_) {
+    state.events = [];
+    state.eventDistillation = null;
+  }
 }
 
 async function refreshDashboard() {
@@ -410,6 +464,7 @@ function renderAssist() {
   if (isKpiOnly()) {
     tasks.push({ tone: "next", title: "查找资料或提问", note: "只基于本地项目资料显示可追溯依据。", view: "search" });
     tasks.push({ tone: "next", title: "查看项目经营看板", note: "项目经理仅显示重要指标、风险预警和经营趋势。", view: "dashboard" });
+    if (state.events.length) tasks.push({ tone: state.events.some((event) => event.alerts?.length) ? "warn" : "done", title: `查看 ${state.events.length} 项工程事件`, note: "只显示状态向量、重要风险和三证互证结果。", view: "events" });
     $("assistList").replaceChildren(...tasks.map((task) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -429,6 +484,7 @@ function renderAssist() {
     return;
   }
   tasks.push({ tone: "next", title: "查找资料或提问", note: "本地检索优先；回答会标注命中依据和不确定性。", view: "search" });
+  tasks.push({ tone: state.events.length ? (state.events.some((event) => event.alerts?.length) ? "warn" : "done") : "next", title: state.events.length ? `工程事件内核已记录 ${state.events.length} 项` : "建立工程事件", note: "先蒸馏本地资料，再融合文本事实；状态、证据和预警集中呈现。", view: "events" });
   const structuredStages = [
     ["contract", "P01 合同与招采依据", state.contractResult, "补充合同主数据和履约义务"],
     ["drawings", "P03 图纸登记", state.drawingsResult, "登记图号、版本和审阅状态"],
@@ -2592,6 +2648,246 @@ async function saveBaseline() {
   } catch (error) { setError(error.message); }
 }
 
+function eventStatusLabel(status) {
+  return EVENT_STATUS_LABELS[status] || status || "未开始";
+}
+
+function eventTypeLabel(type) {
+  return EVENT_TYPE_LABELS[type] || type || "未分类";
+}
+
+function eventRiskClass(severity) {
+  return severity === "block" || severity === "CRITICAL" || severity === "HIGH" ? "risk-red" : severity === "warn" || severity === "MEDIUM" ? "risk-yellow" : "risk-blue";
+}
+
+function eventSuggestionFields(suggestion) {
+  if (!suggestion) return null;
+  const identity = suggestion.identity || {};
+  const origin = suggestion.origin || {};
+  const classification = suggestion.classification || {};
+  const location = origin.location || {};
+  const dimensions = classification.dimensions || suggestion.dimensions || {};
+  return {
+    title: identity.title || suggestion.title || "",
+    summary: identity.summary || suggestion.summary || "",
+    source_type: origin.source_type || suggestion.source_type || "SITE_DISCOVERY",
+    event_type: classification.event_type || suggestion.event_type || "SITE_CONDITION",
+    severity: classification.severity || suggestion.severity || "MEDIUM",
+    discovered_by: origin.discovered_by || "",
+    zone: location.zone || "",
+    axis: location.axis || "",
+    level: location.level || "",
+    tags: (classification.tags || suggestion.tags || []).join(", "),
+    source_refs: (origin.source_refs || suggestion.source_refs || []).join(", "),
+    dimensions,
+    baseline: { contract: false, price: false, quantity: false, cost: false },
+    technical_needed: false,
+    technical_assessment: "",
+    technical_feasible: false,
+  };
+}
+
+function renderEventDistillation() {
+  const target = $("eventDistillationOutput");
+  if (!target) return;
+  const snapshot = state.eventDistillation;
+  if (!snapshot) {
+    target.className = "event-distillation-output empty-state";
+    target.textContent = "先点击“蒸馏本地资料”；有文本时再点击“蒸馏文本并融合”。结果会保留本地事实、文本事实、冲突和来源。";
+    return;
+  }
+  const summary = snapshot.summary || {};
+  const fused = snapshot.fused || {};
+  target.className = "event-distillation-output";
+  target.innerHTML = `
+    <div class="event-distill-metrics">
+      <div><span>本地事实</span><strong>${escapeHtml(summary.local_fact_count ?? 0)}</strong><small>来自项目资料与 P01–P08 记录</small></div>
+      <div><span>文本事实</span><strong>${escapeHtml(summary.text_fact_count ?? 0)}</strong><small>仅从输入文本保守提取</small></div>
+      <div><span>融合事实</span><strong>${escapeHtml(summary.fused_fact_count ?? 0)}</strong><small>保留来源与置信度</small></div>
+      <div class="${summary.conflict_count ? "has-risk" : ""}"><span>待核对冲突</span><strong>${escapeHtml(summary.conflict_count ?? 0)}</strong><small>${summary.conflict_count ? "本地结构化事实优先，文本不被静默覆盖" : "暂未发现同字段冲突"}</small></div>
+    </div>
+    <div class="event-distill-trace"><strong>融合原则</strong><span>本地结构化记录优先；文本只补充，不替换；每条事实保留来源引用；没有依据的内容不作为结论。</span></div>
+    <div id="eventConflictList" class="event-conflict-list"></div>
+    <div id="eventClaimList" class="event-claim-list"></div>`;
+  const conflictList = $("eventConflictList");
+  const conflicts = fused.conflicts || [];
+  if (!conflicts.length) conflictList.textContent = "本轮融合没有发现同字段冲突。";
+  else conflictList.replaceChildren(...conflicts.slice(0, 8).map((conflict) => {
+    const item = document.createElement("article");
+    item.className = "event-conflict risk-yellow";
+    item.innerHTML = `<strong>${escapeHtml(conflict.kind || "事实字段")}</strong><span>本地：${escapeHtml(JSON.stringify(conflict.local))}</span><span>文本：${escapeHtml(JSON.stringify(conflict.text))}</span><small>${escapeHtml(conflict.resolution || "保留来源并待核对")}</small>`;
+    return item;
+  }));
+  const claimList = $("eventClaimList");
+  const claims = fused.claims || [];
+  if (claims.length) claimList.replaceChildren(...claims.slice(0, 8).map((claim) => {
+    const item = document.createElement("article");
+    item.className = "event-claim";
+    item.innerHTML = `<strong>待证实主张</strong><span>${escapeHtml(claim.text || "")}</span><small>来源：${escapeHtml((claim.source_refs || []).join("、") || "文本输入")} · 尚未核验</small>`;
+    return item;
+  }));
+  else claimList.textContent = "文本中未提取到需要证据确认的主张。";
+}
+
+function renderEventList() {
+  const target = $("eventList");
+  if (!target) return;
+  if (!state.events.length) {
+    target.className = "event-list empty-state";
+    target.textContent = "尚未建立工程事件。可以先蒸馏本地资料，再从融合建议建立第一个永久编号事件。";
+    return;
+  }
+  const editable = !isKpiOnly() && Boolean(state.auth.user?.permissions?.includes("edit_business_data"));
+  target.className = "event-list";
+  target.replaceChildren(...state.events.map((event) => {
+    const vector = event.state_vector || {};
+    const item = document.createElement("article");
+    item.className = `event-card ${eventRiskClass(event.severity)}`;
+    const next = EVENT_NEXT_STATUS[vector.event] || [];
+    const transitions = next.length
+      ? `<select id="eventTransition-${escapeHtml(event.event_id)}">${next.map((status) => `<option value="${status}">${eventStatusLabel(status)}</option>`).join("")}</select><button class="button button-quiet event-transition" data-event-id="${escapeHtml(event.event_id)}" type="button">推进状态</button>`
+      : "";
+    item.innerHTML = `
+      <div class="event-card-head"><div><span class="panel-label">${escapeHtml(event.event_id || "工程事件")}</span><h4>${escapeHtml(event.title || event.identity?.title || "未命名事件")}</h4><small>${escapeHtml(eventTypeLabel(event.event_type || event.classification?.event_type))} · ${escapeHtml(eventStatusLabel(vector.event))} · ${escapeHtml(event.severity || vector.risk || "MEDIUM")}</small></div><span class="event-status-pill">${escapeHtml(eventStatusLabel(vector.event))}</span></div>
+      <p class="event-card-summary">${escapeHtml(event.summary || event.identity?.summary || "未填写事件说明")}</p>
+      <div class="event-vector">${[
+        ["Event", eventStatusLabel(vector.event)], ["Production", `${vector.production ?? 0}%`], ["Technical", vector.technical], ["Commercial", vector.commercial],
+        ["Evidence", `${vector.evidence ?? 0}%`], ["Approval", vector.external_approval], ["Measurement", vector.measurement], ["Audit", `${vector.audit_readiness ?? 0}%`], ["Cash", vector.cash], ["Risk", vector.risk],
+      ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("")}</div>
+      <div class="event-card-alerts">${(event.alerts || []).length ? event.alerts.slice(0, 4).map((alert) => `<div class="event-alert ${eventRiskClass(alert.severity)}"><strong>${escapeHtml(alert.title || "自动提醒")}</strong><span>${escapeHtml(alert.message || "")}</span></div>`).join("") : "<span class=\"event-no-alert\">本地规则暂未发现自动预警</span>"}</div>
+      <div class="event-card-actions"><button class="button button-quiet event-cross-check" data-event-id="${escapeHtml(event.event_id)}" type="button">三证互证 / 一致性检查</button>${editable ? transitions : ""}</div>
+      <div id="eventCrossCheck-${escapeHtml(event.event_id)}" class="event-cross-check-output" hidden></div>`;
+    const crossCheck = state.eventCrossChecks[event.event_id];
+    if (crossCheck) renderEventCrossCheck(item.querySelector(`#eventCrossCheck-${CSS.escape(event.event_id)}`), crossCheck);
+    return item;
+  }));
+  target.querySelectorAll(".event-transition").forEach((button) => button.addEventListener("click", () => transitionEngineeringEvent(button.dataset.eventId)));
+  target.querySelectorAll(".event-cross-check").forEach((button) => button.addEventListener("click", () => crossCheckEngineeringEvent(button.dataset.eventId)));
+}
+
+function renderEventCrossCheck(target, result) {
+  if (!target) return;
+  target.hidden = false;
+  target.replaceChildren(...(result.checks || []).map((check) => {
+    const item = document.createElement("div");
+    item.className = `event-check event-check-${String(check.status || "").toLowerCase()}`;
+    item.innerHTML = `<strong>${escapeHtml(check.label || check.check_id)}</strong><span>${escapeHtml(check.status || "PENDING")}</span><small>${escapeHtml(check.reason || "")}</small>`;
+    return item;
+  }));
+}
+
+function renderEvents() {
+  const editable = !isKpiOnly() && Boolean(state.auth.user?.permissions?.includes("edit_business_data"));
+  const sourceTypes = Object.entries(EVENT_SOURCE_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+  const eventTypes = Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+  const dimensionInputs = [["cost", "成本"], ["revenue", "收入"], ["schedule", "工期"], ["quality", "质量"], ["safety", "安全"]].map(([value, label]) => `<label class="event-check-label"><input type="checkbox" data-event-dimension="${value}" />${label}</label>`).join("");
+  const baselineInputs = [["contract", "合同"], ["price", "价格"], ["quantity", "数量"], ["cost", "成本"]].map(([value, label]) => `<label class="event-check-label"><input type="checkbox" data-event-baseline="${value}" />${label}基线</label>`).join("");
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">CORE / ENGINEERING EVENT KERNEL</span><h3>工程事件内核</h3></div><span class="surface-caption">跨 P01–P08 串起事实、基线、方案、证据、结算和兑现</span></div>
+    <div class="capability-intro event-kernel-intro"><strong>先蒸馏本地资料，再蒸馏文本，最后融合。</strong><span>本地结构化事实优先；文本只做补充；冲突、不确定性和来源会明确标注。Core 不替人做最终决策。</span></div>
+    <section class="event-distill-layout"><div class="event-distill-panel"><div class="data-entry-heading"><div><span class="panel-label">DISTILLATION PIPELINE</span><h3>资料蒸馏与事实融合</h3></div><span class="request-status">默认本地处理 · 不发送外部</span></div><textarea id="eventDistillText" class="event-text-input" placeholder="可粘贴现场记录、会议纪要、设计说明、业主指令或审计意见。系统只提取可回溯事实和待核对主张。" ${editable ? "" : "disabled"}></textarea><div class="action-row"><button id="distillLocal" class="button button-quiet" type="button" ${editable ? "" : "disabled"}>① 蒸馏本地资料</button><button id="distillText" class="button button-primary" type="button" ${editable ? "" : "disabled"}>② 蒸馏文本并融合</button><span id="eventDistillStatus" class="request-status"></span></div></div><aside class="event-pipeline-note"><span class="panel-label">EVIDENCE POLICY</span><h3>认知诚实</h3><p>事实必须有来源；推断必须标注；冲突不静默覆盖；没有足够依据就显示待核对。</p><div class="event-pipeline-step"><b>01</b><span>本地项目资料、P01–P08 记录</span></div><div class="event-pipeline-step"><b>02</b><span>输入文本中的事件、数量、时间、主张</span></div><div class="event-pipeline-step"><b>03</b><span>融合建议只填入草稿，不自动形成结论</span></div></aside></section>
+    <section id="eventDistillationOutput" class="event-distillation-output"></section>
+    <section class="event-create-panel" ${editable ? "" : "hidden"}><div class="data-entry-heading"><div><span class="panel-label">EVENT INTAKE</span><h3>建立永久编号工程事件</h3></div><span class="surface-caption">事件原始事实和状态历史只追加，不覆盖</span></div><div class="event-create-grid"><label>事件标题<input id="eventTitle" /></label><label>发现人<input id="eventDiscoveredBy" placeholder="姓名/岗位" /></label><label>事件来源<select id="eventSourceType">${sourceTypes}</select></label><label>事件分类<select id="eventType">${eventTypes}</select></label><label>严重程度<select id="eventSeverity"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="CRITICAL">紧急</option></select></label><label>区域/部位<input id="eventZone" placeholder="如：K12+300 右幅" /></label><label>轴线/桩号<input id="eventAxis" /></label><label>楼层/标高<input id="eventLevel" /></label><label class="event-span-2">事件说明<textarea id="eventSummary"></textarea></label><label class="event-span-2">动态标签<input id="eventTags" placeholder="用逗号分隔，如：地下障碍,潜在变更" /></label><label class="event-span-2">来源资料编号<input id="eventSourceRefs" placeholder="用逗号分隔，可从项目资料库复制" /></label></div><div class="event-choice-row"><span>影响基线</span>${baselineInputs}</div><div class="event-choice-row"><span>影响维度</span>${dimensionInputs}</div><div class="event-create-grid"><label class="event-check-wide"><input id="eventTechnicalNeeded" type="checkbox" />需要技术线介入</label><label class="event-span-2">技术必要性判断<textarea id="eventTechnicalAssessment" placeholder="为什么需要技术评估，依据是什么"></textarea></label><label class="event-check-wide"><input id="eventTechnicalFeasible" type="checkbox" />已有可行技术方案（通过安全/质量/合规）</label></div><div class="action-row"><button id="saveEngineeringEvent" class="button button-primary" type="button">保存工程事件</button><button id="applyEventSuggestion" class="button button-quiet" type="button">套用上方融合建议</button><span id="eventCreateStatus" class="request-status"></span></div></section>
+    <section class="event-list-panel"><div class="data-entry-heading"><div><span class="panel-label">EVENT STATE VECTOR</span><h3>工程事件状态向量与预警</h3></div><span class="surface-caption">项目经理看重要指标；造价经理看完整链路；造价员负责操作</span></div><div id="eventList" class="event-list"></div></section>`;
+  const draft = state.eventDraft;
+  if (editable) {
+    $("eventDistillText").value = state.eventDistillText || "";
+    $("eventTitle").value = draft.title || "";
+    $("eventDiscoveredBy").value = draft.discovered_by || "";
+    $("eventSourceType").value = draft.source_type || "SITE_DISCOVERY";
+    $("eventType").value = draft.event_type || "SITE_CONDITION";
+    $("eventSeverity").value = draft.severity || "MEDIUM";
+    $("eventZone").value = draft.zone || "";
+    $("eventAxis").value = draft.axis || "";
+    $("eventLevel").value = draft.level || "";
+    $("eventSummary").value = draft.summary || "";
+    $("eventTags").value = draft.tags || "";
+    $("eventSourceRefs").value = draft.source_refs || "";
+    $("eventTechnicalNeeded").checked = Boolean(draft.technical_needed);
+    $("eventTechnicalAssessment").value = draft.technical_assessment || "";
+    $("eventTechnicalFeasible").checked = Boolean(draft.technical_feasible);
+    document.querySelectorAll("[data-event-dimension]").forEach((input) => { input.checked = Boolean(draft.dimensions?.[input.dataset.eventDimension]); });
+    document.querySelectorAll("[data-event-baseline]").forEach((input) => { input.checked = Boolean(draft.baseline?.[input.dataset.eventBaseline]); });
+    $("eventDistillText").addEventListener("input", (event) => { state.eventDistillText = event.target.value; });
+    $("distillLocal").addEventListener("click", () => distillEventKernel(false));
+    $("distillText").addEventListener("click", () => distillEventKernel(true));
+    $("saveEngineeringEvent").addEventListener("click", saveEngineeringEvent);
+    $("applyEventSuggestion").addEventListener("click", applyEventSuggestion);
+  }
+  renderEventDistillation();
+  renderEventList();
+}
+
+async function distillEventKernel(withText) {
+  setError("");
+  const status = $("eventDistillStatus");
+  if (status) status.textContent = withText ? "正在蒸馏文本并融合…" : "正在读取本地 P01–P08 资料…";
+  try {
+    const result = await apiJson("/api/event-kernel/distill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, phase: withText ? "fuse" : "local", text: withText ? state.eventDistillText : "", text_source_ref: "WebUI 文本输入" }) });
+    state.eventDistillation = result.distillation;
+    state.events = result.events || state.events;
+    if (status) status.textContent = withText ? "文本事实已融合，冲突和来源已保留" : "本地事实蒸馏完成；可继续输入文本融合";
+    renderEvents();
+    renderAssist();
+  } catch (error) { if (status) status.textContent = "蒸馏失败"; setError(error.message); }
+}
+
+function applyEventSuggestion() {
+  const suggestion = state.eventDistillation?.fused?.suggested_event;
+  const fields = eventSuggestionFields(suggestion);
+  if (!fields) { setError("请先完成本地资料或文本蒸馏"); return; }
+  state.eventDraft = { ...state.eventDraft, ...fields };
+  renderEvents();
+  setStatus("已将融合建议填入事件草稿，请核对后保存");
+}
+
+async function saveEngineeringEvent() {
+  setError("");
+  try {
+    const dimensions = {};
+    document.querySelectorAll("[data-event-dimension]").forEach((input) => { dimensions[input.dataset.eventDimension] = input.checked; });
+    const baseline = {};
+    document.querySelectorAll("[data-event-baseline]").forEach((input) => { baseline[input.dataset.eventBaseline] = input.checked; });
+    const payload = {
+      project_id: state.projectId,
+      title: $("eventTitle").value.trim(), summary: $("eventSummary").value.trim(), discovered_by: $("eventDiscoveredBy").value.trim(),
+      source_type: $("eventSourceType").value, event_type: $("eventType").value, severity: $("eventSeverity").value,
+      location: { zone: $("eventZone").value.trim(), axis: $("eventAxis").value.trim(), level: $("eventLevel").value.trim() },
+      tags: $("eventTags").value.split(",").map((value) => value.trim()).filter(Boolean), source_refs: $("eventSourceRefs").value.split(",").map((value) => value.trim()).filter(Boolean),
+      dimensions,
+      baseline_impact: { contract: { affected: Boolean(baseline.contract) }, price: { affected: Boolean(baseline.price) }, quantity: { affected: Boolean(baseline.quantity) }, cost: { affected: Boolean(baseline.cost) } },
+      technical_track: { needed: $("eventTechnicalNeeded").checked, assessment: $("eventTechnicalAssessment").value.trim(), status: $("eventTechnicalFeasible").checked ? "FEASIBLE" : "NOT_STARTED", options: $("eventTechnicalFeasible").checked ? [{ option_id: "OPT-001", title: "已录入技术方案", feasible: true, safety_pass: true, quality_pass: true, compliance_pass: true }] : [] },
+    };
+    const result = await apiJson("/api/event-kernel/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    state.events = [...state.events, result.event];
+    state.eventDraft = { ...state.eventDraft, title: "", summary: "", source_refs: "" };
+    await refreshWorkspace();
+    setStatus(`${result.event.event_id} 已建立，当前状态为已发现`);
+    renderEvents();
+  } catch (error) { setError(error.message); }
+}
+
+async function transitionEngineeringEvent(eventId) {
+  const select = $("eventTransition-" + eventId);
+  if (!select) return;
+  try {
+    const result = await apiJson("/api/event-kernel/transition", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, event_id: eventId, target_status: select.value }) });
+    state.events = state.events.map((event) => event.event_id === eventId ? result.event : event);
+    await refreshDashboard();
+    setStatus(`${eventId} 已推进到${eventStatusLabel(select.value)}`);
+    renderEvents();
+  } catch (error) { setError(error.message); }
+}
+
+async function crossCheckEngineeringEvent(eventId) {
+  try {
+    const result = await apiJson("/api/event-kernel/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, event_id: eventId }) });
+    state.eventCrossChecks[eventId] = result.cross_check;
+    renderEventList();
+    setStatus(`${eventId} 一致性检查：${result.cross_check.status === "PASS" ? "通过" : "需要核对"}`);
+  } catch (error) { setError(error.message); }
+}
+
 function renderChanges() {
   const result = state.changesResult;
   state.changesDraft = result?.changes?.length ? result.changes.map((item) => ({ ...item })) : (state.changesDraft.length ? state.changesDraft : [{ change_id: "", title: "", reason: "", amount: "", status: "pending", impact_date: "", owner: "", source_id: "", risk_note: "" }]);
@@ -2919,7 +3215,7 @@ function bindViewButtons() {
 }
 
 function setView(view) {
-  if (isKpiOnly() && !["overview", "dashboard", "search", "personnel"].includes(view)) view = "dashboard";
+  if (isKpiOnly() && !["overview", "dashboard", "search", "events", "personnel"].includes(view)) view = "dashboard";
   if (view === "personnel" && !canManagePersonnel()) view = isKpiOnly() ? "dashboard" : "overview";
   state.view = view;
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
@@ -2931,6 +3227,7 @@ function setView(view) {
   if (view === "baseline") renderBaseline();
   if (view === "plan") renderPlan();
   if (view === "changes") renderChanges();
+  if (view === "events") renderEvents();
   if (view === "evidence") renderEvidence();
   if (view === "review") renderReview();
   if (view === "export") renderExportWorkspace();

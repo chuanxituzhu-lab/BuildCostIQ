@@ -13,6 +13,8 @@
 
 No additional plugin capability is part of the current release. The independent external-basis catalog (`adapters/basis.py`) is an adapter-owned local store, not P09; it records policy, pricing-basis, price-information, market-price, and interface snapshots for P04/P05/P08 references without modifying Core.
 
+The Core Engineering Event Kernel (`core/event_kernel.py`) is also not P09. It is a frozen cross-stage domain model and deterministic rule surface used by the WebUI to link P01–P08 facts, evidence, state transitions, and local alerts.
+
 
 ## Shared plugin modules (not capabilities)
 

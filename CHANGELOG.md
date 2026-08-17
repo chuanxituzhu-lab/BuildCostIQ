@@ -2,6 +2,15 @@
 
 Project: BuildCostIQ
 
+## v0.8.0-rc1 - 2026-08-17
+
+- Added the Core Engineering Event Kernel v1.0 without expanding the frozen P01–P08 CapabilityGateway boundary.
+- Added deterministic local-first distillation of project sources and saved P01–P08 records, followed by conservative text distillation and provenance-preserving fusion.
+- Added permanent `EV-YYYY-NNNN` event ids, append-only status history, twelve-domain event records, state-transition guards, state vectors, three-evidence consistency checks, and local risk rules.
+- Added the WebUI “工程事件内核” work surface with local/text/fused fact counts, conflict and claim visibility, event intake, status progression, state vectors, audit-ready checks, and role-aware cost redaction.
+- Added `/api/event-kernel` read, distill, create, transition, and cross-check endpoints; all event distillation remains local and reports `external_sent: false`.
+- Kept the existing multi-file local-first intake, P01–P08 lists, external-basis catalog, search, permissions, and audit trail unchanged.
+
 ## v0.7.2-rc15 - 2026-08-15
 
 - Decoupled local file saving from recognition for WebUI intake: files are quickly written to their local category folders first, while local recognition runs in the background and updates the visible result.

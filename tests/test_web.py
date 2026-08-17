@@ -826,6 +826,87 @@ class WebUiTests(unittest.TestCase):
         self.assertTrue(all(item["openable"] is False and item["storage_path"] == "" for item in pm_result["results"]))
         self.assertFalse(any(item["result_id"].startswith("external-basis:") for item in pm_result["results"]))
 
+    def test_event_kernel_distills_fuses_and_creates_permanent_event(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token=None):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token or self.manager_token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        project_id = f"event-kernel-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "工程事件测试项目"})
+        distillation = post_json(
+            "/api/event-kernel/distill",
+            {"project_id": project_id, "text": "设计变更发生在 K12+300，预计增加 120 m3，影响成本和工期。", "text_source_ref": "纪要-01"},
+        )
+        self.assertGreater(distillation["distillation"]["summary"]["local_fact_count"], 0)
+        self.assertGreater(distillation["distillation"]["summary"]["text_fact_count"], 0)
+        self.assertFalse(distillation["distillation"]["external_sent"])
+        event_result = post_json(
+            "/api/event-kernel/events",
+            {
+                "project_id": project_id,
+                "title": "现场发现设计变化",
+                "summary": "发现设计变化，需要技术判断",
+                "source_type": "DESIGN_CHANGE",
+                "event_type": "DESIGN_CHANGE",
+                "severity": "HIGH",
+                "discovered_by": "测试人员",
+                "location": {"zone": "K12+300"},
+                "source_refs": ["纪要-01"],
+                "dimensions": {"cost": True, "schedule": True},
+                "baseline_impact": {"quantity": {"affected": True}},
+                "technical_track": {"needed": True, "assessment": "需要技术判断"},
+                "commercial_track": {"evaluations": [{"option_id": "OPT-1", "expected_profit": 10000}]},
+            },
+        )
+        event = event_result["event"]
+        self.assertRegex(event["event_id"], r"^EV-\d{4}-\d{4}$")
+        self.assertEqual(event["state_vector"]["event"], "DISCOVERED")
+        progressed = post_json("/api/event-kernel/transition", {"project_id": project_id, "event_id": event["event_id"], "target_status": "ASSESSED"})
+        self.assertEqual(progressed["event"]["state_vector"]["event"], "ASSESSED")
+        with urlopen(self.auth_request(f"/api/event-kernel?project_id={project_id}"), timeout=2) as response:
+            kernel = json.load(response)
+        self.assertEqual(len(kernel["events"]), 1)
+        self.assertEqual(kernel["privacy"]["external_sent"], False)
+
+    def test_event_kernel_redacts_cost_detail_for_estimator_and_pm(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        estimator = post_json("/api/auth/register", {"username": f"event-est-{suffix}", "password": "local-pass", "role": "cost_estimator"}, self.manager_token)
+        pm = post_json("/api/auth/register", {"username": f"event-pm-{suffix}", "password": "local-pass", "role": "project_manager"}, self.manager_token)
+        project_id = f"event-roles-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "事件角色项目"}, estimator["token"])
+        created = post_json(
+            "/api/event-kernel/events",
+            {"project_id": project_id, "title": "成本事件", "summary": "成本测算", "commercial_track": {"expected_profit": 987654, "evaluations": [{"incremental_cost": 123456}]}, "settlement": {"final_certified": 999999}, "source_refs": ["S-1"]},
+            estimator["token"],
+        )
+        serialized = json.dumps(created, ensure_ascii=False)
+        self.assertNotIn("987654", serialized)
+        with urlopen(self.auth_request(f"/api/event-kernel?project_id={project_id}", estimator["token"]), timeout=2) as response:
+            estimator_kernel = json.load(response)
+        self.assertIsNone(estimator_kernel["events"][0]["commercial_track"]["expected_profit"])
+        with urlopen(self.auth_request(f"/api/event-kernel?project_id={project_id}", pm["token"]), timeout=2) as response:
+            pm_kernel = json.load(response)
+        self.assertNotIn("commercial_track", pm_kernel["events"][0])
+
 
 if __name__ == "__main__":
     unittest.main()
