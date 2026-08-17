@@ -1,15 +1,23 @@
 # Frozen Plugin Boundaries
 
-| ID | Responsibility |
-|---|---|
-| P01 | Contract intake and interpretation |
-| P02 | Bill-of-quantities intake |
-| P03 | Construction drawing intake |
-| P04 | Baseline (zero) ledger |
-| P05 | Cost planning |
-| P06 | Change management |
-| P07 | Evidence linkage |
-| P08 | Settlement review |
+| ID | Responsibility | Status |
+|---|---|---|
+| P01 | Contract intake and interpretation | implemented |
+| P02 | Bill-of-quantities intake | implemented |
+| P03 | Construction drawing intake | implemented |
+| P04 | Baseline (zero) ledger | implemented |
+| P05 | Cost planning | implemented |
+| P06 | Change management | implemented |
+| P07 | Evidence linkage | implemented |
+| P08 | Settlement review | implemented |
 
-No additional plugin capability is part of v0.3.0-rc1. New integrations must be adapters and must not modify Core or create a new business capability.
+No additional plugin capability is part of the current release. The independent external-basis catalog (`adapters/basis.py`) is an adapter-owned local store, not P09; it records policy, pricing-basis, price-information, market-price, and interface snapshots for P04/P05/P08 references without modifying Core.
 
+The Core Engineering Event Kernel (`core/event_kernel.py`) is also not P09. It is a frozen cross-stage domain model and deterministic rule surface used by the WebUI to link P01–P08 facts, evidence, state transitions, and local alerts.
+
+
+## Shared plugin modules (not capabilities)
+
+`plugins/normalize.py` (单位归一与换算) and `plugins/basis.py` (价格口径) are
+pure helper modules shared by capabilities. They register nothing with the
+gateway and therefore do not widen the frozen P01–P08 boundary.

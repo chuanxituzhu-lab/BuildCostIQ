@@ -4,14 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "buildcostiq"
-version = "0.3.0rc1"
+version = "0.8.0rc1"
 description = "AI-native construction cost governance foundation"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-dependencies = ["openpyxl>=3.1"]
+dependencies = ["openpyxl>=3.1", "pypdf>=5.0", "markitdown>=0.1.7"]
+
+[project.optional-dependencies]
+recognition = ["markitdown[pdf,docx,xlsx]>=0.1.7"]
+
+[project.scripts]
+buildcostiq-web = "gui.server:main"
 
 [tool.setuptools.packages.find]
 include = ["core*", "plugins*", "adapters*", "gui*"]
+
+[tool.setuptools.package-data]
+gui = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

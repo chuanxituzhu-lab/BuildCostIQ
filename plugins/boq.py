@@ -83,6 +83,32 @@ def _resolve_columns(header_row: Sequence[object]) -> dict[str, int]:
     return resolved
 
 
+# 真实的清单导出（广联达 / 品茗 / 各地招标平台）表头几乎从不在第 1 行：
+# 上面通常压着 1-5 行的工程名称、标段、编制单位、单位工程名称。假定
+# rows[0] 就是表头，会在最常见的输入上直接失败。扫描前 N 行、取别名
+# 命中数最多的那一行作为表头 —— 距离蒸馏自 MBSOFTCOM/cost-review 的
+# `_find_header_row`，此处按本项目的别名表重写为纯函数。
+_HEADER_SCAN_DEPTH = 12
+
+
+def find_header_row(rows: Sequence[Sequence[object]], max_scan: int = _HEADER_SCAN_DEPTH) -> int:
+    """Return the index of the row that best matches a BOQ header.
+
+    Falls back to 0 when nothing scores, so behaviour on a well-formed table
+    (header already on the first row) is unchanged.
+    """
+    best_index, best_score = 0, 0
+    for index, row in enumerate(rows[:max_scan]):
+        score = 0
+        for cell in row:
+            head = _normalize_header(cell)
+            if head and any(head in aliases for aliases in _HEADER_ALIASES.values()):
+                score += 1
+        if score > best_score:
+            best_index, best_score = index, score
+    return best_index
+
+
 def _clean_quantity(value: object) -> float:
     """Convert a cell value to a non-negative float quantity."""
     if value is None or value == "":
@@ -104,20 +130,23 @@ def _validate_code(code: object) -> str:
 
 
 def parse_standard_boq(rows: Sequence[Sequence[object]]) -> list[dict[str, Any]]:
-    """Parse a formed GB 50500 BOQ table (header row + data rows).
+    """Parse a formed GB 50500 BOQ table.
 
-    Returns one dict per line item with the five canonical elements.
+    The header row is located by ``find_header_row`` rather than assumed to be
+    the first row, so title/标段/编制单位 banner rows above the table are
+    tolerated. Returns one dict per line item with the five canonical elements.
     Rows whose code cell is blank are treated as section headers and skipped.
     """
     if not rows:
         return []
-    columns = _resolve_columns(rows[0])
+    header_index = find_header_row(rows)
+    columns = _resolve_columns(rows[header_index])
     missing = [f for f in ("code", "name", "unit", "quantity") if f not in columns]
     if missing:
         raise BoqParseError(f"BOQ header missing required columns: {', '.join(missing)}")
 
     items: list[dict[str, Any]] = []
-    for line_no, row in enumerate(rows[1:], start=2):
+    for line_no, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         raw_code = row[columns["code"]] if columns["code"] < len(row) else None
         # A priced line item has a valid GB 50500 numeric code. Anything else
         # in the code column (blank, a section title like "措施项目", a

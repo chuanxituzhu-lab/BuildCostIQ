@@ -30,6 +30,8 @@ from collections.abc import Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from .basis import CONFLICTED, as_basis, comparable
+
 
 # Pricing status of each planned item.
 STATUS_CONTRACT = "contract"            # priced at the winning-bid rate
@@ -70,6 +72,8 @@ def plan_costs(
     items: Sequence[Mapping[str, Any]],
     contract_prices: Mapping[str, object],
     market_prices: Mapping[str, object] | None = None,
+    contract_basis: Any = None,
+    market_basis: Any = None,
 ) -> dict[str, Any]:
     """Price BOQ items against the contract basis and roll up a plan.
 
@@ -130,8 +134,13 @@ def plan_costs(
         "total_item_count": len(priced),
     }
 
-    # Isolated internal cost control — market variance never enters the summary.
-    cost_control = _build_cost_control(priced, contract, market) if market else None
+    # Isolated internal cost control — market variance never enters the summary,
+    # and is only computed when the two price books are on a comparable basis.
+    cost_control = (
+        _build_cost_control(priced, contract, market, contract_basis, market_basis)
+        if market
+        else None
+    )
 
     return {"items": priced, "summary": summary, "cost_control": cost_control}
 
@@ -140,8 +149,26 @@ def _build_cost_control(
     priced: Sequence[Mapping[str, Any]],
     contract: Mapping[str, Decimal],
     market: Mapping[str, Decimal],
+    contract_basis: Any = None,
+    market_basis: Any = None,
 ) -> dict[str, Any]:
-    """Internal-only: contract vs market variance. Never affects external totals."""
+    """Internal-only: contract vs market variance. Never affects external totals.
+
+    价格口径闸门：含税价减除税价在算术上成立、在造价上无效，且错得安静。
+    两本价册声明了口径且冲突时，本函数**拒绝出偏差数** —— 返回结构完整但
+    不含数字的结果，附上理由。口径未声明时照旧出数，但打上 ``undeclared``
+    标记（保持对既有调用方的向后兼容，同时把问题显性化）。
+    """
+    status, reason = comparable(as_basis(contract_basis), as_basis(market_basis))
+    if status == CONFLICTED:
+        return {
+            "note": "internal cost control only — not part of external cost plan",
+            "comparability": status,
+            "reason": reason,
+            "items": [],
+            "total_variance": None,
+        }
+
     rows: list[dict[str, Any]] = []
     total_variance = Decimal("0")
     for row in priced:
@@ -162,6 +189,8 @@ def _build_cost_control(
         )
     return {
         "note": "internal cost control only — not part of external cost plan",
+        "comparability": status,
+        "reason": reason,
         "items": rows,
         "total_variance": _money(total_variance),
     }
@@ -177,6 +206,8 @@ class CostPlanCapability:
                                        "nothing to price yet" state.
         contract_prices (dict, optional) — {code: 中标综合单价}, the basis.
         market_prices   (dict, optional) — {code: 市场综合单价}, internal only.
+        contract_basis  (dict, optional) — 合同价册口径（税制/类型/出处/取价期）。
+        market_basis    (dict, optional) — 市场价册口径。口径冲突时不出偏差数。
 
     Returns the priced plan with separate contract/pending subtotals and an
     isolated cost-control section, ready to record as Evidence.
@@ -195,7 +226,13 @@ class CostPlanCapability:
         contract_prices = context.get("contract_prices") or {}
         market_prices = context.get("market_prices")
 
-        plan = plan_costs(items, contract_prices, market_prices)
+        plan = plan_costs(
+            items,
+            contract_prices,
+            market_prices,
+            contract_basis=context.get("contract_basis"),
+            market_basis=context.get("market_basis"),
+        )
 
         return {
             "capability_id": self.capability_id,
