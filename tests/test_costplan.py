@@ -88,7 +88,7 @@ class MarketIsolationTests(unittest.TestCase):
 class CapabilityIntegrationTests(unittest.TestCase):
     def test_p05_within_frozen_boundary(self):
         runtime = Runtime(build_default_plugins())
-        self.assertEqual(runtime.gateway.registered, tuple(f"P{i:02d}" for i in range(1, 9)))
+        self.assertEqual(runtime.gateway.registered, tuple(f"P{i:02d}" for i in range(1, 10)))
 
     def test_p05_traversable_with_bare_context(self):
         runtime = Runtime(build_default_plugins())

@@ -1,6 +1,17 @@
 # Local WebUI
 
-BuildCostIQ includes a local WebUI business workbench for all implemented P01–P08 capabilities. It runs on the same frozen Core gateway and does not add a new capability or a database. The visible screen is designed for project users: technical JSON, raw context, and backend return payloads are kept out of the normal workflow.
+## P09 outcome management
+The WebUI includes a dedicated P09 成果经营 screen for 项目经理 and 造价经理. It calls the read-only P09 projection, showing the Event → Evidence → Outcome funnel, six value-leak stages, daily exception queue, and boundary rules. P09 derives from existing P01–P08/Core Event facts and never creates a second amount ledger or an amount-entry form.
+
+新手按步骤学习请参阅 [BEGINNER_GUIDE_FEYNMAN.md](BEGINNER_GUIDE_FEYNMAN.md)。每一步都包含操作动作、费曼式复述问题、完成标志和常见错误。
+
+BuildCostIQ includes a local WebUI business workbench for all implemented P01–P09 capabilities. P01–P08 own professional facts and P09 is a read-only derived outcome-management projection. It runs on the same controlled Core gateway and does not add a second database.
+
+### Permission and responsibility-line boundary
+
+- P04 零号台账的录入/修改只允许 `cost_manager`（造价经理）和 `cost_estimator`（造价员）；其他岗位不显示 P04 工作面，服务端也拒绝 `/api/baseline` 越权写入。
+- 生产线、技术线、造价线由策略自动归属到生产经理、技术负责人、造价经理。预览可供其他岗位查看，但只有对应主管负责人可以确认或修改映射；确认后的数据才会写回 Core/P01–P08/Outcome。
+- P09 经营结果只读，只有项目经理和造价经理可以进入；任何岗位都不能通过 P09 直接录入金额。
 
 ## Start
 
@@ -42,17 +53,36 @@ Each structured stage calls its matching capability through `Runtime.gateway`, p
 
 The “经营看板” is role-aware. Project managers see important project indicators, risk priority, cost-over-limit alerts, and review cadence without line-item details; cost managers see all baseline comparison rows and cost details; cost estimators see the operational issue queue and protected cost fields. P05 contract-vs-market comparison remains isolated from the external cost-plan total. Default local alert lines are 3% for yellow warning and 10% for red critical over-limit; these are presentation thresholds and can be made project-configurable later. Each P08 run stores a local review snapshot, allowing near-7-day and near-30-day issue counts and repeated-rule summaries without external transfer.
 
+### Role workbench boundary
+
+The municipal workflow does not present one universal menu. After login the browser projects the assigned role(s) into an independent workbench; the API returns the same `visible_views` scope and removes unrelated stage payloads. The field roles `surveyor` and `site_engineer` may be merged, in which case the two scopes are unioned without sharing account identity with another person.
+
+The field workbench is labelled `施工员/测量员`; existing `现场工程师` aliases remain valid for backwards-compatible login/role migration. Each role home shows only its own outputs, execution loop and completion boundary.
+
+| Role line | Primary WebUI surfaces |
+|---|---|
+| 项目经理 | 经营看板、工程事件、P09 成果经营、协同、人员治理 |
+| 造价经理 | P01–P09、依据库、协同、项目控制 |
+| 造价员 | P01/P02/P04/P05/P06/P07、工程事件、依据库、协同（金额脱敏） |
+| 技术/生产 | 图纸、变更、事件、证据、协同；生产经理另有进度看板，不直接录入 P04 |
+| 施工/测量/质量/试验/安全 | 各自现场成果、图纸/事件/证据和责任链 |
+| 资料/采购/仓管 | 各自资料或物资事实、证据和协同关系 |
+| 行政人员 | 仅协同；人员管理必须由项目经理授权 |
+
+普通岗位首页固定为“我的工作 → 待交成果 → 审核状态 → 异常/退回 → 直接责任链”。隐藏菜单不是唯一安全措施：P01–P08 写接口还按岗位能力拒绝越权请求。
+
 ## v0.5.0-rc1 workflow controls
 
 - Every project source has a `查看` action. The original bytes remain in the immutable local source store; a generated Markdown recognition copy can be opened separately when available.
 - Every source entry records the absolute local path of the original file and, when present, its Markdown recognition copy. The interface displays both paths and provides a copy-path action; opening an older workspace backfills missing path metadata from its content hash. Upload and workspace responses expose the same `storage_path` metadata for local integrations.
-- The first screen is a local registration/login surface. `项目经理` sees KPI-only overview and dashboard screens plus the personnel-management backend entry; `造价经理` has all P01–P08, source, cost, export, soft-delete, audit, and personnel-management permissions; `造价员` can intake, recognize, modify metadata, and edit operational data while sensitive prices and costs are hidden and personnel management is unavailable.
+- The first screen is a local registration/login surface. `项目经理` sees KPI-only overview and dashboard screens plus the personnel-management backend entry; `造价经理` has all P01–P08, source, cost, export, soft-delete and audit permissions; `造价员` can intake, recognize, modify metadata, and edit operational data while sensitive prices and costs are hidden and personnel management is unavailable. Personnel management belongs to the project manager and explicitly authorized administrative officers.
 - Source metadata edits, BOQ edits, cost-plan generation, recognition, review runs, views, uploads, and soft deletes append an audit event containing actor, time, target, and relevant details.
 - Review findings use red for urgent blockers, yellow for warnings, and blue for notices. The colors are a presentation of the existing rule severity and do not replace evidence.
 
 ## API surface
 
-- `GET /api/health` — runtime version and registered P01–P08 capabilities.
+- `GET /api/health` — runtime version and registered P01–P09 capabilities.
+- `GET /api/p09?project_id=...` — read-only P09 outcome funnel, value leaks, and abnormal queue; only project manager/cost manager.
 - `GET /api/architecture` — the frozen layer map, capability statuses, shared helpers, and invariants used by the UI.
 - `GET /api/sample` — sanitized seed data used by the user-facing demo screen.
 - `GET /api/connectors` — the external-tool connector catalog and supported directions/formats.
@@ -96,10 +126,11 @@ The “经营看板” is role-aware. Project managers see important project ind
 - `GET /api/workspace/<project_id>/cost-plan.xlsx` — downloads the cost plan as XLSX.
 - `GET /api/workspace/<project_id>/bundle` — downloads the project exchange ZIP.
 
-The eight business entry points mirror the frozen capability contracts:
+The nine business entry points mirror the controlled capability contracts:
 
 ```text
 P01 合同 → P02 清单 → P03 图纸 → P04 零号台账 → P05 成本计划 → P06 变更 → P07 证据 → P08 结算初审
+ → P09 成果经营
 ```
 
 The WebUI exposes standard table input plus `.xlsx`/`.xlsm`/`.csv` file intake. XLSX parsing remains in the P02 capability path; the browser only presents the resulting business table.

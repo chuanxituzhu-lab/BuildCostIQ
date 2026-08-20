@@ -1,6 +1,35 @@
 # Changelog
 
+## v0.8.0-rc2 - 2026-08-21
+
+- Version metadata refreshed by scripts/bump_version.py.
+- 收口 P09 全过程成果经营：仅以现有 P01–P08 与 Core Event/Outcome 事实生成漏斗、六段价值泄漏和异常经营队列；P09 不提供金额录入，也不建立第二金额事实源。
+- P04 零号台账录入权限收紧为造价经理、造价员；其他岗位仅能通过自身工作面引用派生结果，服务端同时拒绝越权写入。
+- 三条责任线改为策略自动归属：生产线→生产经理、技术线→技术负责人、造价线→造价经理；只有对应主管负责人可以确认或修改责任线映射。
+- 岗位 WebUI 与上述边界同步收口，P09 仅对项目经理和造价经理开放，责任线预览保留但非主管账号不可确认。
+
 Project: BuildCostIQ
+
+## Unreleased — 全过程项目管理负熵化融合
+
+- Added P09 全过程成果经营管理 as a read-only Gateway capability over the Core Event Kernel; P01–P08 remain the only professional fact owners.
+- Added `GET /api/p09`, a dedicated P09 WebUI screen, and Gateway/runtime/health registration for the derived outcome projection.
+
+- Distilled the “全过程项目管理概要” into P09 and the existing Core Event Kernel without adding a second amount ledger.
+- Added an independent append-only Outcome state machine inside each Event, five minimal Outcome types, snapshot revisions, and rejection/abandonment reasons.
+- Added derived six-stage Value Leak calculation and a role-safe outcome vector; existing P01–P08 records remain the only professional amount sources.
+- Added `POST /api/event-kernel/outcome`, dashboard outcome funnel/value-leak/abnormal queue data, and造价经理-only Outcome snapshot controls in the WebUI.
+- Documented the distilled constitution, boundaries, golden scenarios, and negative-entropy rules in `docs/PROJECT_MANAGEMENT_DISTILLED.md`.
+- Added the current municipal personnel role catalog (production, technical, cost, quality, safety, procurement, warehouse, document and administrative roles) without expanding Core or adding P10.
+- Changed personnel governance to project-manager direct control with explicit project-manager delegation to administrative officers; added authorize/revoke, delete, live session rehydration and audit endpoints.
+- Added a recoverable local registry reset script and seeded one basic account per current role after archiving the previous active registry.
+- Added personnel handover: project managers or authorized administrative officers can rename a person without creating a new account; `user_id`, password, role, audit and project work remain continuous, while the old name is retained in history.
+- Added configurable field-role assignment so `surveyor` and `site_engineer` can remain separate or be merged on one account per project needs, without duplicating work products.
+- Added role-specific WebUI workbenches distilled from the municipal project workflow: each role sees only its authorized work surfaces and a five-part “我的工作 / 待交成果 / 审核状态 / 异常退回 / 直接责任链” home view.
+- Added server-side role-scoped workspace projections (`visible_views`) and capability write guards for P01–P08, so hiding a tab is never the only permission boundary.
+- Restricted the reinforced management dashboard to project managers, cost managers, and production managers; ordinary professional roles remain on their own execution workbench.
+- Renamed the field workbench label from `施工员/现场工程师` to `施工员/测量员` while retaining legacy role aliases for existing accounts.
+- Added concise role-specific execution loops and completion guidance to each professional workbench; merged field accounts show the union of施工员 and测量员 outputs without duplicating facts.
 
 ## v0.8.0-rc1 - 2026-08-17
 

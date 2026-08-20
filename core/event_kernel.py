@@ -61,6 +61,48 @@ SEVERITIES = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 DIMENSIONS = ("cost", "revenue", "schedule", "quality", "safety")
 THREE_EVIDENCE_TYPES = ("TECHNICAL", "PRODUCTION", "COMMERCIAL")
 
+# Outcome is deliberately part of the Engineering Event Kernel, not a ninth
+# capability.  It is the second, independent state machine: Event answers
+# "what happened/was executed", while Outcome answers "what was converted
+# into a realizable result".  The values below are snapshots of the owning
+# P01-P08 records; they are never a second amount ledger.
+OUTCOME_STATUSES = (
+    "NOT_FORMED",
+    "PHYSICAL_FORMED",
+    "EVIDENCE_READY",
+    "SUBMITTED",
+    "CONFIRMED",
+    "REVENUE_RECOGNIZED",
+    "SETTLED",
+    "CASH_REALIZED",
+    "REJECTED",
+    "ABANDONED",
+)
+
+OUTCOME_TYPES = ("PHYSICAL", "COMMERCIAL", "CONTRACTUAL", "SCHEDULE", "CASH")
+
+OUTCOME_ALLOWED_TRANSITIONS = {
+    "NOT_FORMED": {"PHYSICAL_FORMED", "REJECTED", "ABANDONED"},
+    "PHYSICAL_FORMED": {"EVIDENCE_READY", "REJECTED", "ABANDONED"},
+    "EVIDENCE_READY": {"SUBMITTED", "REJECTED", "ABANDONED"},
+    "SUBMITTED": {"CONFIRMED", "REJECTED", "ABANDONED"},
+    "CONFIRMED": {"REVENUE_RECOGNIZED", "SETTLED", "REJECTED", "ABANDONED"},
+    "REVENUE_RECOGNIZED": {"SETTLED", "REJECTED", "ABANDONED"},
+    "SETTLED": {"CASH_REALIZED", "REJECTED", "ABANDONED"},
+    "CASH_REALIZED": set(),
+    "REJECTED": set(),
+    "ABANDONED": set(),
+}
+
+VALUE_LEAK_STAGES = (
+    ("EVIDENCE_LEAK", "physical", "evidence_ready", "实体成果", "证据完整"),
+    ("SUBMISSION_LEAK", "evidence_ready", "submitted", "证据完整", "已申报"),
+    ("CONFIRMATION_LEAK", "submitted", "confirmed", "已申报", "已确认"),
+    ("REVENUE_LEAK", "confirmed", "revenue", "已确认", "收入成立"),
+    ("SETTLEMENT_LEAK", "revenue", "settled", "收入成立", "已结算"),
+    ("CASH_LEAK", "settled", "paid", "已结算", "已回款"),
+)
+
 ALLOWED_TRANSITIONS = {
     "DISCOVERED": {"ASSESSED"},
     "ASSESSED": {"PLANNING"},
@@ -111,6 +153,228 @@ def _mapping(value: object) -> Mapping[str, Any]:
 
 def _list(value: object) -> list[Any]:
     return list(value) if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)) else []
+
+
+def new_outcome_track(stamp: str = "") -> dict[str, Any]:
+    """Return the minimal append-only Outcome projection for an Event."""
+    stamp = stamp or _now()
+    return {
+        "status": "NOT_FORMED",
+        "types": [],
+        "title": "",
+        "owner": "",
+        # These are read-only snapshots of P01-P08 facts, not a second ledger.
+        "values": {
+            "physical": None,
+            "evidence_ready": None,
+            "submitted": None,
+            "confirmed": None,
+            "revenue": None,
+            "settled": None,
+            "paid": None,
+        },
+        "contractual_status": "PENDING",
+        "schedule_days": None,
+        "failure_reason": "",
+        "leak_reasons": {},
+        "references": [],
+        "revisions": [],
+        "status_history": [{"from": None, "to": "NOT_FORMED", "at": stamp}],
+    }
+
+
+def ensure_outcome_track(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a copy with the Outcome projection migrated for old events."""
+    candidate = deepcopy(dict(event))
+    existing = candidate.get("outcome_track")
+    if not isinstance(existing, Mapping):
+        candidate["outcome_track"] = new_outcome_track(_text(_mapping(candidate.get("governance")).get("created_at")))
+        return candidate
+    outcome = dict(existing)
+    defaults = new_outcome_track()
+    for key, value in defaults.items():
+        if key not in outcome:
+            outcome[key] = deepcopy(value)
+    values = dict(outcome.get("values") or {})
+    values_defaults = defaults["values"]
+    for key, value in values_defaults.items():
+        values.setdefault(key, value)
+    outcome["values"] = values
+    outcome["types"] = [item for item in _list(outcome.get("types")) if _text(item) in OUTCOME_TYPES]
+    outcome["status"] = _text(outcome.get("status")) or "NOT_FORMED"
+    candidate["outcome_track"] = outcome
+    return candidate
+
+
+def _outcome_values(event: Mapping[str, Any]) -> dict[str, float | None]:
+    outcome = _mapping(event.get("outcome_track"))
+    raw = _mapping(outcome.get("values"))
+    keys = {"physical"}
+    for _, previous_key, next_key, *_ in VALUE_LEAK_STAGES:
+        keys.update((previous_key, next_key))
+    return {key: _number(raw.get(key)) for key in keys}
+
+
+def compute_value_leaks(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Compute the six value-conversion gaps without creating another ledger."""
+    outcome = _mapping(event.get("outcome_track"))
+    values = _outcome_values(event)
+    reasons = _mapping(outcome.get("leak_reasons"))
+    leaks: list[dict[str, Any]] = []
+    total = 0.0
+    for code, previous_key, next_key, previous_label, next_label in VALUE_LEAK_STAGES:
+        previous = values.get(previous_key)
+        current = values.get(next_key)
+        if previous is None:
+            continue
+        amount = max(0.0, float(previous) - float(current or 0.0))
+        if amount <= 0:
+            continue
+        total += amount
+        leaks.append(
+            {
+                "code": code,
+                "from_stage": previous_label,
+                "to_stage": next_label,
+                "amount": round(amount, 2),
+                "reason": _text(reasons.get(code)) or "待补充原因",
+                "event_id": _text(event.get("event_id")),
+            }
+        )
+    return {
+        "total": round(total, 2),
+        "count": len(leaks),
+        "items": leaks,
+        "status": "LEAK" if leaks else "CLEAR",
+        "local_only": True,
+    }
+
+
+def build_outcome_vector(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Return an amount-free Outcome vector safe for role-limited views."""
+    outcome = _mapping(event.get("outcome_track"))
+    leaks = compute_value_leaks(event)
+    types = [item for item in _list(outcome.get("types")) if _text(item) in OUTCOME_TYPES]
+    first_leak = (leaks.get("items") or [{}])[0]
+    return {
+        "status": _text(outcome.get("status")) or "NOT_FORMED",
+        "types": types,
+        "contractual": _text(outcome.get("contractual_status")) or "PENDING",
+        "schedule_days": _number(outcome.get("schedule_days")),
+        "value_leak_count": int(leaks.get("count", 0) or 0),
+        "value_leak_status": leaks.get("status", "CLEAR"),
+        "pending_stage": first_leak.get("to_stage", "") if first_leak else "",
+        "status_history_count": len(_list(outcome.get("status_history"))),
+    }
+
+
+def record_outcome_snapshot(
+    event: Mapping[str, Any],
+    changes: Mapping[str, Any],
+    *,
+    actor: Mapping[str, Any] | None = None,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Append a new Outcome snapshot while keeping prior values auditable."""
+    candidate = ensure_outcome_track(event)
+    outcome = candidate["outcome_track"]
+    allowed = {"title", "owner", "types", "contractual_status", "schedule_days", "failure_reason", "leak_reasons", "references", "values"}
+    unknown = sorted(str(key) for key in changes if str(key) not in allowed)
+    if unknown:
+        raise EventKernelError(f"Outcome 不支持字段：{'、'.join(unknown)}")
+    before: dict[str, Any] = {}
+    for key in changes:
+        if key == "values":
+            before["values"] = {str(value_key): deepcopy(value) for value_key, value in _mapping(outcome.get("values")).items() if value_key in _mapping(changes.get("values"))}
+        else:
+            before[key] = deepcopy(outcome.get(key))
+    applied: dict[str, Any] = {}
+    for key, value in changes.items():
+        if key == "values":
+            if not isinstance(value, Mapping):
+                raise EventKernelError("Outcome values 必须是对象")
+            current_values = dict(outcome.get("values") or {})
+            for value_key, raw in value.items():
+                if value_key not in current_values:
+                    raise EventKernelError(f"Outcome 不支持价值字段：{value_key}")
+                if raw not in (None, "") and (_number(raw) is None or float(_number(raw) or 0) < 0):
+                    raise EventKernelError(f"Outcome 价值字段必须为非负数字：{value_key}")
+                current_values[value_key] = None if raw in (None, "") else float(_number(raw) or 0)
+            outcome["values"] = current_values
+            applied["values"] = deepcopy(current_values)
+        elif key == "types":
+            types = [str(item).strip().upper() for item in _list(value) if str(item).strip()]
+            invalid = [item for item in types if item not in OUTCOME_TYPES]
+            if invalid:
+                raise EventKernelError(f"Outcome 类型不受支持：{'、'.join(invalid)}")
+            outcome["types"] = list(dict.fromkeys(types))
+            applied[key] = list(outcome["types"])
+        elif key == "references":
+            if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+                raise EventKernelError("Outcome references 必须是数组")
+            outcome["references"] = [dict(item) for item in value if isinstance(item, Mapping)]
+            applied[key] = deepcopy(outcome["references"])
+        elif key == "leak_reasons":
+            if not isinstance(value, Mapping):
+                raise EventKernelError("Outcome leak_reasons 必须是对象")
+            outcome["leak_reasons"] = {str(k): str(v).strip() for k, v in value.items() if str(v).strip()}
+            applied[key] = deepcopy(outcome["leak_reasons"])
+        elif key == "schedule_days":
+            if value not in (None, "") and (_number(value) is None or float(_number(value) or 0) < 0):
+                raise EventKernelError("Outcome 工期影响必须为非负数字")
+            outcome[key] = None if value in (None, "") else float(_number(value) or 0)
+            applied[key] = outcome[key]
+        else:
+            outcome[key] = str(value).strip() if value is not None else ""
+            applied[key] = outcome[key]
+    revisions = list(outcome.get("revisions") or [])
+    revisions.append(
+        {
+            "revision": len(revisions) + 1,
+            "at": _now(),
+            "actor": _text(_mapping(actor).get("username") or _mapping(actor).get("id")),
+            "reason": _text(reason) or "Outcome 快照更新",
+            "changes": applied,
+            "before": before,
+        }
+    )
+    outcome["revisions"] = revisions
+    candidate.setdefault("governance", {})["updated_at"] = _now()
+    return candidate
+
+
+def transition_outcome(event: Mapping[str, Any], target_status: str, *, actor: Mapping[str, Any] | None = None, reason: str = "") -> dict[str, Any]:
+    """Move the independent Outcome state machine through guarded commands."""
+    candidate = ensure_outcome_track(event)
+    outcome = candidate["outcome_track"]
+    current = _text(outcome.get("status")) or "NOT_FORMED"
+    target = _text(target_status).upper()
+    if target not in OUTCOME_STATUSES:
+        raise EventKernelError(f"不支持的 Outcome 状态：{target}")
+    if target not in OUTCOME_ALLOWED_TRANSITIONS.get(current, set()):
+        raise EventKernelError(f"不允许从 {current} 推进到 {target}")
+    values = _mapping(outcome.get("values"))
+    production = _mapping(event.get("production_track"))
+    evidence = _mapping(_mapping(event.get("evidence")).get("three_evidence"))
+    if target == "PHYSICAL_FORMED" and float(_number(production.get("progress")) or 0) < 100 and _number(values.get("physical")) is None:
+        raise EventKernelError("实体成果尚未形成：生产进度需要达到 100% 或记录实体价值")
+    if target == "EVIDENCE_READY" and _text(evidence.get("status")) != "PASS":
+        raise EventKernelError("证据成果尚未形成：三证互证需要通过")
+    required_values = {"SUBMITTED": "submitted", "CONFIRMED": "confirmed", "REVENUE_RECOGNIZED": "revenue", "SETTLED": "settled", "CASH_REALIZED": "paid"}
+    value_key = required_values.get(target)
+    if value_key and _number(values.get(value_key)) is None:
+        raise EventKernelError(f"Outcome 尚未记录 {value_key} 快照金额")
+    if target in {"REJECTED", "ABANDONED"} and not (_text(outcome.get("failure_reason")) or _text(reason)):
+        raise EventKernelError("失败或放弃的 Outcome 必须记录原因")
+    if reason:
+        outcome["failure_reason"] = _text(reason)
+    stamp = _now()
+    history = list(outcome.get("status_history") or [])
+    history.append({"from": current, "to": target, "at": stamp, "actor": _text(_mapping(actor).get("username") or _mapping(actor).get("id"))})
+    outcome["status"] = target
+    outcome["status_history"] = history
+    candidate.setdefault("governance", {})["updated_at"] = stamp
+    return candidate
 
 
 def _fact(fact_id: str, kind: str, value: Any, source_refs: Sequence[str], confidence: float, origin: str) -> dict[str, Any]:
@@ -228,6 +492,7 @@ def new_event(
             "final_certified": None,
         },
         "audit_cash": {"audit_readiness": 0, "cash_status": "N/A", "cash_collected": None},
+        "outcome_track": new_outcome_track(stamp),
         "governance": {
             "created_at": stamp,
             "updated_at": stamp,
@@ -258,6 +523,13 @@ def validate_event(event: Mapping[str, Any]) -> None:
         raise EventKernelError("工程事件分类不在冻结的八类范围内")
     if _text(classification.get("severity")) not in SEVERITIES:
         raise EventKernelError("工程事件严重程度不受支持")
+    outcome = _mapping(event.get("outcome_track"))
+    if outcome:
+        if _text(outcome.get("status")) not in OUTCOME_STATUSES:
+            raise EventKernelError("Outcome 状态不受支持")
+        invalid_types = [item for item in _list(outcome.get("types")) if _text(item) not in OUTCOME_TYPES]
+        if invalid_types:
+            raise EventKernelError("Outcome 类型不受支持")
 
 
 def _status(event: Mapping[str, Any]) -> str:
@@ -377,6 +649,7 @@ def build_state_vector(event: Mapping[str, Any]) -> dict[str, Any]:
     governance = _mapping(event.get("governance"))
     settlement = _mapping(event.get("settlement"))
     audit_cash = _mapping(event.get("audit_cash"))
+    outcome_vector = build_outcome_vector(event)
     return {
         "event": _status(event),
         "production": round(float(_number(production.get("progress")) or 0), 1),
@@ -389,6 +662,11 @@ def build_state_vector(event: Mapping[str, Any]) -> dict[str, Any]:
         "cash": _text(audit_cash.get("cash_status")) or "N/A",
         "risk": _text(_mapping(event.get("classification")).get("severity")) or "MEDIUM",
         "three_evidence": _text(three.get("status")) or "NOT_STARTED",
+        "outcome": outcome_vector["status"],
+        "outcome_types": outcome_vector["types"],
+        "outcome_pending_stage": outcome_vector["pending_stage"],
+        "value_leak_count": outcome_vector["value_leak_count"],
+        "value_leak_status": outcome_vector["value_leak_status"],
     }
 
 
@@ -400,6 +678,7 @@ def evaluate_event_rules(event: Mapping[str, Any]) -> list[dict[str, Any]]:
     three = _mapping(evidence.get("three_evidence"))
     settlement = _mapping(event.get("settlement"))
     audit_cash = _mapping(event.get("audit_cash"))
+    outcome = _mapping(ensure_outcome_track(event).get("outcome_track"))
     alerts: list[dict[str, Any]] = []
 
     def add(rule_id: str, severity: str, title: str, message: str) -> None:
@@ -423,6 +702,14 @@ def evaluate_event_rules(event: Mapping[str, Any]) -> list[dict[str, Any]]:
     cash_collected = _number(audit_cash.get("cash_collected")) or 0
     if final_certified is not None and final_certified > cash_collected:
         add("EVENT-CASH-01", "warn", "审定金额尚未全部回收", f"审定金额 {final_certified:g} 高于已回收金额 {cash_collected:g}。")
+    outcome_vector = build_outcome_vector(event)
+    if progress >= 100 and _text(outcome.get("status")) == "NOT_FORMED":
+        add("OUTCOME-01", "warn", "实体完成但尚未形成成果", "生产已完成，Outcome 仍未进入实体成果状态。")
+    if outcome_vector["value_leak_count"]:
+        severity = "block" if _text(_mapping(event.get("classification")).get("severity")) == "CRITICAL" else "warn"
+        add("OUTCOME-LEAK-01", severity, "经营成果存在价值转化缺口", f"当前有 {outcome_vector['value_leak_count']} 个成果转化阶段存在差额，请沿 Outcome → 造价事实核对。")
+    if _text(outcome.get("status")) in {"REJECTED", "ABANDONED"}:
+        add("OUTCOME-FAIL-01", "info", "Outcome 未实现", "该成果已被拒绝或放弃；保留历史并记录原因，不删除 Event。")
     return alerts
 
 
