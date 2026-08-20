@@ -9,7 +9,7 @@ class CoreTests(unittest.TestCase):
     def test_default_runtime_exposes_p01_to_p09(self):
         runtime = Runtime(build_default_plugins())
         self.assertEqual(runtime.gateway.registered, tuple(f"P{i:02d}" for i in range(1, 10)))
-        self.assertEqual(runtime.health()["version"], "0.8.0-rc2")
+        self.assertEqual(runtime.health()["version"], "0.8.0-rc3")
 
     def test_p10_is_rejected(self):
         class P10:
@@ -27,7 +27,7 @@ class CoreTests(unittest.TestCase):
 
     def test_runtime_version_is_single_source_and_supports_release_override(self):
         self.assertEqual(Runtime().health()["version"], current_version())
-        self.assertEqual(normalize_version("v0.8.0rc2"), "0.8.0-rc2")
+        self.assertEqual(normalize_version("v0.8.0rc3"), "0.8.0-rc3")
         with patch.dict("os.environ", {"BUILDCOSTIQ_VERSION": "v9.1.0-rc4"}):
             self.assertEqual(Runtime().health()["version"], "9.1.0-rc4")
 

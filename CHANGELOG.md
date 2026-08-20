@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.0-rc3 - 2026-08-21
+
+- Version metadata refreshed by scripts/bump_version.py.
+- 全面复核岗位工作面：前后端菜单契约统一，仓管员仅保留总览、P02 物资清单、工程事件、证据和协同；不再显示 P04 零号台账。
+- 现场、生产、技术、质量、试验、安全、采购和行政岗位移除跨岗位资料检索入口；资料员保留归档检索，造价/项目管理岗位保留经营检索。
+- `/api/search` 与岗位菜单使用同一角色边界，服务端拒绝非授权岗位的检索请求；新增前后端菜单一致性和仓管员越权测试。
+
 ## v0.8.0-rc2 - 2026-08-21
 
 - Version metadata refreshed by scripts/bump_version.py.

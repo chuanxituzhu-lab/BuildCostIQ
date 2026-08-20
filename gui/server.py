@@ -353,17 +353,21 @@ _ROLE_WORKSPACE_VIEWS: dict[str, set[str]] = {
     "project_manager": {"overview", "dashboard", "search", "events", "p09", "coordination", "personnel"},
     "cost_manager": {"overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "evidence", "review", "p09", "coordination", "basis", "dashboard", "control"},
     "cost_estimator": {"overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "evidence", "coordination", "basis"},
-    "technical_lead": {"overview", "search", "drawings", "changes", "events", "evidence", "coordination"},
-    "production_manager": {"overview", "search", "drawings", "changes", "events", "evidence", "coordination", "dashboard"},
-    "site_engineer": {"overview", "search", "drawings", "events", "evidence", "coordination"},
-    "surveyor": {"overview", "search", "drawings", "events", "evidence", "coordination"},
-    "quality_officer": {"overview", "search", "drawings", "events", "evidence", "coordination"},
-    "lab_testing_officer": {"overview", "search", "boq", "drawings", "events", "evidence", "coordination"},
+    # Operational roles stay on their own work surfaces.  Cross-project
+    # search is intentionally reserved for management/cost roles and the
+    # document controller; field and material roles use their assigned P01–P08
+    # surfaces, Core events, evidence, and coordination only.
+    "technical_lead": {"overview", "drawings", "changes", "events", "evidence", "coordination"},
+    "production_manager": {"overview", "drawings", "changes", "events", "evidence", "coordination", "dashboard"},
+    "site_engineer": {"overview", "drawings", "events", "evidence", "coordination"},
+    "surveyor": {"overview", "drawings", "events", "evidence", "coordination"},
+    "quality_officer": {"overview", "drawings", "events", "evidence", "coordination"},
+    "lab_testing_officer": {"overview", "boq", "drawings", "events", "evidence", "coordination"},
     "document_controller": {"overview", "search", "contract", "drawings", "evidence", "coordination"},
-    "safety_officer": {"overview", "search", "drawings", "changes", "events", "evidence", "coordination"},
-    "procurement_officer": {"overview", "search", "contract", "boq", "events", "evidence", "coordination"},
-    "warehouse_officer": {"overview", "search", "boq", "events", "evidence", "coordination"},
-    "administrative_officer": {"overview", "search", "coordination", "personnel"},
+    "safety_officer": {"overview", "drawings", "changes", "events", "evidence", "coordination"},
+    "procurement_officer": {"overview", "contract", "boq", "events", "evidence", "coordination"},
+    "warehouse_officer": {"overview", "boq", "events", "evidence", "coordination"},
+    "administrative_officer": {"overview", "coordination", "personnel"},
 }
 
 _WORKSPACE_KEY_VIEWS = {
@@ -392,6 +396,7 @@ _CAPABILITY_ROLE_ACCESS: dict[str, set[str]] = {
     "evidence": {"cost_manager", "cost_estimator", "technical_lead", "production_manager", "site_engineer", "surveyor", "quality_officer", "lab_testing_officer", "document_controller", "safety_officer", "procurement_officer", "warehouse_officer"},
     "review": {"cost_manager"},
     "p09": {"project_manager", "cost_manager"},
+    "search": {"project_manager", "cost_manager", "cost_estimator", "document_controller"},
 }
 
 
@@ -418,7 +423,7 @@ def _require_capability_role(actor: Mapping[str, Any], capability: str) -> None:
     roles = _actor_roles(actor)
     allowed = _CAPABILITY_ROLE_ACCESS.get(capability, set())
     if not roles.intersection(allowed):
-        raise PermissionError(f"当前岗位不能写入 {capability} 工作面")
+        raise PermissionError(f"当前岗位不能访问或写入 {capability} 工作面")
 
 
 def _visible_workspace(state: dict[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -2604,6 +2609,7 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         if path == "/api/search":
             try:
                 actor = _require_actor(self.headers, "view_workspace")
+                _require_capability_role(actor, "search")
                 self._write_json(_local_search(self._read_json(), actor))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)

@@ -196,17 +196,17 @@ const ROLE_VIEW_ACCESS = {
   project_manager: ["overview", "dashboard", "search", "events", "p09", "coordination", "personnel"],
   cost_manager: ["overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "evidence", "review", "p09", "coordination", "basis", "dashboard", "control"],
   cost_estimator: ["overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "evidence", "coordination", "basis"],
-  technical_lead: ["overview", "search", "drawings", "changes", "events", "evidence", "coordination"],
-  production_manager: ["overview", "search", "drawings", "baseline", "changes", "events", "evidence", "coordination", "dashboard"],
-  site_engineer: ["overview", "search", "drawings", "events", "evidence", "coordination"],
-  surveyor: ["overview", "search", "drawings", "baseline", "events", "evidence", "coordination"],
-  quality_officer: ["overview", "search", "drawings", "events", "evidence", "coordination"],
-  lab_testing_officer: ["overview", "search", "boq", "drawings", "events", "evidence", "coordination"],
-  document_controller: ["overview", "search", "contract", "drawings", "baseline", "evidence", "coordination"],
-  safety_officer: ["overview", "search", "drawings", "changes", "events", "evidence", "coordination"],
-  procurement_officer: ["overview", "search", "contract", "boq", "baseline", "events", "evidence", "coordination"],
-  warehouse_officer: ["overview", "search", "boq", "baseline", "events", "evidence", "coordination"],
-  administrative_officer: ["overview", "search", "coordination", "personnel"],
+  technical_lead: ["overview", "drawings", "changes", "events", "evidence", "coordination"],
+  production_manager: ["overview", "drawings", "changes", "events", "evidence", "coordination", "dashboard"],
+  site_engineer: ["overview", "drawings", "events", "evidence", "coordination"],
+  surveyor: ["overview", "drawings", "events", "evidence", "coordination"],
+  quality_officer: ["overview", "drawings", "events", "evidence", "coordination"],
+  lab_testing_officer: ["overview", "boq", "drawings", "events", "evidence", "coordination"],
+  document_controller: ["overview", "search", "contract", "drawings", "evidence", "coordination"],
+  safety_officer: ["overview", "drawings", "changes", "events", "evidence", "coordination"],
+  procurement_officer: ["overview", "contract", "boq", "events", "evidence", "coordination"],
+  warehouse_officer: ["overview", "boq", "events", "evidence", "coordination"],
+  administrative_officer: ["overview", "coordination", "personnel"],
 };
 
 const ROLE_WORKBENCH_SPECS = {
@@ -296,7 +296,7 @@ function showWorkspace(user) {
   state.auth.user = user;
   $("authShell").hidden = true;
   $("workspaceShell").hidden = false;
-  $("globalSearchForm").hidden = false;
+  $("globalSearchForm").hidden = !canAccessView("search");
   $("userSession").hidden = false;
   $("userRole").textContent = `${user.role_label} · ${user.username}`;
   $("personnelTab").hidden = !canAccessView("personnel");
@@ -3732,6 +3732,7 @@ async function loadHealth() {
 
 function submitGlobalSearch(event) {
   event.preventDefault();
+  if (!canAccessView("search")) return;
   const input = $("globalSearchInput");
   const query = input?.value.trim() || "";
   if (!query) {
