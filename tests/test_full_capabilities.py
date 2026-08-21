@@ -23,6 +23,33 @@ class FullCapabilityTests(unittest.TestCase):
         self.assertEqual(results["P06"]["summary"]["pending_count"], 1)
         self.assertEqual(results["P07"]["summary"]["unverified_count"], 1)
 
+    def test_p09_derives_outcome_management_without_new_fact_store(self):
+        event = {
+            "event_id": "EV-001",
+            "identity": {"title": "地下管线冲突"},
+            "status": "EXECUTING",
+            "classification": {"severity": "HIGH"},
+            "outcome_track": {
+                "status": "SUBMITTED",
+                "types": ["PHYSICAL", "COMMERCIAL"],
+                "values": {
+                    "physical": 100,
+                    "evidence_ready": 90,
+                    "submitted": 80,
+                    "confirmed": 60,
+                    "revenue": 60,
+                    "settled": 40,
+                    "paid": 10,
+                },
+            },
+        }
+        result = self.runtime.gateway.execute("P09", {"project_id": "full-project", "events": [event]})
+        self.assertEqual(result["capability_id"], "P09")
+        self.assertEqual(result["summary"]["event_count"], 1)
+        self.assertEqual(result["summary"]["value_leak_count"], 5)
+        self.assertTrue(result["rules"]["single_fact_source"])
+        self.assertEqual(result["funnel"][0]["amount"], 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = ("core", "plugins", "adapters", "gui", "migrations", "tests", "docs", "examples", "docker")
-FORBIDDEN = ("P09",)
+FORBIDDEN = ("P10",)
 PROJECT_NAME = "BuildCostIQ"
 
 
@@ -20,6 +20,8 @@ def main() -> int:
         print("README project name does not match BuildCostIQ", file=sys.stderr)
         return 1
     for path in ROOT.rglob("*.py"):
+        if any(part in {".venv", "runtime", ".git"} for part in path.parts):
+            continue
         text = path.read_text(encoding="utf-8")
         if any(token in text for token in FORBIDDEN) and path.name not in {"test_core.py", "verify_release.py"}:
             print(f"Forbidden capability token in {path}", file=sys.stderr)

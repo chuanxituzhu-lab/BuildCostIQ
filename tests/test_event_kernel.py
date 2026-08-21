@@ -5,13 +5,16 @@ import unittest
 from core import (
     EventKernelError,
     build_state_vector,
+    compute_value_leaks,
     distill_local_data,
     distill_text,
     evaluate_event_rules,
     fuse_distillations,
     new_event,
+    record_outcome_snapshot,
     run_cross_check,
     transition_event,
+    transition_outcome,
 )
 
 
@@ -65,6 +68,41 @@ class EventKernelTests(unittest.TestCase):
         result = run_cross_check(event)
         self.assertEqual(result["status"], "CONFLICT")
         self.assertTrue({"LOCATION", "QUANTITY"}.issubset({item["check_id"] for item in result["checks"] if item["status"] == "CONFLICT"}))
+
+    def test_outcome_is_a_second_state_machine_and_value_leaks_are_derived(self):
+        event = new_event(
+            "p-1",
+            event_id="EV-2026-0004",
+            title="地下管线冲突",
+            summary="施工发现既有管线",
+            discovered_by="现场员",
+            location={"zone": "K12"},
+            source_refs=["S-04"],
+            dimensions={"cost": True, "revenue": True},
+        )
+        event["production_track"]["progress"] = 100
+        event["evidence"]["three_evidence"].update({"status": "PASS", "technical": "PASS", "production": "PASS", "commercial": "PASS"})
+        event = record_outcome_snapshot(event, {"types": ["PHYSICAL", "COMMERCIAL"], "values": {"physical": 1000, "evidence_ready": 900, "submitted": 850, "confirmed": 800, "revenue": 800, "settled": 750, "paid": 600}}, actor={"username": "造价员"})
+        leaks = compute_value_leaks(event)
+        self.assertEqual(leaks["count"], 5)
+        self.assertEqual(leaks["total"], 400.0)
+        physical = transition_outcome(event, "PHYSICAL_FORMED")
+        ready = transition_outcome(physical, "EVIDENCE_READY")
+        submitted = transition_outcome(ready, "SUBMITTED")
+        confirmed = transition_outcome(submitted, "CONFIRMED")
+        self.assertEqual(build_state_vector(confirmed)["outcome"], "CONFIRMED")
+        self.assertEqual(build_state_vector(confirmed)["value_leak_count"], 5)
+
+    def test_outcome_snapshot_preserves_revision_history_and_failure_reason(self):
+        event = new_event("p-1", event_id="EV-2026-0005", title="停窝工索赔", discovered_by="现场员", location={"zone": "A"}, source_refs=["S-05"])
+        updated = record_outcome_snapshot(event, {"types": ["CONTRACTUAL", "SCHEDULE"], "values": {"submitted": 100}}, reason="首版申报")
+        revised = record_outcome_snapshot(updated, {"values": {"submitted": 80}}, reason="监理核减")
+        self.assertEqual(len(revised["outcome_track"]["revisions"]), 2)
+        self.assertEqual(revised["outcome_track"]["revisions"][0]["changes"]["values"]["submitted"], 100.0)
+        with self.assertRaises(EventKernelError):
+            transition_outcome(revised, "REJECTED")
+        rejected = transition_outcome(revised, "REJECTED", reason="合同权利未成立")
+        self.assertEqual(rejected["outcome_track"]["failure_reason"], "合同权利未成立")
 
 
 if __name__ == "__main__":

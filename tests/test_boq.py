@@ -72,7 +72,7 @@ class MergeBoqTests(unittest.TestCase):
 class CapabilityIntegrationTests(unittest.TestCase):
     def test_p02_still_within_frozen_boundary(self):
         runtime = Runtime(build_default_plugins())
-        self.assertEqual(runtime.gateway.registered, tuple(f"P{i:02d}" for i in range(1, 9)))
+        self.assertEqual(runtime.gateway.registered, tuple(f"P{i:02d}" for i in range(1, 10)))
 
     def test_p02_output_feeds_evidence_model(self):
         runtime = Runtime(build_default_plugins())

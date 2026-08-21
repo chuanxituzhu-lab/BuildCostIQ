@@ -9,9 +9,10 @@ from .costplan import CostPlanCapability
 from .drawings import DrawingIntakeCapability
 from .evidence import EvidenceLinkageCapability
 from .review import SettlementReviewCapability
+from .outcome import OutcomeManagementCapability
 
-# All eight frozen capabilities have a pure implementation. Persistence and
-# external file handling remain in adapters; the gateway boundary is unchanged.
+# P01-P08 own professional facts. P09 is a read-only projection over the Core
+# event/outcome kernel; persistence and external file handling remain in adapters.
 PLUGIN_CLASSES = (
     ContractIntakeCapability,
     BillOfQuantitiesCapability,
@@ -21,6 +22,7 @@ PLUGIN_CLASSES = (
     ChangeManagementCapability,
     EvidenceLinkageCapability,
     SettlementReviewCapability,
+    OutcomeManagementCapability,
 )
 
 

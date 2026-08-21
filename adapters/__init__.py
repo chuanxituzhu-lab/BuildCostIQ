@@ -1,4 +1,7 @@
 from .auth import (
+    PERSONNEL_ROLE_ORDER,
+    MERGEABLE_FIELD_ROLES,
+    ROLE_ADMINISTRATIVE_OFFICER,
     ROLE_COST_ESTIMATOR,
     ROLE_COST_MANAGER,
     ROLE_LABELS,
@@ -13,6 +16,35 @@ from .connectors import ConnectorDescriptor, build_project_bundle, connector_cat
 from .filesystem import CategorizedArchiveStore, ImmutableSourceStore
 from .recognition import RecognitionDescriptor, RecognitionError, recognition_catalog, recognize_source
 from .workspace import LocalProjectWorkspace
+from .deployment import DEPLOYMENT_VERSION, DeploymentConfig, DeploymentStorageAdapter, StorageRoots
+from .line_contracts import (
+    CONTRACT_VERSION,
+    LINE_CONTRACTS,
+    LINE_HEAD_LABELS,
+    LINE_HEAD_ROLES,
+    LINE_IDS,
+    LINE_LABELS,
+    LineContractError,
+    can_confirm_line,
+    confirm_line_records,
+    line_responsibility,
+    mapping_for_confirmed_record,
+    normalize_line_record,
+    preview_line_records,
+    ROLE_FLOW_CONTRACTS,
+    ROLE_FLOW_VERSION,
+    role_flow_contracts,
+)
+from .collaboration import (
+    CoordinationError,
+    coordination_snapshot,
+    confirm_decision,
+    new_decision,
+    new_relation,
+    new_task,
+    update_task,
+)
+from .municipal_workflow import GOLDEN_SCENARIOS, MUNICIPAL_ROLES, persist_municipal_demo, run_municipal_workflow
 
 __all__ = [
     "ConnectorDescriptor",
@@ -22,8 +54,15 @@ __all__ = [
     "LocalBasisWorkspace",
     "LocalProjectWorkspace",
     "LocalAuthStore",
+    "DEPLOYMENT_VERSION",
+    "DeploymentConfig",
+    "DeploymentStorageAdapter",
+    "StorageRoots",
     "ROLE_COST_ESTIMATOR",
     "ROLE_COST_MANAGER",
+    "ROLE_ADMINISTRATIVE_OFFICER",
+    "PERSONNEL_ROLE_ORDER",
+    "MERGEABLE_FIELD_ROLES",
     "ROLE_DESCRIPTIONS",
     "ROLE_LEVELS",
     "ROLE_LABELS",
@@ -35,5 +74,32 @@ __all__ = [
     "connector_catalog",
     "recognition_catalog",
     "recognize_source",
+    "CONTRACT_VERSION",
+    "LINE_CONTRACTS",
+    "LINE_HEAD_LABELS",
+    "LINE_HEAD_ROLES",
+    "LINE_IDS",
+    "LINE_LABELS",
+    "LineContractError",
+    "line_responsibility",
+    "can_confirm_line",
+    "normalize_line_record",
+    "preview_line_records",
+    "confirm_line_records",
+    "mapping_for_confirmed_record",
+    "ROLE_FLOW_CONTRACTS",
+    "ROLE_FLOW_VERSION",
+    "role_flow_contracts",
+    "CoordinationError",
+    "coordination_snapshot",
+    "new_task",
+    "update_task",
+    "new_decision",
+    "confirm_decision",
+    "new_relation",
+    "GOLDEN_SCENARIOS",
+    "MUNICIPAL_ROLES",
+    "run_municipal_workflow",
+    "persist_municipal_demo",
 ]
 

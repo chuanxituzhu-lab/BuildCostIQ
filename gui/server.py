@@ -17,11 +17,20 @@ from pathlib import Path, PurePosixPath
 import re
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlsplit
+from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
 from adapters import (
     BASIS_CATEGORIES,
     CategorizedArchiveStore,
+    CONTRACT_VERSION,
+    LINE_CONTRACTS,
+    line_responsibility,
+    LINE_IDS,
+    LINE_LABELS,
+    CoordinationError,
+    DeploymentConfig,
+    DeploymentStorageAdapter,
     ImmutableSourceStore,
     LocalBasisWorkspace,
     LocalAuthStore,
@@ -29,28 +38,48 @@ from adapters import (
     ROLE_COST_MANAGER,
     ROLE_PERMISSIONS,
     ROLE_PROJECT_MANAGER,
+    LineContractError,
+    confirm_decision,
+    confirm_line_records,
+    coordination_snapshot,
+    mapping_for_confirmed_record,
+    new_decision,
+    new_relation,
+    new_task,
+    preview_line_records,
+    role_flow_contracts,
+    update_task,
 )
 from adapters.connectors import build_project_bundle, connector_catalog
 from adapters.recognition import RecognitionError, recognition_catalog, recognize_source
 from adapters.search import build_evidence_answer, search_local_evidence
 from core import (
     DIMENSIONS,
+    OUTCOME_ALLOWED_TRANSITIONS,
+    OUTCOME_STATUSES,
+    OUTCOME_TYPES,
     EVENT_SOURCE_TYPES,
     EVENT_STATUSES,
     EVENT_TYPES,
     SEVERITIES,
     EventKernelError,
     build_state_vector,
+    build_outcome_vector,
+    compute_value_leaks,
     distill_local_data,
     distill_text,
     evaluate_event_rules,
+    ensure_outcome_track,
     fuse_distillations,
     new_event,
+    record_outcome_snapshot,
     run_cross_check,
     transition_event,
+    transition_outcome,
     validate_event,
     Runtime,
 )
+from core.version import current_version
 from core.models import SourceDocument
 from plugins import build_default_plugins
 
@@ -58,12 +87,31 @@ from plugins import build_default_plugins
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 RUNTIME = Runtime(build_default_plugins())
 MAX_BODY_BYTES = 50_000_000
-PROJECT_WORKSPACE = LocalProjectWorkspace(os.environ.get("BUILDCOSTIQ_WORKSPACE", "runtime/projects"))
-SOURCE_STORE = ImmutableSourceStore(Path(os.environ.get("BUILDCOSTIQ_SOURCE_STORE", "runtime/sources")))
-ARCHIVE_STORE = CategorizedArchiveStore(Path(os.environ.get("BUILDCOSTIQ_ARCHIVE_STORE", "runtime/archive")))
-BASIS_WORKSPACE = LocalBasisWorkspace(os.environ.get("BUILDCOSTIQ_BASIS_STORE", "runtime/basis"))
-AUTH_STORE = LocalAuthStore(os.environ.get("BUILDCOSTIQ_AUTH", "runtime/auth"))
+DEPLOYMENT_CONFIG: DeploymentConfig
+DEPLOYMENT_STORAGE: DeploymentStorageAdapter
+PROJECT_WORKSPACE: LocalProjectWorkspace
+SOURCE_STORE: ImmutableSourceStore
+ARCHIVE_STORE: CategorizedArchiveStore
+BASIS_WORKSPACE: LocalBasisWorkspace
+AUTH_STORE: LocalAuthStore
 SESSIONS: dict[str, dict[str, Any]] = {}
+
+
+def _configure_deployment(config: DeploymentConfig) -> None:
+    """Bind all adapter-owned stores to one deployment data root."""
+
+    global DEPLOYMENT_CONFIG, DEPLOYMENT_STORAGE, PROJECT_WORKSPACE, SOURCE_STORE, ARCHIVE_STORE, BASIS_WORKSPACE, AUTH_STORE
+    config.ensure_layout()
+    DEPLOYMENT_CONFIG = config
+    DEPLOYMENT_STORAGE = DeploymentStorageAdapter(config)
+    PROJECT_WORKSPACE = LocalProjectWorkspace(config.roots.projects, storage_adapter=DEPLOYMENT_STORAGE)
+    SOURCE_STORE = ImmutableSourceStore(config.roots.sources)
+    ARCHIVE_STORE = CategorizedArchiveStore(config.roots.archive)
+    BASIS_WORKSPACE = LocalBasisWorkspace(config.roots.basis)
+    AUTH_STORE = LocalAuthStore(config.roots.auth)
+
+
+_configure_deployment(DeploymentConfig.from_environment())
 
 RISK_META = {
     "block": {"level": "critical", "label": "紧急阻断", "color": "red", "priority": 3},
@@ -88,7 +136,7 @@ ARCHITECTURE: dict[str, Any] = {
             "id": "gateway",
             "label": "CapabilityGateway",
             "status": "active",
-            "description": "唯一执行边界，只接受 P01–P08。",
+            "description": "唯一执行边界，接受 P01–P09；P09 只读派生成果经营视图。",
         },
         {
             "id": "plugins",
@@ -100,7 +148,13 @@ ARCHITECTURE: dict[str, Any] = {
             "id": "adapters",
             "label": "Adapters",
             "status": "boundary",
-            "description": "外部存储与未来集成，不改变 Core。",
+            "description": "业务适配器、部署与存储适配，不改变 Core。",
+        },
+        {
+            "id": "deployment",
+            "label": "Deployment / Storage",
+            "status": "active",
+            "description": "统一服务节点、项目数据根目录、并发写入锁和备份边界；终端不直接改底座文件。",
         },
         {
             "id": "core",
@@ -124,6 +178,7 @@ ARCHITECTURE: dict[str, Any] = {
         {"id": "P06", "label": "变更管理", "status": "implemented", "surface": "变更工作台"},
         {"id": "P07", "label": "证据关联", "status": "implemented", "surface": "证据链"},
         {"id": "P08", "label": "结算初审", "status": "implemented", "surface": "当前工作面"},
+        {"id": "P09", "label": "全过程成果经营", "status": "implemented", "surface": "成果经营台"},
     ],
     "shared_modules": [
         {"label": "plugins/normalize.py", "description": "单位归一化与换算，纯 helper，不注册 Gateway。"},
@@ -132,7 +187,7 @@ ARCHITECTURE: dict[str, Any] = {
     "invariants": [
         "Core 不反向依赖业务插件或外部适配器。",
         "GUI / adapters / plugins → Core。",
-        "冻结范围之外的新增 capability 在本版本被拒绝。",
+        "P01–P08 保存专业事实，P09 只读派生经营结果；不建立第二金额事实源。",
     ],
 }
 
@@ -229,7 +284,17 @@ def _optional_actor(headers: Mapping[str, str] | None = None) -> dict[str, Any] 
         return None
     raw = headers.get("Authorization", "")
     token = raw.removeprefix("Bearer ").strip()
-    return SESSIONS.get(token)
+    actor = SESSIONS.get(token)
+    if actor is None:
+        return None
+    # Rehydrate the public record on each request so a project-manager grant
+    # or revoke takes effect for an already-open delegated admin session.
+    refreshed = AUTH_STORE.public_user_by_id(str(actor.get("id", "")))
+    if refreshed is None:
+        SESSIONS.pop(token, None)
+        return None
+    SESSIONS[token] = refreshed
+    return refreshed
 
 
 def _require_actor(headers: Mapping[str, str], permission: str | None = None) -> dict[str, Any]:
@@ -268,6 +333,25 @@ _COST_DETAIL_KEYS = {
     "expected_profit",
     "incremental_cost",
     "risk_cost",
+    "physical",
+    "evidence_ready",
+    "submitted",
+    "confirmed",
+    "revenue",
+    "settled",
+    "paid",
+    "value",
+    "total",
+    "total_amount",
+    "physical_total",
+    "evidence_ready_total",
+    "submitted_total",
+    "confirmed_total",
+    "revenue_total",
+    "settled_total",
+    "paid_total",
+    "value_leak_total",
+    "priority_score",
 }
 
 
@@ -293,6 +377,83 @@ def _redact_sensitive(value: Any, actor: Mapping[str, Any] | None) -> Any:
     return copy.deepcopy(value)
 
 
+_ROLE_WORKSPACE_VIEWS: dict[str, set[str]] = {
+    "project_manager": {"overview", "dashboard", "search", "events", "p09", "coordination", "personnel"},
+    "cost_manager": {"overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "evidence", "review", "p09", "coordination", "basis", "dashboard", "control"},
+    "cost_estimator": {"overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "evidence", "coordination", "basis"},
+    # Operational roles stay on their own work surfaces.  Cross-project
+    # search is intentionally reserved for management/cost roles and the
+    # document controller; field and material roles use their assigned P01–P08
+    # surfaces, Core events, evidence, and coordination only.
+    "technical_lead": {"overview", "drawings", "changes", "events", "evidence", "coordination"},
+    "production_manager": {"overview", "drawings", "changes", "events", "evidence", "coordination", "dashboard"},
+    "site_engineer": {"overview", "drawings", "events", "evidence", "coordination"},
+    "surveyor": {"overview", "drawings", "events", "evidence", "coordination"},
+    "quality_officer": {"overview", "drawings", "events", "evidence", "coordination"},
+    "lab_testing_officer": {"overview", "boq", "drawings", "events", "evidence", "coordination"},
+    "document_controller": {"overview", "search", "contract", "drawings", "evidence", "coordination"},
+    "safety_officer": {"overview", "drawings", "changes", "events", "evidence", "coordination"},
+    "procurement_officer": {"overview", "contract", "boq", "events", "evidence", "coordination"},
+    "warehouse_officer": {"overview", "boq", "events", "evidence", "coordination"},
+    "administrative_officer": {"overview", "coordination", "personnel"},
+}
+
+_WORKSPACE_KEY_VIEWS = {
+    "contract": "contract",
+    "boq": "boq",
+    "drawings": "drawings",
+    "baseline": "baseline",
+    "cost_plan": "plan",
+    "changes": "changes",
+    "evidence": "evidence",
+    "review": "review",
+    "events": "events",
+    "collaboration": "coordination",
+    "basis_references": "basis",
+}
+
+_CAPABILITY_ROLE_ACCESS: dict[str, set[str]] = {
+    "contract": {"cost_manager", "cost_estimator", "procurement_officer", "document_controller"},
+    "boq": {"cost_manager", "cost_estimator", "procurement_officer", "warehouse_officer", "lab_testing_officer"},
+    "drawings": {"cost_manager", "technical_lead", "production_manager", "site_engineer", "surveyor", "quality_officer", "lab_testing_officer", "document_controller", "safety_officer"},
+    # P04 零号台账 is the commercial opening baseline.  Only its two cost
+    # roles may enter or modify it; other roles receive derived references.
+    "baseline": {"cost_manager", "cost_estimator"},
+    "cost-plan": {"cost_manager", "cost_estimator"},
+    "changes": {"cost_manager", "cost_estimator", "technical_lead", "production_manager", "site_engineer", "safety_officer"},
+    "evidence": {"cost_manager", "cost_estimator", "technical_lead", "production_manager", "site_engineer", "surveyor", "quality_officer", "lab_testing_officer", "document_controller", "safety_officer", "procurement_officer", "warehouse_officer"},
+    "review": {"cost_manager"},
+    "p09": {"project_manager", "cost_manager"},
+    "search": {"project_manager", "cost_manager", "cost_estimator", "document_controller"},
+}
+
+
+def _actor_roles(actor: Mapping[str, Any]) -> set[str]:
+    roles = actor.get("roles")
+    if isinstance(roles, list) and roles:
+        return {str(role) for role in roles if str(role).strip()}
+    role = str(actor.get("role", "")).strip()
+    return {role} if role else set()
+
+
+def _workspace_views_for_actor(actor: Mapping[str, Any]) -> set[str]:
+    views: set[str] = set()
+    for role in _actor_roles(actor):
+        views.update(_ROLE_WORKSPACE_VIEWS.get(role, {"overview", "search", "events", "coordination"}))
+    if _can(actor, "manage_personnel"):
+        views.add("personnel")
+    if not _can(actor, "view_cost_detail"):
+        views.discard("control")
+    return views
+
+
+def _require_capability_role(actor: Mapping[str, Any], capability: str) -> None:
+    roles = _actor_roles(actor)
+    allowed = _CAPABILITY_ROLE_ACCESS.get(capability, set())
+    if not roles.intersection(allowed):
+        raise PermissionError(f"当前岗位不能访问或写入 {capability} 工作面")
+
+
 def _visible_workspace(state: dict[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
     if (actor or {}).get("role") == ROLE_PROJECT_MANAGER:
         return {
@@ -300,10 +461,20 @@ def _visible_workspace(state: dict[str, Any], actor: Mapping[str, Any]) -> dict[
             "sources": [],
             "access": "kpi_only",
             "role_description": "仅显示项目重要指标、风险预警与经营趋势",
+            "visible_views": sorted(_workspace_views_for_actor(actor)),
         }
     visible = _redact_sensitive(state, actor)
+    allowed_views = _workspace_views_for_actor(actor)
+    for key, view in _WORKSPACE_KEY_VIEWS.items():
+        if view not in allowed_views:
+            visible.pop(key, None)
+    if "basis" not in allowed_views:
+        visible["basis_references"] = []
+    if "sources" not in allowed_views and not _can(actor, "view_source"):
+        visible["sources"] = []
     visible["access"] = "full" if _can(actor, "view_cost_detail") else "operational_redacted"
-    visible["role_description"] = "完整成本明细" if _can(actor, "view_cost_detail") else "操作数据可见，敏感价格与成本已隐藏"
+    visible["role_description"] = "完整成本明细" if _can(actor, "view_cost_detail") else "本岗位工作面可见，其他专业成果按岗位边界隐藏"
+    visible["visible_views"] = sorted(allowed_views)
     return visible
 
 
@@ -812,6 +983,7 @@ def _auth_register(payload: object) -> dict[str, Any]:
         str(payload.get("username", "")),
         str(payload.get("password", "")),
         str(payload.get("role", "")),
+        payload.get("roles") if isinstance(payload.get("roles"), list) else None,
     )
     token = secrets.token_urlsafe(32)
     SESSIONS[token] = user
@@ -830,18 +1002,86 @@ def _auth_login(payload: object) -> dict[str, Any]:
 def _personnel_create(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
+    project_id = str(payload.get("project_id", "")).strip() or None
+    username = str(payload.get("username", payload.get("name", ""))).strip()
+    role = str(payload.get("role", "")).strip()
+    raw_password = payload.get("password")
+    password = str(raw_password).strip() if raw_password is not None else ""
+    temporary_password = ""
+    if not password:
+        # Managed personnel are entered by the project manager or an
+        # authorized administrative officer.  Keep the login credential
+        # secure while removing the need for the manager to invent a
+        # password: the one-time value is returned only in this response.
+        temporary_password = f"BC-{secrets.token_urlsafe(9)}"
+        password = temporary_password
     user = AUTH_STORE.register(
-        str(payload.get("username", "")),
-        str(payload.get("password", "")),
-        str(payload.get("role", "")),
+        username,
+        password,
+        role,
     )
+    if project_id:
+        AUTH_STORE.add_user_to_project(project_id, str(user["id"]))
     AUTH_STORE.record_personnel_audit(
         dict(actor),
         "personnel.created",
         str(user["id"]),
-        {"username": user["username"], "role": user["role"]},
+        {"username": user["username"], "role": user["role"], "project_id": project_id or ""},
+        project_id=project_id,
     )
-    return AUTH_STORE.personnel_snapshot()
+    snapshot = AUTH_STORE.personnel_snapshot(project_id)
+    if temporary_password:
+        snapshot["temporary_credentials"] = {
+            "username": user["username"],
+            "password": temporary_password,
+            "role": user["role"],
+            "role_label": user["role_label"],
+            "notice": "请将此初始密码安全交给本人；刷新人员管理后不再显示。",
+        }
+    return snapshot
+
+
+def _personnel_authorize(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    user_id = str(payload.get("user_id", "")).strip()
+    if not user_id:
+        raise ValueError("缺少目标人员")
+    authorized = bool(payload.get("authorized", True))
+    project_id = str(payload.get("project_id", "")).strip() or None
+    return AUTH_STORE.authorize_personnel_admin(dict(actor), user_id, authorized, project_id=project_id)
+
+
+def _personnel_delete(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    user_id = str(payload.get("user_id", "")).strip()
+    if not user_id:
+        raise ValueError("缺少目标人员")
+    project_id = str(payload.get("project_id", "")).strip() or None
+    return AUTH_STORE.delete_user(dict(actor), user_id, project_id=project_id)
+
+
+def _personnel_rename(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    user_id = str(payload.get("user_id", "")).strip()
+    new_username = str(payload.get("new_username", payload.get("username", ""))).strip()
+    if not user_id or not new_username:
+        raise ValueError("缺少目标人员或新姓名")
+    project_id = str(payload.get("project_id", "")).strip() or None
+    return AUTH_STORE.rename_user(dict(actor), user_id, new_username, project_id=project_id)
+
+
+def _personnel_roles(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    user_id = str(payload.get("user_id", "")).strip()
+    roles = payload.get("roles")
+    if not user_id or not isinstance(roles, list):
+        raise ValueError("缺少目标人员或岗位组合")
+    project_id = str(payload.get("project_id", "")).strip() or None
+    return AUTH_STORE.update_roles(dict(actor), user_id, roles, project_id=project_id)
 
 
 def _source_for(state: dict[str, Any], source_id: str) -> dict[str, Any]:
@@ -1037,7 +1277,29 @@ def _workspace(project_id: str) -> dict[str, Any]:
     state.setdefault("basis_references", [])
     state.setdefault("events", [])
     state.setdefault("event_distillation", None)
+    state.setdefault("line_adaptations", [])
+    state.setdefault("collaboration", {"tasks": [], "decisions": []})
+    state.setdefault("relationships", [])
+    state.setdefault("golden_scenario", None)
+    collaboration = state.get("collaboration")
+    if not isinstance(collaboration, dict):
+        state["collaboration"] = {"tasks": [], "decisions": []}
+    else:
+        collaboration.setdefault("tasks", [])
+        collaboration.setdefault("decisions", [])
     changed = False
+    # Migrate events created before the Outcome projection was introduced.
+    migrated_events = []
+    for raw_event in state.get("events") or []:
+        if not isinstance(raw_event, Mapping):
+            continue
+        migrated = ensure_outcome_track(raw_event)
+        migrated_events.append(migrated)
+        if migrated != raw_event:
+            changed = True
+    if len(migrated_events) != len(state.get("events") or []):
+        changed = True
+    state["events"] = migrated_events
     for source in state.get("sources", []):
         archive_area = str(source.get("archive_area") or "").strip()
         archive_category = _normalize_archive_category(str(source.get("archive_category") or ""))
@@ -1122,6 +1384,9 @@ def _event_kernel_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -
             "event_types": list(EVENT_TYPES),
             "severities": list(SEVERITIES),
             "dimensions": list(DIMENSIONS),
+            "outcome_statuses": list(OUTCOME_STATUSES),
+            "outcome_types": list(OUTCOME_TYPES),
+            "outcome_transitions": {key: sorted(value) for key, value in OUTCOME_ALLOWED_TRANSITIONS.items()},
         },
         "privacy": {"local_only": True, "external_sent": False},
     }
@@ -1217,6 +1482,39 @@ def _transition_engineering_event(payload: object, actor: Mapping[str, Any]) -> 
     state = PROJECT_WORKSPACE.save_event(project_id, updated)
     PROJECT_WORKSPACE.append_audit(project_id, "event.transitioned", actor, event_id, {"from": build_state_vector(event)["event"], "to": target_status})
     return {"event": _event_public(updated, actor), "workspace": state}
+
+
+def _update_engineering_outcome(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    """Record an Outcome snapshot or move its independent state machine."""
+    if not isinstance(payload, dict):
+        raise ValueError("Outcome 请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    event_id = str(payload.get("event_id", "")).strip()
+    if not project_id or not event_id:
+        raise ValueError("Outcome 请求缺少项目或事件标识")
+    state = _workspace(project_id)
+    event = next((item for item in state.get("events") or [] if str(item.get("event_id")) == event_id), None)
+    if event is None:
+        raise FileNotFoundError("工程事件不存在")
+    operation = str(payload.get("operation", "snapshot")).strip().lower()
+    if operation == "transition":
+        target_status = str(payload.get("target_status", "")).strip().upper()
+        if target_status in {"CONFIRMED", "REVENUE_RECOGNIZED", "SETTLED", "CASH_REALIZED"} and not _can(actor, "view_cost_detail"):
+            raise PermissionError("Outcome 的价值确认、结算和回款状态需要造价经理权限")
+        updated = transition_outcome(event, target_status, actor=actor, reason=str(payload.get("reason", "")))
+        action = "outcome.transitioned"
+        details = {"from": build_outcome_vector(event)["status"], "to": target_status}
+    else:
+        changes = payload.get("changes") if isinstance(payload.get("changes"), Mapping) else {}
+        if "values" in changes and not _can(actor, "view_cost_detail"):
+            raise PermissionError("Outcome 金额快照仅造价经理可写入")
+        updated = record_outcome_snapshot(event, changes, actor=actor, reason=str(payload.get("reason", "")))
+        action = "outcome.snapshot_recorded"
+        details = {"revision": len(_mapping(updated.get("outcome_track")).get("revisions") or [])}
+    validate_event(updated)
+    state = PROJECT_WORKSPACE.save_event(project_id, updated)
+    PROJECT_WORKSPACE.append_audit(project_id, action, actor, event_id, details)
+    return {"event": _event_public(updated, actor), "outcome": build_outcome_vector(updated), "value_leaks": compute_value_leaks(updated), "workspace": state}
 
 
 def _cross_check_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -1343,6 +1641,217 @@ def _dashboard_period(snapshots: list[dict[str, Any]], days: int, now: datetime)
 
 def _dashboard_event_status(event: Mapping[str, Any]) -> str:
     return str(event.get("status") or _mapping(event.get("governance")).get("status") or "DISCOVERED")
+
+
+def _p09_result(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Execute P09 from the current workspace without creating a new store."""
+    facts = {
+        capability_id: (state.get(stage) or {}).get("result")
+        for capability_id, stage in (
+            ("P01", "contract"),
+            ("P02", "boq"),
+            ("P03", "drawings"),
+            ("P04", "baseline"),
+            ("P05", "cost_plan"),
+            ("P06", "changes"),
+            ("P07", "evidence"),
+            ("P08", "review"),
+        )
+    }
+    project = state.get("project") if isinstance(state.get("project"), Mapping) else {}
+    project_id = str(project.get("id") or "").strip()
+    return dict(RUNTIME.gateway.execute("P09", {
+        "project_id": project_id,
+        "events": [event for event in state.get("events") or [] if isinstance(event, Mapping)],
+        "facts": facts,
+    }))
+
+
+def _line_contracts() -> dict[str, Any]:
+    """Publish line and role handoff contracts without exposing runtime paths."""
+    return {
+        "version": CONTRACT_VERSION,
+        "lines": [
+            {**dict(LINE_CONTRACTS[line]), "responsibility": line_responsibility(line)}
+            for line in LINE_IDS
+        ],
+        "role_flows": role_flow_contracts(),
+        "rules": {
+            "preview_is_read_only": True,
+            "confirmation_required": True,
+            "decision_is_human": True,
+            "targets_existing_model": True,
+            "new_amount_ledger": False,
+        },
+    }
+
+
+def _coordination_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
+    packet = coordination_snapshot(state)
+    packet["project"] = dict(state.get("project") or {})
+    packet["event_index"] = [
+        {
+            "event_id": event.get("event_id", ""),
+            "title": _mapping(event.get("identity")).get("title", ""),
+            "status": event.get("status", "DISCOVERED"),
+            "outcome": build_outcome_vector(event),
+        }
+        for event in state.get("events") or []
+        if isinstance(event, Mapping)
+    ]
+    return _redact_sensitive(packet, actor)
+
+
+def _append_collaboration(project_id: str, key: str, value: Mapping[str, Any], actor: Mapping[str, Any], action: str) -> dict[str, Any]:
+    state = _workspace(project_id)
+    bucket = state.setdefault("collaboration", {}).setdefault(key, [])
+    bucket.append(dict(value))
+    state = PROJECT_WORKSPACE.save(state)
+    PROJECT_WORKSPACE.append_audit(project_id, action, actor, str(value.get("task_id") or value.get("decision_id") or project_id), {"status": value.get("status"), "event_id": value.get("event_id", "")})
+    return state
+
+
+def _create_coordination_task(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("协同任务请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    state = _workspace(project_id)
+    task = new_task(project_id, payload, actor)
+    state = _append_collaboration(project_id, "tasks", task, actor, "coordination.task_created")
+    return {"task": task, "collaboration": _coordination_response(state, actor)}
+
+
+def _update_coordination_task(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("协同任务更新请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    task_id = str(payload.get("task_id", "")).strip()
+    state = _workspace(project_id)
+    tasks = state.get("collaboration", {}).get("tasks", [])
+    task = next((item for item in tasks if str(item.get("task_id")) == task_id), None)
+    if task is None:
+        raise FileNotFoundError("协同任务不存在")
+    updated = update_task(task, str(payload.get("status", "")), actor, str(payload.get("note", "")))
+    state["collaboration"]["tasks"] = [updated if str(item.get("task_id")) == task_id else item for item in tasks]
+    state = PROJECT_WORKSPACE.save(state)
+    PROJECT_WORKSPACE.append_audit(project_id, "coordination.task_updated", actor, task_id, {"status": updated.get("status")})
+    return {"task": updated, "collaboration": _coordination_response(state, actor)}
+
+
+def _create_coordination_decision(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("协同决策请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    state = _workspace(project_id)
+    decision = new_decision(project_id, payload, actor, confirm=payload.get("confirm") is True)
+    state = _append_collaboration(project_id, "decisions", decision, actor, "coordination.decision_created")
+    return {"decision": decision, "collaboration": _coordination_response(state, actor)}
+
+
+def _confirm_coordination_decision(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("决策确认请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    decision_id = str(payload.get("decision_id", "")).strip()
+    state = _workspace(project_id)
+    decisions = state.get("collaboration", {}).get("decisions", [])
+    decision = next((item for item in decisions if str(item.get("decision_id")) == decision_id), None)
+    if decision is None:
+        raise FileNotFoundError("协同决策不存在")
+    confirmed = confirm_decision(decision, actor)
+    state["collaboration"]["decisions"] = [confirmed if str(item.get("decision_id")) == decision_id else item for item in decisions]
+    state = PROJECT_WORKSPACE.save(state)
+    PROJECT_WORKSPACE.append_audit(project_id, "coordination.decision_confirmed", actor, decision_id, {"decision_type": confirmed.get("decision_type"), "event_id": confirmed.get("event_id")})
+    return {"decision": confirmed, "collaboration": _coordination_response(state, actor)}
+
+
+def _create_relationship(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("关系请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    state = _workspace(project_id)
+    relation = new_relation(project_id, payload, actor)
+    state.setdefault("relationships", []).append(relation)
+    state = PROJECT_WORKSPACE.save(state)
+    PROJECT_WORKSPACE.append_audit(project_id, "coordination.relationship_created", actor, relation["relation_id"], {"relation_type": relation.get("relation_type"), "from_id": relation.get("from_id"), "to_id": relation.get("to_id")})
+    return {"relationship": relation, "collaboration": _coordination_response(state, actor)}
+
+
+def _apply_line_mapping_to_event(event: Mapping[str, Any], mapping: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge only confirmed adapter output into the existing Core event."""
+    updated = copy.deepcopy(dict(event))
+    targets = _mapping(mapping.get("targets"))
+    for section, patch in targets.items():
+        if not isinstance(patch, Mapping):
+            continue
+        current = updated.setdefault(section, {})
+        if section == "production_track":
+            current.update({key: value for key, value in patch.items() if key != "records"})
+            current["records"] = [*(current.get("records") or []), *(patch.get("records") or [])]
+        elif section == "technical_track":
+            for key, value in patch.items():
+                if key == "options":
+                    current["options"] = [*(current.get("options") or []), *(value or [])]
+                elif key in {"drawing_refs", "spec_refs"}:
+                    current[key] = list(dict.fromkeys([*(current.get(key) or []), *(value or [])]))
+                else:
+                    current[key] = value
+        elif section == "commercial_track":
+            current.update({key: value for key, value in patch.items() if key != "evaluations"})
+            current["evaluations"] = [*(current.get("evaluations") or []), *(patch.get("evaluations") or [])]
+        else:
+            current.update(copy.deepcopy(dict(patch)))
+    origin = updated.setdefault("origin", {})
+    origin["source_refs"] = list(dict.fromkeys([*(origin.get("source_refs") or []), *(mapping.get("source_refs") or [])]))
+    updated.setdefault("governance", {})["updated_at"] = datetime.now(timezone.utc).isoformat()
+    validate_event(updated)
+    return updated
+
+
+def _preview_line_adapter(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("业务线预览请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    return {"preview": preview_line_records(str(payload.get("line", "")), project_id, payload.get("records") or [])}
+
+
+def _confirm_line_adapter(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("业务线确认请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    preview = payload.get("preview")
+    confirmed = confirm_line_records(preview, actor)
+    state = _workspace(project_id)
+    mappings = []
+    events = {str(item.get("event_id")): item for item in state.get("events") or [] if isinstance(item, Mapping)}
+    for record in confirmed.get("records") or []:
+        event_id = str(record.get("event_id", ""))
+        event = events.get(event_id)
+        if event is None:
+            raise FileNotFoundError(f"Core Event 不存在：{event_id}")
+        mapping = mapping_for_confirmed_record(str(confirmed.get("line", "")), record, actor)
+        updated = _apply_line_mapping_to_event(event, mapping)
+        events[event_id] = updated
+        mappings.append(mapping)
+    state["events"] = list(events.values())
+    adaptation = {
+        "adaptation_id": f"ADAPT-{uuid4().hex[:10].upper()}",
+        "line": confirmed.get("line"),
+        "label": confirmed.get("label"),
+        "contract_version": confirmed.get("contract_version"),
+        "status": "CONFIRMED",
+        "record_count": len(confirmed.get("records") or []),
+        "confirmed_by": confirmed.get("confirmed_by"),
+        "confirmed_at": confirmed.get("confirmed_at"),
+        "mapping_targets": confirmed.get("mapping_targets") or [],
+        "records": [dict(item) for item in confirmed.get("records") or []],
+        "mappings": mappings,
+        "human_confirmed": True,
+    }
+    state.setdefault("line_adaptations", []).append(adaptation)
+    state = PROJECT_WORKSPACE.save(state)
+    PROJECT_WORKSPACE.append_audit(project_id, "line_adapter.confirmed", actor, adaptation["adaptation_id"], {"line": adaptation["line"], "record_count": adaptation["record_count"], "targets": adaptation["mapping_targets"]})
+    return {"adaptation": adaptation, "collaboration": _coordination_response(state, actor), "workspace": state}
 
 
 def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -1497,6 +2006,105 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
                 "events",
             )
 
+    # Negative-entropy management view: one derived funnel and one queue.
+    # Amounts are read from the existing P01-P08 records as snapshots; no new
+    # value ledger is created here.
+    outcome_stage_labels = {
+        "physical": "实体完成",
+        "evidence_ready": "证据完整",
+        "submitted": "已申报",
+        "confirmed": "已确认",
+        "revenue": "收入成立",
+        "settled": "已结算",
+        "paid": "已回款",
+    }
+    funnel_totals: dict[str, Decimal] = {key: Decimal("0") for key in outcome_stage_labels}
+    funnel_counts: Counter[str] = Counter()
+    outcome_statuses: Counter[str] = Counter()
+    outcome_types: Counter[str] = Counter()
+    leak_items: list[dict[str, Any]] = []
+    daily_queue: list[dict[str, Any]] = []
+    for event in events:
+        outcome = _mapping(event.get("outcome_track"))
+        outcome_status = str(outcome.get("status") or "NOT_FORMED")
+        outcome_statuses[outcome_status] += 1
+        for outcome_type in outcome.get("types") or []:
+            outcome_types[str(outcome_type)] += 1
+        values = _mapping(outcome.get("values"))
+        event_title = str(_mapping(event.get("identity")).get("title") or "").strip() or str(event.get("event_id", ""))
+        for stage in outcome_stage_labels:
+            amount = _dashboard_decimal(values.get(stage))
+            if amount is not None:
+                funnel_totals[stage] += amount
+                funnel_counts[stage] += 1
+        leaks = compute_value_leaks(event)
+        for leak in leaks.get("items") or []:
+            leak_items.append({**leak, "title": event_title, "severity": str(_mapping(event.get("classification")).get("severity") or "")})
+        event_alerts_for_queue = evaluate_event_rules(event)
+        discovered_at = _dashboard_datetime(_mapping(event.get("origin")).get("discovered_at"))
+        days_open = max(0, (now - discovered_at).days) if discovered_at else None
+        if event_alerts_for_queue or outcome_status not in {"CASH_REALIZED", "REJECTED", "ABANDONED"}:
+            daily_queue.append({
+                "event_id": event.get("event_id", ""),
+                "title": event_title,
+                "event_status": _dashboard_event_status(event),
+                "outcome_status": outcome_status,
+                "value_leak_count": int(leaks.get("count", 0) or 0),
+                "alert_count": len(event_alerts_for_queue),
+                "days_open": days_open,
+                "time_stage": outcome_status if outcome_status != "NOT_FORMED" else _dashboard_event_status(event),
+                "priority": len(event_alerts_for_queue) * 10 + int(leaks.get("total", 0) or 0),
+            })
+    funnel: list[dict[str, Any]] = []
+    previous_amount: Decimal | None = None
+    for stage, label in outcome_stage_labels.items():
+        amount = funnel_totals[stage]
+        conversion = None if previous_amount in (None, Decimal("0")) else float((amount / previous_amount) * 100)
+        funnel.append({"stage": stage, "label": label, "amount": _dashboard_number(amount), "event_count": funnel_counts[stage], "conversion_rate": conversion})
+        previous_amount = amount if amount > 0 else previous_amount
+    leak_items.sort(key=lambda item: item.get("amount", 0), reverse=True)
+    daily_queue.sort(key=lambda item: item.get("priority", 0), reverse=True)
+    outcome_management = {
+        "funnel": funnel,
+        "status_counts": dict(outcome_statuses),
+        "type_counts": dict(outcome_types),
+        "value_leak_total": round(sum(float(item.get("amount", 0) or 0) for item in leak_items), 2),
+        "value_leak_count": len(leak_items),
+        "value_leaks": leak_items[:12],
+        "daily_queue": daily_queue[:12],
+        "forecast": {
+            "status": "insufficient_data",
+            "reason": "当前项目尚未提供实际成本、剩余工程成本和风险权重；系统不猜测 EAC 利润。",
+            "available": ["confirmed", "submitted", "settled", "paid"],
+            "missing": ["actual_cost", "remaining_cost", "risk_weight"],
+        },
+        "rules": {
+            "single_fact_source": True,
+            "event_closed_not_outcome_closed": True,
+            "derived_values_only": True,
+        },
+    }
+
+    # The dashboard is a presentation of the registered P09 capability.  The
+    # legacy inline calculation above is kept as a migration-safe fallback,
+    # while the gateway projection is now the authoritative result.
+    p09 = _p09_result(state)
+    # P09 is a management projection, not a general-purpose operational
+    # panel.  Keep it visible only to the project manager and cost manager;
+    # other roles still receive their dashboard metrics without a second,
+    # unscoped outcome view.
+    if not _actor_roles(actor).intersection(_CAPABILITY_ROLE_ACCESS["p09"]):
+        p09 = {
+            "capability_id": "P09",
+            "status": "restricted",
+            "summary": {"status": "restricted", "message": "P09 全过程成果经营仅对项目经理和造价经理开放"},
+            "funnel": [],
+            "value_leaks": [],
+            "daily_queue": [],
+            "rules": {"single_fact_source": True, "derived_values_only": True},
+        }
+    outcome_management = p09
+
     alerts.sort(key=lambda item: item["risk"]["priority"], reverse=True)
     dashboard = {
         "project": state.get("project") or {},
@@ -1520,6 +2128,7 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
             "P06": changes.get("summary") or {},
             "P07": evidence.get("summary") or {},
             "P08": review.get("summary") or {},
+            "P09": p09.get("summary") or {},
         },
         "comparison": comparison,
         "review": {
@@ -1538,6 +2147,7 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
                 for event in events[:12]
             ],
         },
+        "outcome_management": outcome_management,
         "alerts": alerts[:12],
         "recent_issues": (review.get("findings") or [])[:12],
     }
@@ -1549,6 +2159,7 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
         }
         dashboard["comparison"]["rows"] = []
         dashboard["recent_issues"] = []
+        dashboard["outcome_management"] = _redact_sensitive(dashboard.get("outcome_management") or {}, actor)
     elif not _can(actor, "view_cost_detail"):
         dashboard = _redact_sensitive(dashboard, actor)
         dashboard["access"] = "operational_redacted"
@@ -1776,11 +2387,23 @@ def _health() -> dict[str, Any]:
     return {
         "service": "BuildCostIQ WebUI",
         "runtime": RUNTIME.health(),
+        "deployment": DEPLOYMENT_CONFIG.public(),
         "review_capability": "P08",
-        "business_capabilities": [f"P{i:02d}" for i in range(1, 9)],
+        "business_capabilities": [f"P{i:02d}" for i in range(1, 10)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "Core 工程事件内核 v1.0：先蒸馏本地 P01-P08 资料，再蒸馏文本并保留来源、冲突和待核对主张；工程事件状态向量、三证互证、状态 Guard 与本地预警已进入工作台；原有本地资料快速保存、识别后台更新和 P01-P08 分区归档继续保留",
+        "release_highlights": "v0.8.0-rc5：P09 仍只由 P01–P08 事实派生；人员名册按项目独立维护，首页按岗位提供输入→操作→成果→复核手册；项目经理或授权行政人员可在当前项目新增人员",
+    }
+
+
+def _deployment_status() -> dict[str, Any]:
+    """Return deployment metadata without exposing absolute storage paths."""
+
+    return {
+        "service": "BuildCostIQ WebUI",
+        "deployment": DEPLOYMENT_STORAGE.status(),
+        "data_authority": "central_service" if DEPLOYMENT_CONFIG.mode == "central" else "this_node",
+        "storage_policy": "终端只通过 API 读写；共享文件夹不作为实时数据库。",
     }
 
 
@@ -1798,7 +2421,7 @@ class BuildCostWebServer(ThreadingHTTPServer):
 
 
 class BuildCostHandler(BaseHTTPRequestHandler):
-    server_version = "BuildCostIQWebUI/0.1"
+    server_version = f"BuildCostIQWebUI/{current_version()}"
 
     @staticmethod
     def _content_disposition(disposition: str, filename: str) -> str:
@@ -1877,7 +2500,8 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         elif path == "/api/personnel":
             try:
                 _require_actor(self.headers, "manage_personnel")
-                self._write_json(AUTH_STORE.personnel_snapshot())
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0].strip() or None
+                self._write_json(AUTH_STORE.personnel_snapshot(project_id))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
         elif path == "/api/source/view":
@@ -1913,12 +2537,16 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": str(exc)}, 404)
         elif path == "/api/health":
             self._write_json(_health())
+        elif path == "/api/deployment":
+            self._write_json(_deployment_status())
         elif path == "/api/architecture":
             self._write_json(_architecture())
         elif path == "/api/sample":
             self._write_json(DEMO_REQUEST)
         elif path == "/api/connectors":
             self._write_json({"connectors": connector_catalog()})
+        elif path == "/api/line-contracts":
+            self._write_json(_line_contracts())
         elif path == "/api/recognition/catalog":
             self._write_json({"recognizers": recognition_catalog()})
         elif path == "/api/audit":
@@ -1936,6 +2564,25 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 actor = _require_actor(self.headers, "view_dashboard")
                 project_id = parse_qs(parsed.query).get("project_id", [""])[0]
                 self._write_json(_build_dashboard(_workspace(project_id), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+        elif path == "/api/p09":
+            try:
+                actor = _require_actor(self.headers, "view_dashboard")
+                _require_capability_role(actor, "p09")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                self._write_json(_redact_sensitive(_p09_result(_workspace(project_id)), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+        elif path == "/api/collaboration":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                self._write_json(_coordination_response(_workspace(project_id), actor))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
             except FileNotFoundError as exc:
@@ -2035,10 +2682,88 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         if path == "/api/search":
             try:
                 actor = _require_actor(self.headers, "view_workspace")
+                _require_capability_role(actor, "search")
                 self._write_json(_local_search(self._read_json(), actor))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/line-adapter/preview":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_preview_line_adapter(self._read_json()), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, LineContractError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/line-adapter/confirm":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_confirm_line_adapter(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, LineContractError, EventKernelError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/collaboration/task":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_create_coordination_task(self._read_json(), actor), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, CoordinationError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/collaboration/task/status":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_update_coordination_task(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, CoordinationError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/collaboration/decision":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_create_coordination_decision(self._read_json(), actor), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, CoordinationError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/collaboration/decision/confirm":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_confirm_coordination_decision(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, CoordinationError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/relationships":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_create_relationship(self._read_json(), actor), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, CoordinationError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
@@ -2079,6 +2804,17 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             except FileNotFoundError as exc:
                 self._write_json({"error": str(exc)}, 404)
             return
+        if path == "/api/event-kernel/outcome":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_update_engineering_outcome(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, EventKernelError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
         if path == "/api/event-kernel/check":
             try:
                 actor = _require_actor(self.headers, "view_workspace")
@@ -2094,6 +2830,42 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             try:
                 actor = _require_actor(self.headers, "manage_personnel")
                 self._write_json(_personnel_create(self._read_json(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/personnel/authorize":
+            try:
+                actor = _require_actor(self.headers, "authorize_personnel_admin")
+                self._write_json(_personnel_authorize(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/personnel/delete":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_delete(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/personnel/rename":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_rename(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/personnel/roles":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_roles(self._read_json(), actor))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -2212,6 +2984,23 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         if path == "/api/review" and not _can(actor, "view_cost_detail"):
             self._write_json({"error": "结算初审包含敏感成本明细，仅造价经理可执行"}, 403)
             return
+        capability_by_path = {
+            "/api/contract": "contract",
+            "/api/boq": "boq",
+            "/api/drawings": "drawings",
+            "/api/baseline": "baseline",
+            "/api/cost-plan": "cost-plan",
+            "/api/changes": "changes",
+            "/api/evidence": "evidence",
+            "/api/review": "review",
+        }
+        capability = capability_by_path.get(urlsplit(self.path).path)
+        if capability:
+            try:
+                _require_capability_role(actor, capability)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+                return
         handlers = {
             "/api/contract": lambda payload: _contract(payload, actor),
             "/api/boq": lambda payload: _boq(payload, actor),
@@ -2249,11 +3038,29 @@ def create_server(host: str = "127.0.0.1", port: int = 8787) -> BuildCostWebServ
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the local BuildCostIQ WebUI")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--host", default=None, help="监听地址；中央部署通常使用 0.0.0.0 并配合防火墙")
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--deployment-mode", choices=("single-node", "central", "edge"), default=None)
+    parser.add_argument("--node-id", default=None, help="服务节点标识")
+    parser.add_argument("--data-root", default=None, help="中央数据根目录，例如 D:/BuildCostIQData")
+    parser.add_argument("--backup-root", default=None, help="备份根目录；不作为实时数据库")
     args = parser.parse_args(argv)
-    server = create_server(args.host, args.port)
-    print(f"BuildCostIQ WebUI: http://{args.host}:{args.port}/")
+    environment = dict(os.environ)
+    overrides = {
+        "BUILDCOSTIQ_HOST": args.host,
+        "BUILDCOSTIQ_PORT": str(args.port) if args.port is not None else None,
+        "BUILDCOSTIQ_DEPLOYMENT_MODE": args.deployment_mode,
+        "BUILDCOSTIQ_NODE_ID": args.node_id,
+        "BUILDCOSTIQ_DATA_ROOT": args.data_root,
+        "BUILDCOSTIQ_BACKUP_ROOT": args.backup_root,
+    }
+    for key, value in overrides.items():
+        if value is not None:
+            environment[key] = value
+    config = DeploymentConfig.from_environment(environment)
+    _configure_deployment(config)
+    server = create_server(config.host, config.port)
+    print(f"BuildCostIQ WebUI: http://{config.host}:{config.port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
