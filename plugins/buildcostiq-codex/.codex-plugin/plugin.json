@@ -1,0 +1,38 @@
+{
+  "name": "buildcostiq-codex",
+  "version": "0.1.0",
+  "description": "Local-first construction cost workflow plugin for Codex and MCP clients.",
+  "author": {
+    "name": "chuanxituzhu-lab",
+    "url": "https://github.com/chuanxituzhu-lab"
+  },
+  "homepage": "https://github.com/chuanxituzhu-lab/BuildCostIQ",
+  "repository": "https://github.com/chuanxituzhu-lab/BuildCostIQ",
+  "license": "MIT",
+  "keywords": [
+    "construction-cost",
+    "municipal-project",
+    "工程造价",
+    "MCP",
+    "Codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "BuildCostIQ Codex",
+    "shortDescription": "本地施工市政项目造价闭环工作流",
+    "longDescription": "通过本地 Skill 与 MCP stdio 复用 BuildCostIQ Core、P01–P09、岗位权限和现有 WebUI，不需要 OpenAI API Key。",
+    "developerName": "chuanxituzhu-lab",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "查看当前项目岗位工作面和待交接成果。",
+      "按岗位契约提交一条可追溯工作成果。",
+      "检查工程事件、证据和造价闭环。"
+    ],
+    "brandColor": "#E8A83E"
+  },
+  "mcpServers": "./.mcp.json"
+}

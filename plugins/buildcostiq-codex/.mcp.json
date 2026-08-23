@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "buildcostiq-local": {
+      "command": "python",
+      "args": [
+        "-u",
+        "mcp_server.py"
+      ],
+      "cwd": "."
+    }
+  }
+}
