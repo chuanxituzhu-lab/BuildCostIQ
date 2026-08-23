@@ -28,6 +28,9 @@ class RoleUiBoundaryTests(unittest.TestCase):
             self.assertNotIn("baseline", frontend[role])
         for role in ("technical_lead", "production_manager", "site_engineer", "surveyor", "quality_officer", "lab_testing_officer", "safety_officer", "procurement_officer", "warehouse_officer", "administrative_officer"):
             self.assertNotIn("search", frontend[role])
+        self.assertIn("ROLE-OWNED WORK PRODUCTS", app_text)
+        self.assertIn("data-role-product-form", app_text)
+        self.assertIn("saveRoleWorkProduct", app_text)
 
     def test_warehouse_and_field_roles_are_denied_unrelated_search_and_baseline(self):
         server = create_server("127.0.0.1", 0)

@@ -41,6 +41,7 @@ const state = {
   deployment: null,
   coordination: null,
   lineContracts: null,
+  roleWorkProducts: { contracts: {}, records: [], incoming_count: 0, policy: null },
   linePreview: null,
   sources: [],
   connectors: [],
@@ -568,11 +569,13 @@ async function loadWorkspace() {
     await loadEventKernel();
     await refreshDashboard();
     await refreshCoordination();
+    await refreshRoleWorkProducts();
   } catch (error) {
     await ensureProject();
     await loadEventKernel();
     await refreshDashboard();
     await refreshCoordination();
+    await refreshRoleWorkProducts();
   }
 }
 
@@ -581,6 +584,7 @@ async function refreshWorkspace() {
   await loadEventKernel();
   await refreshDashboard();
   await refreshCoordination();
+  await refreshRoleWorkProducts();
   renderDashboardIfVisible();
   await refreshP09();
 }
@@ -619,6 +623,14 @@ async function refreshCoordination() {
     state.lineContracts = await apiJson("/api/line-contracts");
   } catch (_) {
     state.coordination = null;
+  }
+}
+
+async function refreshRoleWorkProducts() {
+  try {
+    state.roleWorkProducts = await apiJson("/api/role-work-products?project_id=" + encodeURIComponent(state.projectId));
+  } catch (_) {
+    state.roleWorkProducts = { contracts: {}, records: [], incoming_count: 0, policy: null };
   }
 }
 
@@ -1257,6 +1269,101 @@ function renderSearch() {
   renderSearchResults();
 }
 
+function roleWorkbenchContract(role) {
+  return state.roleWorkProducts?.contracts?.[role]
+    || state.lineContracts?.role_workbench?.roles?.[role]
+    || null;
+}
+
+function roleProductFieldMarkup(role, field) {
+  const key = escapeHtml(field.key || "field");
+  const label = escapeHtml(field.label || field.key || "字段");
+  const required = field.required ? " required" : "";
+  const placeholder = escapeHtml(field.placeholder || "");
+  const attrs = `data-role-product-field="${key}" name="${key}"${required}${placeholder ? ` placeholder="${placeholder}"` : ""}`;
+  if (field.kind === "textarea") return `<label>${label}<textarea ${attrs}></textarea></label>`;
+  if (field.kind === "select") {
+    const options = (field.options || []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join("");
+    return `<label>${label}<select ${attrs}>${options}</select></label>`;
+  }
+  return `<label>${label}<input ${attrs} type="${escapeHtml(field.kind || "text")}"${field.kind === "number" ? " step=\"any\"" : ""} /></label>`;
+}
+
+function renderRoleWorkProductPanel() {
+  const roles = currentRoles().filter((role) => roleWorkbenchContract(role));
+  if (!roles.length) return "";
+  const roleLabels = (role) => roleWorkbenchContract(role)?.label || ROLE_WORKBENCH_SPECS[role]?.title || role;
+  const records = state.roleWorkProducts?.records || [];
+  const forms = roles.map((role) => {
+    const contract = roleWorkbenchContract(role);
+    const collaboration = contract.collaboration || {};
+    const handoffOptions = (collaboration.hands_to || []).map((target) => `<option value="${escapeHtml(target)}">${escapeHtml(roleLabels(target))}</option>`).join("");
+    const fields = (contract.input_fields || []).map((field) => roleProductFieldMarkup(role, field)).join("");
+    return `<article class="role-product-card">
+      <div class="surface-title"><div><span class="panel-label">${escapeHtml(contract.product_type || "ROLE PRODUCT")}</span><h3>${escapeHtml(contract.label || role)}</h3></div><span class="surface-caption">独立成果 · 可追溯交接</span></div>
+      <p class="business-note"><strong>本岗位只录入：</strong>${escapeHtml(contract.save_policy || "只保存本岗位事实和成果。")}</p>
+      <div class="role-product-output-strip"><span>形成成果</span><strong>${escapeHtml((contract.outputs || []).join("、"))}</strong></div>
+      <div class="role-product-collab-strip"><span>协同对象</span><strong>${escapeHtml((collaboration.objects || []).join("、") || "按责任线交接")}</strong><small>接收：${escapeHtml((collaboration.receives_from || []).map(roleLabels).join("、") || "项目输入")} · 交付：${escapeHtml((collaboration.hands_to || []).map(roleLabels).join("、") || "按需交接")}</small></div>
+      <form class="role-product-form" data-role-product-form="${escapeHtml(role)}">
+        <div class="role-product-fields">${fields}</div>
+        <div class="role-product-links">
+          <label>关联工程事件<input data-role-product-link="event_id" placeholder="EV-2026-0001（可选）" /></label>
+          <label>证据引用<input data-role-product-link="evidence_refs" placeholder="证据编号，用逗号分隔" /></label>
+          <label>资料引用<input data-role-product-link="source_refs" placeholder="资料编号，用逗号分隔" /></label>
+          <label>交接对象<select data-role-product-link="handoff_to"${handoffOptions ? "" : " disabled"}><option value="">${handoffOptions ? "请选择下一责任岗位" : "本岗位成果暂不交接"}</option>${handoffOptions}</select></label>
+        </div>
+        <label>协同说明<textarea data-role-product-link="collaboration_note" placeholder="说明需要对方核对的对象、闸门或异常"></textarea></label>
+        <div class="action-row"><button class="button button-primary" type="submit">保存本岗位成果</button><span class="request-status" data-role-product-status>保存后自动关联 Event / Evidence / 协同对象</span></div>
+      </form>
+    </article>`;
+  }).join("");
+  const recent = records.slice().reverse().slice(0, 8).map((record) => {
+    const fieldSummary = Object.entries(record.fields || {}).filter(([, value]) => value !== "" && value != null).slice(0, 3).map(([key, value]) => `${key}=${value}`).join(" · ");
+    const handoff = (record.collaboration?.handoff_to || []).map(roleLabels).join("、") || "未指定交接";
+    return `<article class="role-product-record"><div><strong>${escapeHtml(record.role_label || roleLabels(record.role) || record.role || "岗位成果")}</strong><small>${escapeHtml(record.product_type || "") } · ${escapeHtml(record.status || "SUBMITTED")}</small></div><p>${escapeHtml(fieldSummary || "已保存，等待关联对象核对")}</p><span>交接：${escapeHtml(handoff)}${record.links?.event_id ? ` · ${escapeHtml(record.links.event_id)}` : ""}</span></article>`;
+  }).join("");
+  return `<section class="overview-panel role-work-product-panel"><div class="surface-title"><div><span class="panel-label">ROLE-OWNED WORK PRODUCTS</span><h3>本岗位成果录入与交接</h3></div><span class="surface-caption">当前岗位专属字段 · 只追加 · 自动互联</span></div><div class="capability-intro"><strong>互联规则：</strong><span>每条成果保留岗位边界，按需关联既有 Event、Evidence、Source，并只交给契约规定的下一责任岗位；不建立第二金额事实源。</span></div><div class="role-product-grid">${forms}</div><div class="role-product-inbox"><div class="surface-title"><div><span class="panel-label">INBOX / HISTORY</span><h3>我的成果与待接收成果</h3></div><span class="surface-caption">待接收 ${escapeHtml(state.roleWorkProducts?.incoming_count || 0)} 条</span></div>${recent || '<p class="empty-state">尚无岗位成果记录。</p>'}</div></section>`;
+}
+
+function bindRoleWorkProductForms() {
+  document.querySelectorAll("[data-role-product-form]").forEach((form) => form.addEventListener("submit", saveRoleWorkProduct));
+}
+
+async function saveRoleWorkProduct(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const role = form.dataset.roleProductForm;
+  const fields = {};
+  form.querySelectorAll("[data-role-product-field]").forEach((input) => {
+    fields[input.dataset.roleProductField] = input.type === "checkbox" ? input.checked : input.value;
+  });
+  const link = (key) => form.querySelector(`[data-role-product-link="${key}"]`)?.value || "";
+  const status = form.querySelector("[data-role-product-status]");
+  if (status) status.textContent = "保存中…";
+  try {
+    const response = await apiJson("/api/role-work-products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: state.projectId,
+        role,
+        fields,
+        event_id: link("event_id"),
+        evidence_refs: link("evidence_refs"),
+        source_refs: link("source_refs"),
+        handoff_to: link("handoff_to"),
+        collaboration_note: link("collaboration_note"),
+      }),
+    });
+    state.roleWorkProducts = response.role_work_products || state.roleWorkProducts;
+    setStatus("岗位成果已保存，并已建立对应交接关系");
+    renderRoleOverview();
+  } catch (error) {
+    if (status) status.textContent = error.message;
+    setError(error.message);
+  }
+}
+
 function renderRoleOverview() {
   const spec = workbenchSpec();
   const manual = ROLE_OPERATION_MANUALS[currentRole()] || {
@@ -1293,6 +1400,7 @@ function renderRoleOverview() {
       <p class="business-note">${escapeHtml(execution)}</p>
     </section>
     ${renderSubcontractWorkflowPanels()}
+    ${renderRoleWorkProductPanel()}
     <section class="overview-panel role-manual-panel">
       <div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc5</span><h3>岗位操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
       <div class="overview-cards role-manual-cards">
@@ -1320,6 +1428,7 @@ function renderRoleOverview() {
       <div class="capability-intro"><span>所有成果统一绑定 Project + WBS + Location + Event + Time；本岗位只产生自己的事实，系统自动把它链接到技术、生产、造价、证据和 Outcome。</span></div>
     </section>`;
   bindViewButtons();
+  bindRoleWorkProductForms();
 }
 
 function renderOverview() {

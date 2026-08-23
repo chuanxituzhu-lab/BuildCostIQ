@@ -81,6 +81,9 @@ class LocalProjectWorkspace:
                 "golden_scenario": None,
                 "basis_references": [],
                 "alert_snapshots": [],
+                # Role-owned work products are adapter projections.  They are
+                # linked to Core/Event/Evidence but never replace those facts.
+                "role_work_products": [],
                 "audit_log": [],
             }
         return self._save_unlocked(state)
@@ -316,4 +319,20 @@ class LocalProjectWorkspace:
             }
             state["sources"] = sources
             state["audit_log"] = [*(state.get("audit_log") or []), event]
+            return self._save_unlocked(state)
+
+    def add_role_work_product(self, project_id: str, product: Mapping[str, Any]) -> dict[str, Any]:
+        """Append one role-owned work product to the project projection."""
+        with self._project_lock(project_id):
+            state = self.load(project_id)
+            if state is None:
+                state = self._create_unlocked(project_id, project_id)
+            product_id = str(product.get("product_id", "")).strip()
+            if not product_id:
+                raise ValueError("岗位成果缺少 product_id")
+            products = [dict(item) for item in list(state.get("role_work_products") or [])]
+            if any(str(item.get("product_id")) == product_id for item in products):
+                raise ValueError("岗位成果编号已经存在")
+            products.append(dict(product))
+            state["role_work_products"] = products[-1000:]
             return self._save_unlocked(state)

@@ -33,7 +33,10 @@ from .line_contracts import (
     preview_line_records,
     ROLE_FLOW_CONTRACTS,
     ROLE_FLOW_VERSION,
+    ROLE_WORKBENCH_CONTRACTS,
+    ROLE_WORKBENCH_VERSION,
     role_flow_contracts,
+    role_workbench_contracts,
 )
 from .collaboration import (
     CoordinationError,
@@ -90,6 +93,9 @@ __all__ = [
     "ROLE_FLOW_CONTRACTS",
     "ROLE_FLOW_VERSION",
     "role_flow_contracts",
+    "ROLE_WORKBENCH_CONTRACTS",
+    "ROLE_WORKBENCH_VERSION",
+    "role_workbench_contracts",
     "CoordinationError",
     "coordination_snapshot",
     "new_task",

@@ -48,6 +48,7 @@ from adapters import (
     new_task,
     preview_line_records,
     role_flow_contracts,
+    role_workbench_contracts,
     update_task,
 )
 from adapters.connectors import build_project_bundle, connector_catalog
@@ -472,6 +473,9 @@ def _visible_workspace(state: dict[str, Any], actor: Mapping[str, Any]) -> dict[
         visible["basis_references"] = []
     if "sources" not in allowed_views and not _can(actor, "view_source"):
         visible["sources"] = []
+    # Role work products are served through the actor-scoped endpoint below;
+    # never leak another role's records through the generic project snapshot.
+    visible.pop("role_work_products", None)
     visible["access"] = "full" if _can(actor, "view_cost_detail") else "operational_redacted"
     visible["role_description"] = "完整成本明细" if _can(actor, "view_cost_detail") else "本岗位工作面可见，其他专业成果按岗位边界隐藏"
     visible["visible_views"] = sorted(allowed_views)
@@ -1676,6 +1680,7 @@ def _line_contracts() -> dict[str, Any]:
             for line in LINE_IDS
         ],
         "role_flows": role_flow_contracts(),
+        "role_workbench": role_workbench_contracts(),
         "rules": {
             "preview_is_read_only": True,
             "confirmation_required": True,
@@ -1684,6 +1689,123 @@ def _line_contracts() -> dict[str, Any]:
             "new_amount_ledger": False,
         },
     }
+
+
+def _role_work_products_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
+    """Return only own/incoming role products plus the matching role contracts."""
+    roles = _actor_roles(actor)
+    records = []
+    for item in state.get("role_work_products") or []:
+        if not isinstance(item, Mapping):
+            continue
+        handoff = set(str(value) for value in _mapping(item.get("collaboration")).get("handoff_to") or [])
+        owner = str(item.get("role", ""))
+        if (ROLE_PROJECT_MANAGER not in roles) and owner not in roles and not handoff.intersection(roles):
+            continue
+        records.append(_redact_sensitive(dict(item), actor))
+    return {
+        "project_id": str(_mapping(state.get("project")).get("id", "")),
+        "contracts": role_workbench_contracts().get("roles", {}),
+        "records": records[-200:],
+        "incoming_count": sum(
+            1
+            for item in records
+            if set(str(value) for value in _mapping(item.get("collaboration")).get("handoff_to") or []).intersection(roles)
+            and str(item.get("role", "")) not in roles
+        ),
+        "policy": {
+            "adapter_projection_only": True,
+            "links_to": ("Core Event", "Evidence", "Source", "Coordination"),
+            "second_amount_ledger": False,
+            "human_confirmation_required": True,
+        },
+    }
+
+
+def _role_work_product_create(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("岗位成果请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    if not project_id:
+        raise ValueError("岗位成果缺少项目标识")
+    actor_roles = _actor_roles(actor)
+    role = str(payload.get("role") or actor.get("role") or "").strip()
+    contracts = role_workbench_contracts().get("roles", {})
+    contract = contracts.get(role)
+    if not contract:
+        raise ValueError("不支持的岗位成果角色")
+    if role not in actor_roles:
+        raise PermissionError("只能保存当前登录岗位的工作成果")
+    fields = payload.get("fields")
+    if not isinstance(fields, Mapping):
+        raise ValueError("岗位成果字段必须是 JSON 对象")
+    normalized_fields: dict[str, Any] = {}
+    missing: list[str] = []
+    for definition in contract.get("input_fields") or []:
+        key = str(definition.get("key", ""))
+        value = fields.get(key)
+        if definition.get("required") and value in (None, "", []):
+            missing.append(str(definition.get("label") or key))
+        if isinstance(value, str):
+            normalized_fields[key] = value.strip()
+        else:
+            normalized_fields[key] = value
+    if missing:
+        raise ValueError("缺少必填成果字段：" + "、".join(missing))
+
+    def _references(value: object) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
+
+    collaboration = _mapping(contract.get("collaboration"))
+    handoff_to = _references(payload.get("handoff_to"))
+    allowed_handoffs = {str(item) for item in collaboration.get("hands_to") or []}
+    if any(item not in allowed_handoffs for item in handoff_to):
+        raise ValueError("交接对象不在本岗位责任契约内")
+    event_id = str(payload.get("event_id", "")).strip()
+    evidence_refs = _references(payload.get("evidence_refs"))
+    source_refs = _references(payload.get("source_refs"))
+    stamp = datetime.now(timezone.utc).isoformat()
+    product_id = f"WP-{datetime.now(timezone.utc).year}-{uuid4().hex[:10].upper()}"
+    record = {
+        "product_id": product_id,
+        "project_id": project_id,
+        "role": role,
+        "role_label": contract.get("label", role),
+        "product_type": contract.get("product_type", "role_work_product"),
+        "status": str(payload.get("status") or "SUBMITTED").upper(),
+        "fields": normalized_fields,
+        "links": {
+            "event_id": event_id,
+            "evidence_refs": evidence_refs,
+            "source_refs": source_refs,
+        },
+        "collaboration": {
+            "handoff_to": handoff_to,
+            "objects": list(collaboration.get("objects") or []),
+            "note": str(payload.get("collaboration_note", "")).strip(),
+        },
+        "created_by": {key: actor.get(key, "") for key in ("id", "username", "role", "role_label")},
+        "created_at": stamp,
+        "updated_at": stamp,
+        "adapter_projection": True,
+        "maps_to": list(contract.get("maps_to") or []),
+    }
+    # A role product belongs to an existing project; do not let a typo create
+    # an ungoverned parallel project workspace.
+    _workspace(project_id)
+    state = PROJECT_WORKSPACE.add_role_work_product(project_id, record)
+    PROJECT_WORKSPACE.append_audit(
+        project_id,
+        "role_work_product.created",
+        actor,
+        product_id,
+        {"role": role, "product_type": record["product_type"], "handoff_to": handoff_to, "event_id": event_id},
+    )
+    return {"record": _redact_sensitive(record, actor), "role_work_products": _role_work_products_response(state, actor)}
 
 
 def _coordination_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -2547,6 +2669,15 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             self._write_json({"connectors": connector_catalog()})
         elif path == "/api/line-contracts":
             self._write_json(_line_contracts())
+        elif path == "/api/role-work-products":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                self._write_json(_role_work_products_response(_workspace(project_id), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
         elif path == "/api/recognition/catalog":
             self._write_json({"recognizers": recognition_catalog()})
         elif path == "/api/audit":
@@ -2834,6 +2965,17 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/role-work-products":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_role_work_product_create(self._read_json(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
             return
         if path == "/api/personnel/authorize":
             try:

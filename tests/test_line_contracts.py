@@ -6,6 +6,7 @@ from adapters.line_contracts import (
     mapping_for_confirmed_record,
     preview_line_records,
     role_flow_contracts,
+    role_workbench_contracts,
 )
 
 
@@ -61,6 +62,28 @@ class ResponsibilityLineTests(unittest.TestCase):
         self.assertIn("technical_conclusion", roles["cost_manager"]["cannot_change"])
         self.assertIn("production_fact", roles["cost_manager"]["cannot_change"])
         self.assertIn("cost_fact", roles["production_manager"]["cannot_change"])
+
+    def test_every_role_has_distinct_work_product_contract_and_handoffs(self):
+        catalog = role_workbench_contracts()
+        self.assertEqual(catalog["version"], "1.0")
+        roles = catalog["roles"]
+        expected = {
+            "warehouse_officer": "inventory_movement",
+            "site_engineer": "site_fact",
+            "surveyor": "survey_result",
+            "lab_testing_officer": "lab_test_result",
+            "quality_officer": "quality_acceptance",
+            "document_controller": "document_archive",
+        }
+        for role, product_type in expected.items():
+            self.assertEqual(roles[role]["product_type"], product_type)
+            self.assertGreaterEqual(len(roles[role]["input_fields"]), 4)
+            self.assertTrue(roles[role]["outputs"])
+            self.assertTrue(roles[role]["collaboration"]["hands_to"])
+        self.assertNotEqual(roles["warehouse_officer"]["product_type"], roles["procurement_officer"]["product_type"])
+        self.assertNotEqual(roles["site_engineer"]["product_type"], roles["surveyor"]["product_type"])
+        self.assertIn("cost_manager", roles["warehouse_officer"]["collaboration"]["hands_to"])
+        self.assertIn("quality_officer", roles["lab_testing_officer"]["collaboration"]["hands_to"])
 
 
 if __name__ == "__main__":

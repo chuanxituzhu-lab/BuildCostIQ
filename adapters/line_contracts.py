@@ -203,6 +203,342 @@ def role_flow_contracts() -> dict[str, Any]:
     """Return a read-only projection of the role handoff contract."""
     return {"version": ROLE_FLOW_VERSION, "roles": deepcopy(ROLE_FLOW_CONTRACTS)}
 
+
+# Every role owns a different work-product shape.  These records are adapter
+# projections: they carry the role's input/output boundary and links to the
+# existing Event/Evidence/Source graph, but they never become a second amount
+# ledger or replace P01-P08 facts.
+ROLE_WORKBENCH_VERSION = "1.0"
+
+
+def _work_field(
+    key: str,
+    label: str,
+    kind: str = "text",
+    required: bool = True,
+    placeholder: str = "",
+    options: Sequence[str] = (),
+) -> dict[str, Any]:
+    return {
+        "key": key,
+        "label": label,
+        "kind": kind,
+        "required": required,
+        "placeholder": placeholder,
+        "options": list(options),
+    }
+
+
+ROLE_WORKBENCH_CONTRACTS: dict[str, dict[str, Any]] = {
+    "project_manager": {
+        "label": "项目经理",
+        "product_type": "decision_record",
+        "input_fields": (
+            _work_field("decision_type", "决策类型", "select", True, options=("GO", "OPTIMIZE", "HOLD", "REJECT")),
+            _work_field("priority", "优先级", "select", True, options=("CRITICAL", "HIGH", "MEDIUM", "LOW")),
+            _work_field("reason", "人的判断理由", "textarea", True, "数据只提供依据，填写决策理由"),
+            _work_field("due_at", "要求完成时间", "datetime-local", False),
+        ),
+        "outputs": ("决策记录", "责任分派", "资源协调", "升级处置"),
+        "collaboration": {
+            "receives_from": ("technical_lead", "production_manager", "cost_manager"),
+            "hands_to": ("technical_lead", "production_manager", "cost_manager"),
+            "escalates_to": (),
+            "objects": ("升级事项", "决策", "资源", "风险"),
+        },
+        "maps_to": ("Core Event", "Coordination Decision", "Outcome"),
+        "save_policy": "只保存人的决策和协调，不代填任何专业事实。",
+    },
+    "cost_manager": {
+        "label": "造价经理",
+        "product_type": "commercial_review",
+        "input_fields": (
+            _work_field("baseline_ref", "造价基准引用", "text", True, "P04 零号台账/版本"),
+            _work_field("boq_ref", "清单或计量引用", "text", True, "清单编码/计量批次"),
+            _work_field("basis_ref", "价格/税口径引用", "text", True, "依据编号、税制、取价期"),
+            _work_field("review_result", "商业审核结论", "select", True, options=("PASS", "RETURN", "HOLD")),
+            _work_field("review_note", "审核说明", "textarea", True),
+        ),
+        "outputs": ("目标成本复核", "商业评价", "计量/结算审核", "Outcome 价值确认"),
+        "collaboration": {
+            "receives_from": ("cost_estimator", "surveyor", "quality_officer", "technical_lead", "production_manager"),
+            "hands_to": ("project_manager", "cost_estimator", "technical_lead", "production_manager"),
+            "escalates_to": ("project_manager",),
+            "objects": ("清单", "基线", "计量", "变更", "证据", "Outcome"),
+        },
+        "maps_to": ("P04", "P05", "P06", "P08", "Outcome"),
+        "save_policy": "金额必须引用已有基准、口径和证据；本记录不生成新金额事实。",
+    },
+    "cost_estimator": {
+        "label": "造价员",
+        "product_type": "quantity_cost_basis",
+        "input_fields": (
+            _work_field("boq_code", "清单编码", "text", True),
+            _work_field("quantity", "工程量", "number", True),
+            _work_field("unit", "计量单位", "text", True),
+            _work_field("evidence_refs", "现场/测量证据引用", "text", True, "证据编号，用逗号分隔"),
+            _work_field("pending_reason", "待确认项说明", "textarea", False),
+        ),
+        "outputs": ("工程量台账", "计量基础", "成本事实", "签证基础"),
+        "collaboration": {
+            "receives_from": ("technical_lead", "surveyor", "quality_officer", "site_engineer", "production_manager"),
+            "hands_to": ("cost_manager",),
+            "escalates_to": ("cost_manager",),
+            "objects": ("清单项", "数量", "签证", "计量证据"),
+        },
+        "maps_to": ("P02", "P04", "P05", "P06", "P07"),
+        "save_policy": "只形成造价基础；缺依据或口径冲突必须提交待确认，不猜测补齐。",
+    },
+    "technical_lead": {
+        "label": "技术负责人",
+        "product_type": "technical_release",
+        "input_fields": (
+            _work_field("work_package", "分包/工作包", "text", True),
+            _work_field("drawing_version", "图纸版本", "text", True),
+            _work_field("method_statement", "方案或技术交底", "textarea", True),
+            _work_field("assessment", "技术判定", "textarea", True),
+            _work_field("feasible", "技术放行", "select", True, options=("PASS", "RETURN", "HOLD")),
+        ),
+        "outputs": ("技术判定", "方案审查", "技术交底", "技术放行证据"),
+        "collaboration": {
+            "receives_from": ("site_engineer", "production_manager", "quality_officer", "safety_officer"),
+            "hands_to": ("production_manager", "quality_officer", "cost_manager"),
+            "escalates_to": ("project_manager",),
+            "objects": ("图纸", "规范", "分包方案", "技术核定", "放行"),
+        },
+        "maps_to": ("P03", "P06", "P07", "Core technical_track"),
+        "save_policy": "图纸版本、方案和人工技术判定齐全后才能放行生产线。",
+    },
+    "production_manager": {
+        "label": "生产经理",
+        "product_type": "production_execution",
+        "input_fields": (
+            _work_field("work_package", "执行工作包", "text", True),
+            _work_field("plan_date", "计划日期", "date", True),
+            _work_field("resources", "人员/机械/材料资源", "textarea", True),
+            _work_field("progress", "完成进度 %", "number", True),
+            _work_field("variance", "偏差与纠偏", "textarea", False),
+        ),
+        "outputs": ("生产计划", "资源组织", "进度实物量", "偏差纠偏记录"),
+        "collaboration": {
+            "receives_from": ("technical_lead", "project_manager", "procurement_officer", "warehouse_officer"),
+            "hands_to": ("site_engineer", "surveyor", "quality_officer", "cost_estimator"),
+            "escalates_to": ("project_manager",),
+            "objects": ("工作包", "计划", "资源", "实物量", "纠偏"),
+        },
+        "maps_to": ("Core production_track", "P06", "P07"),
+        "save_policy": "只记录生产组织和执行状态；完成量交测量、质量、造价线复核后才关闭。",
+    },
+    "site_engineer": {
+        "label": "施工员/测量员",
+        "product_type": "site_fact",
+        "input_fields": (
+            _work_field("wbs", "WBS/清单位置", "text", True),
+            _work_field("location", "现场位置", "text", True),
+            _work_field("work_activity", "施工活动", "text", True),
+            _work_field("progress_qty", "完成量申报", "number", True),
+            _work_field("condition", "现场条件/异常", "textarea", True),
+        ),
+        "outputs": ("现场事实", "日完成量申报", "施工事件", "现场证据"),
+        "collaboration": {
+            "receives_from": ("production_manager", "technical_lead"),
+            "hands_to": ("surveyor", "quality_officer", "technical_lead", "cost_estimator"),
+            "escalates_to": ("production_manager",),
+            "objects": ("位置", "WBS", "施工事实", "异常"),
+        },
+        "maps_to": ("Core Event", "P07", "P06"),
+        "save_policy": "原始现场事实只追加版本，必须绑定项目、WBS、位置、时间和证据。",
+    },
+    "surveyor": {
+        "label": "测量员",
+        "product_type": "survey_result",
+        "input_fields": (
+            _work_field("survey_task", "测量任务", "text", True),
+            _work_field("control_point", "控制点/测站", "text", True),
+            _work_field("design_elevation", "设计坐标/标高", "text", True),
+            _work_field("measured_elevation", "实测坐标/标高", "text", True),
+            _work_field("measured_quantity", "实测工程量", "number", True),
+            _work_field("survey_method", "测量方法", "text", True),
+        ),
+        "outputs": ("放样记录", "坐标标高", "实测工程量", "测量证据"),
+        "collaboration": {
+            "receives_from": ("site_engineer", "production_manager", "technical_lead"),
+            "hands_to": ("quality_officer", "cost_estimator", "technical_lead"),
+            "escalates_to": ("technical_lead",),
+            "objects": ("控制点", "坐标", "标高", "实测量", "测量版本"),
+        },
+        "maps_to": ("P03", "P07", "Core measurement_track"),
+        "save_policy": "实测数据只追加版本，不覆盖原始测量；异常回到技术负责人确认。",
+    },
+    "quality_officer": {
+        "label": "质量负责人",
+        "product_type": "quality_acceptance",
+        "input_fields": (
+            _work_field("inspection_batch", "检验批/工序", "text", True),
+            _work_field("location", "检查位置", "text", True),
+            _work_field("inspection_item", "检查项目", "text", True),
+            _work_field("result", "检查结果", "select", True, options=("PASS", "RETURN", "HOLD")),
+            _work_field("defect", "缺陷与整改要求", "textarea", False),
+            _work_field("reinspection_result", "复验结论", "select", False, options=("PASS", "RETURN", "PENDING")),
+        ),
+        "outputs": ("工序检查", "整改复验", "检验批结论", "质量验收证据"),
+        "collaboration": {
+            "receives_from": ("site_engineer", "surveyor", "lab_testing_officer", "technical_lead"),
+            "hands_to": ("document_controller", "cost_estimator", "technical_lead"),
+            "escalates_to": ("technical_lead", "project_manager"),
+            "objects": ("报验", "检验批", "缺陷", "整改", "验收"),
+        },
+        "maps_to": ("P07", "Core verification", "P08"),
+        "save_policy": "不合格必须退回源岗位；整改和复验完成后才进入计量证据链。",
+    },
+    "lab_testing_officer": {
+        "label": "试验检测员",
+        "product_type": "lab_test_result",
+        "input_fields": (
+            _work_field("material_batch", "材料批次", "text", True),
+            _work_field("sample_id", "取样编号", "text", True),
+            _work_field("test_type", "试验项目", "text", True),
+            _work_field("spec", "规范/指标", "text", True),
+            _work_field("result", "检测结果", "text", True),
+            _work_field("pass_status", "合格状态", "select", True, options=("PASS", "FAIL", "PENDING")),
+            _work_field("report_ref", "报告编号", "text", True),
+        ),
+        "outputs": ("取样记录", "试验报告", "检测台账", "材料批次校验"),
+        "collaboration": {
+            "receives_from": ("procurement_officer", "warehouse_officer", "quality_officer"),
+            "hands_to": ("quality_officer", "document_controller", "warehouse_officer"),
+            "escalates_to": ("technical_lead",),
+            "objects": ("材料批次", "取样", "试验报告", "合格状态"),
+        },
+        "maps_to": ("P07", "Core evidence", "Quality acceptance"),
+        "save_policy": "报告必须绑定材料批次、取样编号和工程位置；不合格只形成异常。",
+    },
+    "document_controller": {
+        "label": "资料员",
+        "product_type": "document_archive",
+        "input_fields": (
+            _work_field("document_type", "资料类型", "text", True),
+            _work_field("document_no", "资料编号", "text", True),
+            _work_field("version", "版本", "text", True),
+            _work_field("source_refs", "来源与签认引用", "text", True),
+            _work_field("completeness", "完整性检查", "select", True, options=("COMPLETE", "RETURN", "PENDING")),
+            _work_field("archive_area", "归档位置", "text", True),
+        ),
+        "outputs": ("报验资料", "版本台账", "证据包", "数字资产完整性"),
+        "collaboration": {
+            "receives_from": ("quality_officer", "lab_testing_officer", "surveyor", "technical_lead", "cost_estimator"),
+            "hands_to": ("cost_manager", "project_manager"),
+            "escalates_to": ("project_manager",),
+            "objects": ("资料", "版本", "签认", "归档", "数字资产"),
+        },
+        "maps_to": ("P07", "P08", "Source archive"),
+        "save_policy": "只检查、归档和关联版本，不补造专业事实。",
+    },
+    "safety_officer": {
+        "label": "安全员",
+        "product_type": "safety_finding",
+        "input_fields": (
+            _work_field("inspection_at", "巡检时间", "datetime-local", True),
+            _work_field("location", "隐患位置", "text", True),
+            _work_field("hazard", "隐患描述", "textarea", True),
+            _work_field("severity", "风险等级", "select", True, options=("CRITICAL", "HIGH", "MEDIUM", "LOW")),
+            _work_field("responsible_person", "责任人", "text", True),
+            _work_field("due_at", "整改期限", "datetime-local", True),
+            _work_field("rectification_status", "整改状态", "select", True, options=("OPEN", "RECTIFYING", "CLOSED")),
+        ),
+        "outputs": ("安全检查", "隐患单", "整改复查", "安全验收"),
+        "collaboration": {
+            "receives_from": ("production_manager", "technical_lead", "site_engineer"),
+            "hands_to": ("production_manager", "technical_lead"),
+            "escalates_to": ("project_manager",),
+            "objects": ("巡检", "隐患", "责任人", "期限", "关闭证据"),
+        },
+        "maps_to": ("Core Event", "P07", "Safety verification"),
+        "save_policy": "隐患必须具备责任人、期限和关闭证据；未关闭不得静默消失。",
+    },
+    "procurement_officer": {
+        "label": "采购员",
+        "product_type": "procurement_order",
+        "input_fields": (
+            _work_field("request_id", "采购需求编号", "text", True),
+            _work_field("material_code", "材料编码", "text", True),
+            _work_field("requested_qty", "需求数量", "number", True),
+            _work_field("unit", "单位", "text", True),
+            _work_field("supplier", "供应商", "text", True),
+            _work_field("quote", "询价/比价摘要", "textarea", True),
+            _work_field("order_ref", "订单编号", "text", False),
+            _work_field("delivery_date", "到货日期", "date", False),
+        ),
+        "outputs": ("采购计划", "询价比价", "订单", "到货记录", "价量偏差"),
+        "collaboration": {
+            "receives_from": ("production_manager", "cost_manager", "warehouse_officer"),
+            "hands_to": ("warehouse_officer", "lab_testing_officer", "production_manager", "cost_manager"),
+            "escalates_to": ("cost_manager", "project_manager"),
+            "objects": ("需求", "供应商", "订单", "到货", "价量偏差"),
+        },
+        "maps_to": ("P04/P05 reference", "Procurement evidence", "P07"),
+        "save_policy": "采购不修改合同或造价基准；超量超价只形成偏差并提交确认。",
+    },
+    "warehouse_officer": {
+        "label": "仓管员",
+        "product_type": "inventory_movement",
+        "input_fields": (
+            _work_field("movement_type", "收发存动作", "select", True, options=("RECEIPT", "ISSUE", "RETURN", "COUNT")),
+            _work_field("material_batch", "材料批次", "text", True),
+            _work_field("document_ref", "到货/领料/退料单号", "text", True),
+            _work_field("quantity", "数量", "number", True),
+            _work_field("unit", "单位", "text", True),
+            _work_field("location", "库位/领用位置", "text", True),
+            _work_field("recipient", "领用人/班组", "text", False),
+            _work_field("inventory_after", "动作后库存", "number", True),
+            _work_field("check_status", "核对状态", "select", True, options=("CHECKED", "EXCEPTION", "PENDING")),
+        ),
+        "outputs": ("入库", "出库", "退库", "库存/盘点台账", "超领/节余异常"),
+        "collaboration": {
+            "receives_from": ("procurement_officer", "lab_testing_officer", "production_manager"),
+            "hands_to": ("production_manager", "cost_manager", "lab_testing_officer"),
+            "escalates_to": ("production_manager", "cost_manager"),
+            "objects": ("到货批次", "领料单", "退料单", "库存", "盘点异常"),
+        },
+        "maps_to": ("Material evidence", "P07", "Production consumption reference"),
+        "save_policy": "只记录收发存事实；不进入 P04 零号台账，不修改采购、试验和造价事实。",
+    },
+    "administrative_officer": {
+        "label": "行政人员",
+        "product_type": "personnel_handover",
+        "input_fields": (
+            _work_field("person_name", "人员姓名/登录名", "text", True),
+            _work_field("role", "岗位角色", "text", True),
+            _work_field("handover_type", "交接类型", "select", True, options=("NEW", "RENAME", "ROLE_CHANGE", "LEAVE")),
+            _work_field("effective_at", "生效时间", "datetime-local", True),
+            _work_field("authorization_ref", "项目经理授权引用", "text", True),
+            _work_field("notes", "交接说明", "textarea", False),
+        ),
+        "outputs": ("项目人员名册", "授权留痕", "账号交接记录"),
+        "collaboration": {
+            "receives_from": ("project_manager",),
+            "hands_to": ("project_manager",),
+            "escalates_to": ("project_manager",),
+            "objects": ("人员", "岗位", "授权", "交接"),
+        },
+        "maps_to": ("Personnel registry", "Audit log", "Coordination"),
+        "save_policy": "必须有项目经理授权；不进入任何专业事实或金额台账。",
+    },
+}
+
+
+def role_workbench_contracts(roles: Sequence[str] | None = None) -> dict[str, Any]:
+    """Return the role-specific input/output and handoff contracts."""
+    selected = set(roles or ROLE_WORKBENCH_CONTRACTS)
+    return {
+        "version": ROLE_WORKBENCH_VERSION,
+        "roles": {
+            role: deepcopy(contract)
+            for role, contract in ROLE_WORKBENCH_CONTRACTS.items()
+            if role in selected
+        },
+    }
+
 LINE_CONTRACTS: dict[str, dict[str, Any]] = {
     "production": {
         "line": "production",

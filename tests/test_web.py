@@ -80,6 +80,11 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(architecture["capabilities"][-1]["id"], "P09")
         self.assertEqual(architecture["capabilities"][-1]["status"], "implemented")
         self.assertTrue(any(layer["id"] == "gateway" for layer in architecture["layers"]))
+        with urlopen(f"{self.base_url}/api/line-contracts", timeout=2) as response:
+            contracts = json.load(response)
+        self.assertEqual(contracts["role_workbench"]["version"], "1.0")
+        self.assertEqual(contracts["role_workbench"]["roles"]["warehouse_officer"]["product_type"], "inventory_movement")
+        self.assertEqual(contracts["role_workbench"]["roles"]["surveyor"]["product_type"], "survey_result")
 
     def test_local_roles_control_source_lifecycle_and_audit(self):
         suffix = uuid4().hex[:10]
@@ -1166,6 +1171,76 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(p09["capability_id"], "P09")
         self.assertEqual(p09["summary"]["event_count"], 1)
         self.assertTrue(p09["rules"]["derived_values_only"])
+
+    def test_role_work_products_are_distinct_and_handoff_scoped(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        warehouse = post_json(
+            "/api/auth/register",
+            {"username": f"warehouse-product-{suffix}", "password": "local-pass", "role": "warehouse_officer"},
+            self.manager_token,
+        )
+        production = post_json(
+            "/api/auth/register",
+            {"username": f"production-product-{suffix}", "password": "local-pass", "role": "production_manager"},
+            self.manager_token,
+        )
+        site = post_json(
+            "/api/auth/register",
+            {"username": f"site-product-{suffix}", "password": "local-pass", "role": "site_engineer"},
+            self.manager_token,
+        )
+        project_id = f"role-products-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "岗位成果契约项目"}, self.manager_token)
+        created = post_json(
+            "/api/role-work-products",
+            {
+                "project_id": project_id,
+                "role": "warehouse_officer",
+                "fields": {
+                    "movement_type": "ISSUE",
+                    "material_batch": "STEEL-01",
+                    "document_ref": "领料-01",
+                    "quantity": 12,
+                    "unit": "t",
+                    "location": "K12+300",
+                    "recipient": "一工班",
+                    "inventory_after": 88,
+                    "check_status": "CHECKED",
+                },
+                "handoff_to": "production_manager",
+                "event_id": "EV-2026-0001",
+                "evidence_refs": "IMG-01",
+            },
+            warehouse["token"],
+        )
+        self.assertEqual(created["record"]["product_type"], "inventory_movement")
+        self.assertEqual(created["record"]["collaboration"]["handoff_to"], ["production_manager"])
+        with urlopen(self.auth_request(f"/api/role-work-products?project_id={project_id}", warehouse["token"]), timeout=2) as response:
+            warehouse_view = json.load(response)
+        self.assertEqual(warehouse_view["contracts"]["warehouse_officer"]["product_type"], "inventory_movement")
+        self.assertEqual(len(warehouse_view["records"]), 1)
+        with urlopen(self.auth_request(f"/api/role-work-products?project_id={project_id}", production["token"]), timeout=2) as response:
+            production_view = json.load(response)
+        self.assertEqual(production_view["incoming_count"], 1)
+        self.assertEqual(production_view["records"][0]["role"], "warehouse_officer")
+        with self.assertRaises(HTTPError) as denied:
+            post_json(
+                "/api/role-work-products",
+                {"project_id": project_id, "role": "warehouse_officer", "fields": {}},
+                site["token"],
+            )
+        self.assertEqual(denied.exception.code, 403)
 
 
 if __name__ == "__main__":
