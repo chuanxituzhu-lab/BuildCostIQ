@@ -133,6 +133,16 @@ tbody tr.active-row { background: #e7ad5e0d; }
 .personnel-field-grid { grid-template-columns: minmax(140px, 200px) minmax(180px, 1fr); gap: 10px; }
 .personnel-field-grid > label { min-width: 0; }
 .personnel-field-grid + .permission-note { margin-top: 12px; white-space: normal; line-height: 1.5; }
+.personnel-invite-panel { margin-top: 16px; }
+.invite-list-wrap { display: grid; gap: 8px; margin-top: 14px; }
+.invite-list { display: grid; gap: 7px; }
+.invite-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(180px, .9fr) auto; gap: 12px; align-items: center; padding: 10px 11px; border: 1px solid var(--line-soft); background: #101a25; }
+.invite-row strong, .invite-row small { display: block; }
+.invite-row strong { color: var(--ink); font-size: 11px; }
+.invite-row small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.status-chip { display: inline-block; padding: 3px 6px; border: 1px solid #38516d; color: var(--blue); font-size: 10px; }
+.invite-link-notice { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; }
+.invite-link-notice input { min-width: 0; font: 10px "SFMono-Regular", Consolas, monospace; }
 .wide-field { margin-top: 15px; }
 label { display: flex; flex-direction: column; gap: 6px; color: #cbd3df; font-size: 12px; font-weight: 650; }
 input, textarea { width: 100%; color: var(--ink); background: #0b1118; border: 1px solid var(--line); border-radius: 2px; outline: none; }
@@ -735,6 +745,7 @@ summary { padding: 11px 0; color: var(--amber-bright); cursor: pointer; font-siz
   .recognizer-list { grid-template-columns: 1fr; }
   .auth-shell { margin: 28px 16px 0; padding: 20px; }
   .auth-grid, .control-grid { grid-template-columns: 1fr; }
+  .invite-row, .invite-link-notice { grid-template-columns: 1fr; align-items: stretch; }
   .audit-row { grid-template-columns: 1fr; gap: 2px; }
   .export-folder-card { align-items: flex-start; flex-direction: column; }
   .basis-item, .basis-reference-actions, .archive-location { align-items: flex-start; flex-direction: column; }

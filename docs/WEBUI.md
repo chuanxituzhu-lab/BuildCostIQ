@@ -69,7 +69,7 @@ The municipal workflow does not present one universal menu. After login the brow
 
 The field workbench is labelled `施工员/测量员`; existing `现场工程师` aliases remain valid for backwards-compatible login/role migration. Each role home shows only its own outputs, execution loop and completion boundary.
 
-The v0.8.0-rc7 home screen includes a role operation manual and a fixed event-intake queue for the signed-in role. It presents the minimum Feynman loop—what to receive, what to save, who confirms it, and what to check before handoff. Production, technical and site facts are retained first; only the cost manager labels and starts a Core Event, then the system shows fixed deliverables and due times to the routed roles. Project managers and authorized administrative officers also see the current-project personnel entry; the project roster is isolated from other projects.
+The v0.8.0-rc8 home screen includes a role operation manual and a fixed event-intake queue for the signed-in role. It presents the minimum Feynman loop—what to receive, what to save, who confirms it, and what to check before handoff. Production, technical and site facts are retained first; only the cost manager labels and starts a Core Event, then the system shows fixed deliverables and due times to the routed roles. Project managers and authorized administrative officers also see the current-project personnel entry; the project roster is isolated from other projects.
 
 Operational roles receive a read-only, role-scoped Event view: warehouse officers see only assigned material events, alerts and fixed requirements; event distillation, event creation, Outcome editing and unrelated transitions are hidden. P07 evidence links remain owned by the cost manager/document controller. Other roles see deterministic evidence projections based on document number, batch, log/photo reference, WBS and location; unique matches are shown automatically, while ambiguous matches remain for human confirmation.
 
@@ -88,6 +88,8 @@ Operational roles receive a read-only, role-scoped Event view: warehouse officer
 | 行政人员 | 仅协同；人员管理必须由项目经理授权 |
 
 普通岗位首页固定为“我的工作 → 待交成果 → 审核状态 → 异常/退回 → 直接责任链”。岗位菜单由服务端和前端同一份角色契约投影；隐藏菜单不是唯一安全措施，`/api/search` 及 P01–P08 写接口也按岗位能力拒绝越权请求。
+
+人员进入方式采用“中央 WebUI + 项目岗位邀请”：项目经理或授权行政人员在人员管理面板生成当前项目的岗位邀请链接，岗位人员在浏览器接受邀请并设置密码后，系统自动加入该项目名册并投影对应角色界面。邀请链接一次性、可过期、可撤销；服务端只保存 token 哈希，接受/撤销/过期和项目绑定均进入人员审计。岗位电脑只需打开中央节点地址，可将链接创建为桌面快捷方式，不需要安装一份 BuildCostIQ，也不会因人员更换而丢失历史成果。
 
 当前岗位的“直接责任链”来自 `/api/line-contracts` 的 `role_flows` 契约。卡片只展示本岗位应接收的输入、应保存的成果、下一接收岗位、升级对象和不可修改项；项目经理额外看到跨线升级关系，造价经理额外看到商业总审边界。它是现有 Core/P01–P08/P09 的交接说明，不新增状态机、金额事实或 P09。
 

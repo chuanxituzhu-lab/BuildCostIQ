@@ -1099,6 +1099,49 @@ def _personnel_roles(payload: object, actor: Mapping[str, Any]) -> dict[str, Any
     return AUTH_STORE.update_roles(dict(actor), user_id, roles, project_id=project_id)
 
 
+def _personnel_invite_create(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("岗位邀请请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    _workspace(project_id)
+    return AUTH_STORE.create_project_invite(
+        dict(actor),
+        project_id,
+        str(payload.get("role", "")).strip(),
+        payload.get("expires_hours", 72),
+    )
+
+
+def _personnel_invites(project_id: str, actor: Mapping[str, Any]) -> dict[str, Any]:
+    _workspace(project_id)
+    return AUTH_STORE.list_project_invites(dict(actor), project_id)
+
+
+def _personnel_invite_revoke(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("岗位邀请撤销请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    _workspace(project_id)
+    return AUTH_STORE.revoke_project_invite(
+        dict(actor),
+        project_id,
+        str(payload.get("invite_id", "")).strip(),
+    )
+
+
+def _invite_accept(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("岗位邀请接受请求必须是 JSON 对象")
+    result = AUTH_STORE.accept_project_invite(
+        str(payload.get("token", "")).strip(),
+        str(payload.get("username", "")).strip(),
+        str(payload.get("password", "")),
+    )
+    session_token = secrets.token_urlsafe(32)
+    SESSIONS[session_token] = result["user"]
+    return {"token": session_token, **result}
+
+
 def _source_for(state: dict[str, Any], source_id: str) -> dict[str, Any]:
     source = next((item for item in state.get("sources", []) if item.get("source_id") == source_id), None)
     if source is None:
@@ -2696,7 +2739,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 10)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "v0.8.0-rc7：仓管及操作岗位只读查看分配事件；证据按单据、批次、日志/照片、WBS 和位置自动投影，歧义才人工复核",
+        "release_highlights": "v0.8.0-rc8：项目级岗位邀请进入中央 WebUI；岗位只读边界、证据自动投影和人员项目隔离继续生效",
     }
 
 
@@ -2808,6 +2851,17 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json(AUTH_STORE.personnel_snapshot(project_id))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
+        elif path == "/api/personnel/invites":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0].strip()
+                self._write_json(_personnel_invites(project_id, actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
         elif path == "/api/source/view":
             try:
                 actor = _require_actor(self.headers, "view_source")
@@ -3002,6 +3056,12 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             SESSIONS.pop(token, None)
             self._write_json({"ok": True})
             return
+        if path == "/api/invite/accept":
+            try:
+                self._write_json(_invite_accept(self._read_json()))
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
         if path == "/api/search":
             try:
                 actor = _require_actor(self.headers, "view_workspace")
@@ -3157,6 +3217,28 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/personnel/invites":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_invite_create(self._read_json(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/personnel/invites/revoke":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_invite_revoke(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
             return
         if path == "/api/event-intake/confirm":
             try:

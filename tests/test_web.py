@@ -418,6 +418,97 @@ class WebUiTests(unittest.TestCase):
             )
         self.assertEqual(denied_post.exception.code, 403)
 
+    def test_project_role_invite_binds_one_user_to_one_project_and_is_one_time(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token=None):
+            headers = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        project_manager = post_json(
+            "/api/auth/register",
+            {"username": f"invite-manager-{suffix}", "password": "local-pass", "role": "project_manager"},
+            self.manager_token,
+        )
+        project_id = f"invite-project-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "岗位邀请项目"}, self.manager_token)
+
+        created = post_json(
+            "/api/personnel/invites",
+            {"project_id": project_id, "role": "warehouse_officer", "expires_hours": 24},
+            project_manager["token"],
+        )
+        self.assertEqual(created["project_id"], project_id)
+        self.assertEqual(created["role"], "warehouse_officer")
+        self.assertTrue(created["token"])
+        self.assertTrue(created["accept_path"].startswith("/?invite="))
+
+        with self.assertRaises(HTTPError) as denied:
+            post_json(
+                "/api/personnel/invites",
+                {"project_id": project_id, "role": "warehouse_officer"},
+                self.manager_token,
+            )
+        self.assertEqual(denied.exception.code, 403)
+        with self.assertRaises(HTTPError) as missing_project:
+            post_json(
+                "/api/personnel/invites",
+                {"project_id": f"missing-{suffix}", "role": "warehouse_officer"},
+                project_manager["token"],
+            )
+        self.assertEqual(missing_project.exception.code, 404)
+
+        accepted = post_json(
+            "/api/invite/accept",
+            {"token": created["token"], "username": f"warehouse-{suffix}", "password": "local-pass"},
+        )
+        self.assertEqual(accepted["project_id"], project_id)
+        self.assertEqual(accepted["user"]["role"], "warehouse_officer")
+        self.assertTrue(accepted["token"])
+
+        with urlopen(self.auth_request(f"/api/personnel?project_id={project_id}", project_manager["token"]), timeout=2) as response:
+            roster = json.load(response)
+        self.assertTrue(any(user["username"] == f"warehouse-{suffix}" for user in roster["users"]))
+
+        with self.assertRaises(HTTPError) as reused:
+            post_json(
+                "/api/invite/accept",
+                {"token": created["token"], "username": f"warehouse-reuse-{suffix}", "password": "local-pass"},
+            )
+        self.assertEqual(reused.exception.code, 422)
+
+        with urlopen(self.auth_request(f"/api/personnel/invites?project_id={project_id}", project_manager["token"]), timeout=2) as response:
+            listed = json.load(response)
+        self.assertEqual(listed["invites"][0]["status"], "ACCEPTED")
+        self.assertNotIn("token", listed["invites"][0])
+
+        second = post_json(
+            "/api/personnel/invites",
+            {"project_id": project_id, "role": "procurement_officer", "expires_hours": 24},
+            project_manager["token"],
+        )
+        revoked = post_json(
+            "/api/personnel/invites/revoke",
+            {"project_id": project_id, "invite_id": second["invite_id"]},
+            project_manager["token"],
+        )
+        self.assertEqual(revoked["invite"]["status"], "REVOKED")
+        with urlopen(self.auth_request(f"/api/personnel?project_id={project_id}", project_manager["token"]), timeout=2) as response:
+            final_roster = json.load(response)
+        actions = [event["action"] for event in final_roster["audit_log"]]
+        self.assertIn("personnel.invite_created", actions)
+        self.assertIn("personnel.invite_accepted", actions)
+        self.assertIn("personnel.invite_revoked", actions)
+
     def test_personnel_rosters_are_isolated_by_project(self):
         suffix = uuid4().hex[:10]
 

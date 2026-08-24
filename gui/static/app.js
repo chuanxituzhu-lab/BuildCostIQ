@@ -13,7 +13,7 @@ const UI_TRANSLATIONS = {
   "资料服务连接中": "Connecting to data service", "资料服务就绪": "Data service ready", "资料服务不可用": "Data service unavailable",
   "当前版本": "Current version", "退出登录": "Sign out", "登录本地工作台": "Sign in to local workspace",
   "登录后首页就是你的岗位操作手册：先看本岗位输入，再按步骤保存成果，最后提交责任线复核。项目经理负责经营指标和人员治理；造价经理负责造价业务；生产、技术、现场、物资和资料岗位只处理各自工作面。": "After signing in, the home page becomes your role manual: review inputs, save outputs step by step, and submit them for responsibility-line review. Project managers handle KPIs and personnel governance; cost managers handle commercial work; production, technical, field, material, and document roles stay within their own work surfaces.",
-  "人员登录": "Personnel sign-in", "初始化账号": "Initialize account", "用户名": "Username", "密码": "Password", "登录": "Sign in", "注册并进入": "Register and enter",
+  "人员登录": "Personnel sign-in", "初始化账号": "Initialize account", "用户名": "Username", "密码": "Password", "登录": "Sign in", "注册并进入": "Register and enter", "接受岗位邀请": "Accept role invitation", "接受邀请并进入": "Accept invitation and enter", "设置登录密码（至少 6 位）": "Set login password (at least 6 characters)", "岗位邀请已准备好。接受后会创建或接管一个账号，并只绑定到邀请对应的项目。": "A role invitation is ready. Accept it to create or take over an account bound only to the invited project.",
   "已登记人员直接使用项目经理/行政人员提供的姓名（登录名）和初始密码进入对应岗位工作台。": "Registered personnel use the name (login) and initial password provided by the project manager or administrative officer.",
   "首次使用或本机初始化时注册管理账号；日常岗位人员由项目经理或已授权行政人员在人员管理中登记。": "Register a management account for first use or local initialization; daily personnel are registered by the project manager or an authorized administrative officer.",
   "密码（至少 6 位）": "Password (at least 6 characters)", "工作台角色": "Workspace role",
@@ -28,6 +28,7 @@ const UI_TRANSLATIONS = {
   "项目经理指标台": "Project Manager KPI Desk", "造价经理全权限工作台": "Cost Manager Full Workspace", "造价员成果工作台": "Cost Estimator Output Desk", "技术负责人工作台": "Technical Lead Workspace", "生产经理驾驶台": "Production Manager Control Desk", "施工员/测量员工作台": "Site Engineer / Surveyor Workspace", "测量员成果工作台": "Surveyor Output Desk", "质量负责人工作台": "Quality Officer Workspace", "试验检测工作台": "Lab Testing Workspace", "资料员归档工作台": "Document Controller Archive Desk", "安全员闭环工作台": "Safety Officer Closed-loop Desk", "采购员物资工作台": "Procurement Desk", "仓管员物资工作台": "Warehouse Desk", "行政协同工作台": "Administrative Coordination Desk",
   "项目经理": "Project Manager", "造价经理": "Cost Manager", "造价员": "Cost Estimator", "生产经理": "Production Manager", "现场工程师": "Site Engineer", "质量负责人": "Quality Officer", "行政人员": "Administrative Officer", "责任链": "Responsibility chain", "本岗位责任链": "This role's responsibility chain", "接收": "Receives", "交付给": "Hands to", "升级到": "Escalates to", "无": "None", "工作流只推动现有 Event、Action、Evidence、Verification、Outcome；岗位不能跨线代改事实。": "The workflow only moves existing Event, Action, Evidence, Verification, and Outcome records; roles cannot edit another line's facts.",
   "保存": "Save", "保存人员": "Save personnel", "保存成果": "Save output", "保存工程事件": "Save engineering event", "保存变更清单": "Save change register", "保存成本计划": "Save cost plan", "新增": "Add", "新增变更": "Add change", "取消": "Cancel", "关闭": "Close", "确认": "Confirm", "提交": "Submit", "下载": "Download", "上传": "Upload", "导出": "Export", "刷新": "Refresh", "返回操作看板": "Back to work desk", "进入协同工作流": "Open coordination workflow",
+  "推送岗位工作台链接": "Send role workspace link", "只绑定当前项目；无需每台电脑安装 BuildCostIQ": "Bound to this project; no BuildCostIQ installation on each computer", "生成邀请后通过项目群或私聊发送。对方接受并设置密码后，使用浏览器链接进入自己的岗位界面；数据仍保存在中心项目底座，人员更换不会丢失成果。": "Send the generated link in the project group or a direct message. After accepting and setting a password, the person opens their role workspace in a browser; data stays in the central project base and survives personnel changes.", "岗位角色": "Role", "有效期（小时）": "Validity (hours)", "生成邀请链接": "Generate invitation link", "当前项目暂无岗位邀请。生成后把链接发给对应人员。": "This project has no role invitations. Generate one and send it to the person.", "本次邀请链接（只显示一次）": "This invitation link (shown once)", "复制链接": "Copy link", "有效": "Active", "已接受": "Accepted", "已撤销": "Revoked", "已过期": "Expired", "撤销": "Revoke", "邀请已生成": "Invitation generated", "邀请链接已复制，可发送给岗位人员": "Invitation link copied; send it to the role owner", "岗位邀请已撤销": "Role invitation revoked",
   "未形成成果": "No output yet", "实体成果": "Physical output", "证据完整": "Evidence ready", "已申报": "Submitted", "已确认": "Confirmed", "收入成立": "Revenue recognized", "已结算": "Settled", "已回款": "Cash realized", "已拒绝": "Rejected", "已放弃": "Abandoned", "实体": "Physical", "经营": "Commercial", "合同权利": "Contractual", "工期": "Schedule", "现金": "Cash",
   "已发现": "Discovered", "已判断": "Assessed", "方案规划": "Planning", "造价复核": "Commercial review", "已决策": "Decided", "待/已批准": "Pending / approved", "执行中": "Executing", "已验证": "Verified", "商务申报": "Commercial claim", "结算中": "Settling", "审计中": "Auditing", "回收中": "Collecting", "已关闭": "Closed",
   "现场条件": "Site condition", "设计变化": "Design change", "合同审查": "Contract review", "成本偏差": "Cost variance", "数量偏差": "Quantity variance", "工期偏差": "Schedule variance", "技术优化": "Technical optimization", "审计反馈": "Audit feedback", "现场发现": "Site discovery", "图纸审查": "Drawing review", "业主指令": "Owner instruction", "低": "Low", "中": "Medium", "高": "High", "紧急": "Critical",
@@ -247,6 +248,7 @@ function applyLanguage(root = document) {
 const state = {
   language: selectedLanguage(),
   auth: { token: sessionStorage.getItem("buildcostiq_token") || "", user: null },
+  preferredProjectId: sessionStorage.getItem("buildcostiq_project_id") || "",
   sample: null,
   workspace: null,
   view: "overview",
@@ -309,7 +311,7 @@ const state = {
   intakeReports: [],
   basisIntakeReports: [],
   exportWorkspace: { kind: "report", filename: "", directoryHandle: null },
-  personnel: { users: [], audit_log: [], roles: [], assignment_catalog: null, policy: null },
+  personnel: { users: [], audit_log: [], roles: [], assignment_catalog: null, policy: null, invites: [], invite_link: "" },
 };
 
 const EXPORT_OPTIONS = [
@@ -614,11 +616,22 @@ function isKpiOnly() {
   return isProjectManager();
 }
 
+function projectInviteToken() {
+  return new URLSearchParams(window.location.search).get("invite")?.trim() || "";
+}
+
 function showAuth(message = "") {
   $("authShell").hidden = false;
   $("workspaceShell").hidden = true;
   $("globalSearchForm").hidden = true;
   $("userSession").hidden = true;
+  const hasInvite = Boolean(projectInviteToken());
+  const inviteForm = $("inviteForm");
+  if (inviteForm) inviteForm.hidden = !hasInvite;
+  const registerForm = $("registerForm");
+  if (registerForm) registerForm.hidden = hasInvite;
+  const notice = $("inviteProjectNotice");
+  if (notice && hasInvite) notice.textContent = "岗位邀请已准备好。接受后会创建或接管一个账号，并只绑定到邀请对应的项目。";
   setAuthMessage(message);
 }
 
@@ -643,7 +656,15 @@ function showWorkspace(user) {
 async function finishAuth(response) {
   state.auth.token = response.token;
   state.auth.user = response.user;
+  if (response.project_id) {
+    state.preferredProjectId = response.project_id;
+    sessionStorage.setItem("buildcostiq_project_id", response.project_id);
+  } else {
+    state.preferredProjectId = "";
+    sessionStorage.removeItem("buildcostiq_project_id");
+  }
   sessionStorage.setItem("buildcostiq_token", response.token);
+  if (projectInviteToken()) window.history.replaceState({}, document.title, window.location.pathname);
   showWorkspace(response.user);
   setAuthMessage("");
   await loadDemo();
@@ -681,10 +702,31 @@ async function submitRegister(event) {
   }
 }
 
+async function submitInvite(event) {
+  event.preventDefault();
+  const token = projectInviteToken();
+  if (!token) {
+    setAuthMessage("岗位邀请链接无效或已失效");
+    return;
+  }
+  try {
+    const response = await apiJson("/api/invite/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, username: $("inviteUsername").value, password: $("invitePassword").value }),
+    });
+    await finishAuth(response);
+  } catch (error) {
+    setAuthMessage(error.message);
+  }
+}
+
 async function logout() {
   try { await apiJson("/api/auth/logout", { method: "POST" }); } catch (_) { /* local session cleanup still wins */ }
   state.auth = { token: "", user: null };
   sessionStorage.removeItem("buildcostiq_token");
+  state.preferredProjectId = "";
+  sessionStorage.removeItem("buildcostiq_project_id");
   showAuth("已退出登录");
 }
 
@@ -698,6 +740,8 @@ async function restoreSession() {
   } catch (_) {
     state.auth = { token: "", user: null };
     sessionStorage.removeItem("buildcostiq_token");
+    state.preferredProjectId = "";
+    sessionStorage.removeItem("buildcostiq_project_id");
     return false;
   }
 }
@@ -2506,6 +2550,41 @@ function renderPersonnelAudit(container) {
   }));
 }
 
+function inviteStatusLabel(status) {
+  return ({ ACTIVE: "有效", ACCEPTED: "已接受", REVOKED: "已撤销", EXPIRED: "已过期" })[status] || status || "—";
+}
+
+function renderPersonnelInvites(container) {
+  if (!container) return;
+  const invites = state.personnel.invites || [];
+  const rows = invites.length
+    ? invites.map((invite) => `<div class="invite-row"><div><strong>${escapeHtml(invite.role_label || invite.role)}</strong><small>${escapeHtml(invite.invite_id)} · ${escapeHtml(invite.created_at ? new Date(invite.created_at).toLocaleString("zh-CN") : "—")}</small></div><div><span class="status-chip">${escapeHtml(inviteStatusLabel(invite.status))}</span><small>有效至 ${escapeHtml(invite.expires_at ? new Date(invite.expires_at).toLocaleString("zh-CN") : "—")}</small></div><div class="action-row">${invite.status === "ACTIVE" ? `<button class="button button-quiet invite-revoke" data-invite-id="${escapeHtml(invite.invite_id)}" type="button">撤销</button>` : ""}</div></div>`).join("")
+    : "<p class=\"permission-note\">当前项目暂无岗位邀请。生成后把链接发给对应人员即可。</p>";
+  const link = state.personnel.invite_link
+    ? `<div class="notice-line invite-link-notice"><strong>本次邀请链接（只显示一次）</strong><input id="personnelInviteLink" value="${escapeHtml(state.personnel.invite_link)}" readonly /><button id="copyPersonnelInvite" class="button button-quiet" type="button">复制链接</button></div>`
+    : "";
+  container.innerHTML = link + `<div class="invite-list">${rows}</div>`;
+  $("copyPersonnelInvite")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(state.personnel.invite_link);
+      setStatus("邀请链接已复制，可发送给岗位人员");
+    } catch (_) {
+      setStatus("复制失败，请手动复制邀请链接");
+    }
+  });
+  container.querySelectorAll(".invite-revoke").forEach((button) => button.addEventListener("click", () => revokePersonnelInvite(button.dataset.inviteId)));
+}
+
+function mergePersonnelSnapshot(response, keepCredentials = null) {
+  const previous = state.personnel || {};
+  state.personnel = {
+    ...response,
+    invites: response.invites || previous.invites || [],
+    invite_link: previous.invite_link || "",
+    temporary_credentials: response.temporary_credentials || keepCredentials || previous.temporary_credentials,
+  };
+}
+
 function renderPersonnel() {
   if (!canManagePersonnel()) {
     setView(isKpiOnly() ? "dashboard" : "overview");
@@ -2531,6 +2610,7 @@ function renderPersonnel() {
     `<div class="surface-title"><div><span class="panel-label">PERSONNEL MANAGEMENT</span><h3>人员管理</h3></div><span class="surface-caption">当前项目：${escapeHtml(state.projectName || state.projectId || "未命名项目")} · 项目经理直管；行政人员授权后协同</span></div>` +
     `<div class="notice-line"><strong>人员治理规则</strong><span>${escapeHtml(policyText)} ${escapeHtml(handoverText)} ${escapeHtml(projectScopeText)}</span></div>` +
     credentialNotice +
+    '<section class="control-panel personnel-invite-panel"><div class="surface-title"><div><span class="panel-label">ROLE INVITE</span><h3>推送岗位工作台链接</h3></div><span class="surface-caption">只绑定当前项目；无需每台电脑安装 BuildCostIQ</span></div><p class="permission-note">生成邀请后通过项目群或私聊发送。对方接受并设置密码后，使用浏览器链接进入自己的岗位界面；数据仍保存在中心项目底座，人员更换不会丢失成果。</p><form id="personnelInviteForm" class="work-form"><div class="field-grid personnel-field-grid"><label>岗位角色<select id="personnelInviteRole">' + roleOptions + '</select></label><label>有效期（小时）<input id="personnelInviteExpires" type="number" min="1" max="720" value="72" required /></label></div><div class="action-row"><button class="button button-primary" type="submit">生成邀请链接</button><span id="personnelInviteStatus" class="request-status"></span></div></form><div id="personnelInviteList" class="invite-list-wrap"></div></section>' +
     '<div class="control-grid personnel-grid">' +
     '<section class="control-panel"><span class="panel-label">NEW PERSONNEL</span><h3>录入人员</h3>' +
     '<form id="personnelForm" class="work-form"><div class="field-grid personnel-field-grid"><label>姓名/登录名<input id="personnelUsername" autocomplete="off" required minlength="1" maxlength="64" /></label><label>岗位角色<select id="personnelRole">' + roleOptions + '</select></label></div>' +
@@ -2539,9 +2619,11 @@ function renderPersonnel() {
     '<section class="control-panel"><div class="surface-title"><div><span class="panel-label">LOCAL USERS</span><h3>已登记人员</h3></div><span class="surface-caption">共 <strong id="personnelCount">0</strong> 人</span></div><div id="personnelTable" class="table-wrap"></div></section></div>' +
     '<section class="control-panel audit-panel"><div class="surface-title"><div><span class="panel-label">PERSONNEL AUDIT TRAIL</span><h3>人员管理留痕</h3></div><span class="surface-caption">新增账号会记录操作人、角色、时间和目标</span></div><div id="personnelAudit" class="audit-list"></div></section>';
   $("personnelCount").textContent = String((state.personnel.users || []).length);
+  renderPersonnelInvites($("personnelInviteList"));
   renderPersonnelTable($("personnelTable"));
   renderPersonnelAudit($("personnelAudit"));
   $("personnelForm").addEventListener("submit", savePersonnel);
+  $("personnelInviteForm").addEventListener("submit", createPersonnelInvite);
 }
 
 function syncCurrentPersonnelUser() {
@@ -2552,16 +2634,60 @@ function syncCurrentPersonnelUser() {
   }
 }
 
+async function createPersonnelInvite(event) {
+  event.preventDefault();
+  setError("");
+  const status = $("personnelInviteStatus");
+  try {
+    const response = await apiJson("/api/personnel/invites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: state.projectId,
+        role: $("personnelInviteRole").value,
+        expires_hours: Number($("personnelInviteExpires").value || 72),
+      }),
+    });
+    state.personnel.invite_link = `${window.location.origin}${response.accept_path}`;
+    await refreshPersonnel();
+    state.personnel.invite_link = `${window.location.origin}${response.accept_path}`;
+    status.textContent = "邀请已生成";
+    renderPersonnel();
+    setStatus("邀请链接已生成，请发送给对应岗位人员");
+  } catch (error) {
+    status.textContent = "生成失败";
+    setError(error.message);
+  }
+}
+
+async function revokePersonnelInvite(inviteId) {
+  if (!inviteId || !window.confirm("确认撤销这条岗位邀请吗？撤销后原链接立即失效。")) return;
+  setError("");
+  try {
+    const response = await apiJson("/api/personnel/invites/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: state.projectId, invite_id: inviteId }),
+    });
+    state.personnel.invites = response.invites || [];
+    renderPersonnel();
+    setStatus("岗位邀请已撤销");
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
 async function renamePersonnel(user) {
   const nextName = window.prompt("输入接管后的姓名/登录名。原 user_id、密码和项目成果会保留。", user.username);
   if (!nextName || nextName.trim() === user.username) return;
   setError("");
   try {
-    state.personnel = await apiJson("/api/personnel/rename", {
+    const response = await apiJson("/api/personnel/rename", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: state.projectId, user_id: user.id, new_username: nextName.trim() }),
     });
+    mergePersonnelSnapshot(response);
     syncCurrentPersonnelUser();
     renderPersonnel();
     setStatus(`账号已由“${user.username}”交接为“${nextName.trim()}”，原有成果继续保留`);
@@ -2577,11 +2703,12 @@ async function toggleFieldRoleAssignment(user, merged) {
   if (merged && !window.confirm("确认让该账号同时承担施工员和测量员吗？原有成果不复制、不丢失。")) return;
   setError("");
   try {
-    state.personnel = await apiJson("/api/personnel/roles", {
+    const response = await apiJson("/api/personnel/roles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: state.projectId, user_id: user.id, roles }),
     });
+    mergePersonnelSnapshot(response);
     syncCurrentPersonnelUser();
     renderPersonnel();
     setStatus(merged ? "已合并施工员与测量员岗位" : "已拆分为单一主岗位");
@@ -2593,11 +2720,12 @@ async function toggleFieldRoleAssignment(user, merged) {
 async function togglePersonnelAdmin(userId, authorized) {
   setError("");
   try {
-    state.personnel = await apiJson("/api/personnel/authorize", {
+    const response = await apiJson("/api/personnel/authorize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: state.projectId, user_id: userId, authorized }),
     });
+    mergePersonnelSnapshot(response);
     renderPersonnel();
     setStatus(authorized ? "行政人员已获得人员管理授权" : "行政人员授权已撤销");
   } catch (error) {
@@ -2610,11 +2738,12 @@ async function deletePersonnel(user) {
   if (!window.confirm(`确定从活动名册删除“${user.username}”（${user.role_label}）吗？删除会保留审计记录。`)) return;
   setError("");
   try {
-    state.personnel = await apiJson("/api/personnel/delete", {
+    const response = await apiJson("/api/personnel/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: state.projectId, user_id: user.id }),
     });
+    mergePersonnelSnapshot(response);
     renderPersonnel();
     setStatus("人员已从活动名册移除，操作已留痕");
   } catch (error) {
@@ -2636,7 +2765,7 @@ async function savePersonnel(event) {
         role: $("personnelRole").value,
       }),
     });
-    state.personnel = response;
+    mergePersonnelSnapshot(response);
     $("personnelForm").reset();
     status.textContent = "人员已保存，操作已留痕";
     renderPersonnel();
@@ -2650,7 +2779,19 @@ async function savePersonnel(event) {
 async function refreshPersonnel() {
   if (!canManagePersonnel()) return;
   try {
-    state.personnel = await apiJson(`/api/personnel?project_id=${encodeURIComponent(state.projectId)}`);
+    const previousCredentials = state.personnel.temporary_credentials;
+    const snapshot = await apiJson(`/api/personnel?project_id=${encodeURIComponent(state.projectId)}`);
+    let invites = [];
+    try {
+      const inviteSnapshot = await apiJson(`/api/personnel/invites?project_id=${encodeURIComponent(state.projectId)}`);
+      invites = inviteSnapshot.invites || [];
+    } catch (inviteError) {
+      // Existing installations may not have the invite route until restarted;
+      // personnel management remains usable while the server is upgraded.
+      invites = state.personnel.invites || [];
+      if (inviteError?.status !== 404) throw inviteError;
+    }
+    state.personnel = { ...snapshot, invites, invite_link: state.personnel.invite_link || "", temporary_credentials: snapshot.temporary_credentials || previousCredentials };
   } catch (error) {
     setError(error.message);
   }
@@ -4541,7 +4682,7 @@ async function loadDemo() {
   state.sample = await apiJson("/api/sample");
   await loadConnectors();
   await loadBasisCatalog();
-  state.projectId = state.sample.project_id;
+  state.projectId = state.preferredProjectId || state.sample.project_id;
   state.sourceId = state.sample.source_id;
   state.projectName = state.sample.project_name || "演示道路项目";
   state.sourceName = state.sample.source_name || "示例清单资料";
@@ -4564,6 +4705,7 @@ $("assistList").addEventListener("click", (event) => {
 
 $("loginForm").addEventListener("submit", submitLogin);
 $("registerForm").addEventListener("submit", submitRegister);
+$("inviteForm")?.addEventListener("submit", submitInvite);
 $("logoutButton").addEventListener("click", logout);
 $("globalSearchForm").addEventListener("submit", submitGlobalSearch);
 
