@@ -1,6 +1,251 @@
 const $ = (id) => document.getElementById(id);
 
+// The language layer is intentionally client-side and data-safe: it stores the
+// original UI text once, translates labels/options/placeholders, and never
+// rewrites values entered by a user.  API payloads and project records remain
+// in their original language; only the presentation follows this selector.
+const LANGUAGE_STORAGE_KEY = "buildcostiq_language";
+const UI_TRANSLATIONS = {
+  "语言": "Language", "界面语言": "Interface language", "中文": "Chinese", "English": "English",
+  "造价资料工作台": "Cost Workspace", "把清单资料、成本计划和结算初审集中在一个工作面完成。": "Manage BOQ data, cost planning, and settlement pre-review in one workspace.",
+  "版本信息读取中": "Loading release information", "查资料或问问题": "Search data or ask a question", "检索": "Search",
+  "P09 仍只由 P01–P08 事实派生": "P09 is derived only from P01–P08 facts", "人员名册按项目独立维护": "Personnel rosters are maintained per project", "首页按岗位提供输入→操作→成果→复核手册": "The home page provides a role-based input → action → output → review manual", "项目经理或授权行政人员可在当前项目新增人员": "Project managers or authorized administrative officers can add personnel to the current project",
+  "资料服务连接中": "Connecting to data service", "资料服务就绪": "Data service ready", "资料服务不可用": "Data service unavailable",
+  "当前版本": "Current version", "退出登录": "Sign out", "登录本地工作台": "Sign in to local workspace",
+  "登录后首页就是你的岗位操作手册：先看本岗位输入，再按步骤保存成果，最后提交责任线复核。项目经理负责经营指标和人员治理；造价经理负责造价业务；生产、技术、现场、物资和资料岗位只处理各自工作面。": "After signing in, the home page becomes your role manual: review inputs, save outputs step by step, and submit them for responsibility-line review. Project managers handle KPIs and personnel governance; cost managers handle commercial work; production, technical, field, material, and document roles stay within their own work surfaces.",
+  "人员登录": "Personnel sign-in", "初始化账号": "Initialize account", "用户名": "Username", "密码": "Password", "登录": "Sign in", "注册并进入": "Register and enter",
+  "已登记人员直接使用项目经理/行政人员提供的姓名（登录名）和初始密码进入对应岗位工作台。": "Registered personnel use the name (login) and initial password provided by the project manager or administrative officer.",
+  "首次使用或本机初始化时注册管理账号；日常岗位人员由项目经理或已授权行政人员在人员管理中登记。": "Register a management account for first use or local initialization; daily personnel are registered by the project manager or an authorized administrative officer.",
+  "密码（至少 6 位）": "Password (at least 6 characters)", "工作台角色": "Workspace role",
+  "造价经理（造价业务）": "Cost Manager (commercial)", "项目经理工作台（指标与人员治理）": "Project Manager (KPIs & personnel)", "造价员（造价操作）": "Cost Estimator (cost operations)",
+  "技术负责人": "Technical Lead", "生产经理": "Production Manager", "施工员/测量员": "Site Engineer / Surveyor", "测量员": "Surveyor", "质量负责人": "Quality Officer", "试验检测员": "Lab Testing Officer", "资料员": "Document Controller", "安全员": "Safety Officer", "采购员": "Procurement Officer", "仓管员": "Warehouse Officer", "行政人员（需授权后管理人员）": "Administrative Officer (authorization required)",
+  "项目资料与工作协助": "Project data and work assistance", "当前项目": "Current project", "当前资料": "Current data", "整体状态": "Overall status", "等待接入": "Waiting for data", "准备开始": "Ready to start",
+  "搜索资料或问题": "Search data or questions", "协同": "Coordination", "依据": "Basis", "看板": "Dashboard", "后台": "Admin", "控制": "Control", "建立工程事件": "Create engineering event", "先蒸馏本地资料，再融合文本事实；状态、证据和预警集中呈现。": "Distill local data, then merge text facts; status, evidence, and alerts stay together.", "建立组织协同关系": "Set up organization coordination", "建立Organization coordination关系": "Set up organization coordination", "把生产、技术、造价责任线绑定到 Core Event；数据只提供依据。": "Bind production, technical, and commercial responsibility lines to Core Event; data only provides evidence.", "把来源与业务记录关联起来": "Link sources to business records", "接入清单资料": "Import BOQ data", "接入BOQ data": "Import BOQ data", "可多选 Excel、PDF、Word、图片等资料，或手工录入清单项。": "Select Excel, PDF, Word, image, or other files, or enter BOQ items manually.", "入库、出库、退库、库存、盘点台账": "Receipts, issues, returns, inventory, and count ledger", "以采购到货为基数管理收发存、超领、节余和盘点。": "Manage receipts, issues, over-issues, returns, surplus, and counts from procurement deliveries.", "每条成果保留岗位边界，按需关联既有 Event、Evidence、Source，并只交给契约规定的下一责任岗位；不建立第二金额事实源。": "Each output keeps its role boundary, links existing Event, Evidence, and Source as needed, and goes only to the next contracted role; no second amount ledger is created.", "接收：采购员、试验检测员、生产经理 · 交付：生产经理、造价经理、试验检测员": "Receives: Procurement Officer, Lab Testing Officer, Production Manager · Hands to: Production Manager, Cost Manager, Lab Testing Officer", "保存后自动关联 Event / Evidence / Collaboration": "Automatically link Event / Evidence / Collaboration after saving", "保存后自动关联 Event / Evidence / 协同对象": "Automatically link Event / Evidence / Collaboration after saving", "待接收 0 条": "Incoming 0", "岗位操作手册": "Role operation manual", "费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞": "Feynman four steps: explain → do → deliver → find gaps", "先说清楚": "Explain first", "输入": "Input", "先核对采购到货批次、验收状态和领料单。": "First check delivery batches, acceptance status, and issue slips.", "操作": "Action", "保存入库、出库、退库、库存和盘点台账。": "Save receipts, issues, returns, inventory, and count ledger.", "交付成果": "Deliver output", "完成前复述": "Repeat before completion", "检查": "Check", "只处理物资收发存，不进入 P04 零号台账。": "Handle inventory movements only; do not enter the P04 baseline ledger.", "造价主线 · 专业审核 · 生产兑现 · 项目经理决策": "Commercial line · professional review · production delivery · Project Manager decisions", "采购到货、验收/试验状态、领料单、退料单": "Procurement deliveries, acceptance/testing status, issue slips, return slips", "闸门：": "Gate:", "我的工作": "My work", "待交成果": "Outputs to deliver", "专业审核 → 造价总审": "Professional review → commercial final review", "Event → 成果": "Event → output", "进入": "Enter", "只处理本岗位成果": "Handle this role's outputs only", "工程事件": "Engineering event", "责任链与人工确认": "Responsibility chain and human confirmation", "底座自动链接": "Automatically linked by the foundation", "只读共享，不跨岗代填": "Read-only sharing; no cross-role entry", "所有成果统一绑定 Project + WBS + Location + Event + Time；本岗位只产生自己的事实，系统自动把它链接到技术、生产、造价、证据和 Outcome。": "Every output binds Project + WBS + Location + Event + Time; this role creates only its own facts, and the system links them to technical, production, commercial, evidence, and Outcome records.",
+  "演示道路项目": "Demo road project", "示例清单资料": "Sample BOQ data", "本机数据节点": "Local data node", "独立工作面": "Independent work surface", "本岗位核心成果": "Core outputs for this role", "本岗位执行流程": "Role execution flow", "只做本岗位动作": "Role-only actions", "本岗位成果录入与交接": "Role output entry & handoff", "当前岗位专属字段 · 只追加 · 自动互联": "Role-specific fields · append-only · linked automatically", "互联规则": "Linking rule", "本岗位只录入": "This role enters only", "我的成果与待接收成果": "My outputs and incoming outputs", "待接收成果": "Incoming outputs", "待接收": "Incoming", "暂无岗位成果记录。": "No role output records yet.", "尚无岗位成果记录。": "No role output records yet.", "没有授权的模块不会出现在此处": "Unauthorized modules do not appear here", "进入本岗位工作": "Enter role workspace", "授权工作面": "Authorized work surfaces", "个授权工作面": "authorized work surfaces", "工程事件仍在流转": "Engineering events in progress", "审核状态": "Review status", "人工闸门": "Human gate", "异常 / 退回": "Exception / returned", "只显示与本岗相关的风险入口": "Only risks related to this role", "直接责任链": "Direct responsibility chain", "组织协同": "Organization coordination", "人工确认": "Human confirmation",
+  "验收入库": "Inspect and receive", "收发存动作": "Inventory movement", "材料批次": "Material batch", "到货/领料/退料单号": "Delivery / issue / return document no.", "库位/领用位置": "Storage / issue location", "领用人/班组": "Recipient / crew", "动作后库存": "Inventory after action", "核对状态": "Check status", "请选择下一责任岗位": "Select next responsible role", "证据编号，用逗号分隔": "Evidence IDs, comma-separated", "来源编号，用逗号分隔": "Source IDs, comma-separated", "保存本岗位成果": "Save role output", "保存后自动关联 Event / Evidence / Collaboration": "Automatically link Event / Evidence / Collaboration after saving", "动手做": "Do it", "动手保存": "Save", "提交核对": "Submit for review", "独立成果 · 可追溯交接": "Independent output · traceable handoff", "只记录收发存事实；不进入 P04 零号台账，不修改采购、试验和造价事实。": "Record inventory facts only; do not enter P04 baseline ledger or modify procurement, testing, or cost facts.", "收发存绑定采购批次和施工领用后提交核对。": "Bind inventory movements to procurement batches and construction issues before submitting for review.", "收发存绑定采购批次和施工领用，不跨岗改采购事实。": "Bind inventory movements to procurement batches and construction issues; never edit procurement facts across roles.", "入库、出库、退库、库存/盘点台账、超领/节余异常": "Receipts, issues, returns, inventory/count ledger, over-issue/shortfall exceptions", "到货批次、领料单、退料单、库存、盘点异常": "Delivery batches, issue slips, return slips, inventory, count exceptions",
+  "工作步骤": "Workflow steps", "总览": "Overview", "项目总览": "Project overview", "资料与问题": "Data & questions", "合同与招采依据": "Contract & procurement basis", "清单资料": "BOQ data", "图纸资料": "Drawing data", "零号台账": "Baseline ledger", "成本计划": "Cost plan", "变更管理": "Change management", "工程事件内核": "Engineering event kernel", "证据关联": "Evidence links", "结算初审": "Settlement pre-review", "成果经营": "Outcome management", "关系与确认": "Relations & confirmations", "外部依据库": "External basis", "经营看板": "Management dashboard", "人员管理": "Personnel management", "项目控制": "Project control",
+  "下一步做什么": "Next step", "清单项": "BOQ items", "合同计划": "Contract plan", "初审结果": "Review result", "未开始": "Not started", "本地资料工作台": "Local data workspace", "资料只在当前环境处理": "Data is processed only in this environment",
+  "项目经理指标台": "Project Manager KPI Desk", "造价经理全权限工作台": "Cost Manager Full Workspace", "造价员成果工作台": "Cost Estimator Output Desk", "技术负责人工作台": "Technical Lead Workspace", "生产经理驾驶台": "Production Manager Control Desk", "施工员/测量员工作台": "Site Engineer / Surveyor Workspace", "测量员成果工作台": "Surveyor Output Desk", "质量负责人工作台": "Quality Officer Workspace", "试验检测工作台": "Lab Testing Workspace", "资料员归档工作台": "Document Controller Archive Desk", "安全员闭环工作台": "Safety Officer Closed-loop Desk", "采购员物资工作台": "Procurement Desk", "仓管员物资工作台": "Warehouse Desk", "行政协同工作台": "Administrative Coordination Desk",
+  "项目经理": "Project Manager", "造价经理": "Cost Manager", "造价员": "Cost Estimator", "生产经理": "Production Manager", "现场工程师": "Site Engineer", "质量负责人": "Quality Officer", "行政人员": "Administrative Officer", "责任链": "Responsibility chain", "本岗位责任链": "This role's responsibility chain", "接收": "Receives", "交付给": "Hands to", "升级到": "Escalates to", "无": "None", "工作流只推动现有 Event、Action、Evidence、Verification、Outcome；岗位不能跨线代改事实。": "The workflow only moves existing Event, Action, Evidence, Verification, and Outcome records; roles cannot edit another line's facts.",
+  "保存": "Save", "保存人员": "Save personnel", "保存成果": "Save output", "保存工程事件": "Save engineering event", "保存变更清单": "Save change register", "保存成本计划": "Save cost plan", "新增": "Add", "新增变更": "Add change", "取消": "Cancel", "关闭": "Close", "确认": "Confirm", "提交": "Submit", "下载": "Download", "上传": "Upload", "导出": "Export", "刷新": "Refresh", "返回操作看板": "Back to work desk", "进入协同工作流": "Open coordination workflow",
+  "未形成成果": "No output yet", "实体成果": "Physical output", "证据完整": "Evidence ready", "已申报": "Submitted", "已确认": "Confirmed", "收入成立": "Revenue recognized", "已结算": "Settled", "已回款": "Cash realized", "已拒绝": "Rejected", "已放弃": "Abandoned", "实体": "Physical", "经营": "Commercial", "合同权利": "Contractual", "工期": "Schedule", "现金": "Cash",
+  "已发现": "Discovered", "已判断": "Assessed", "方案规划": "Planning", "造价复核": "Commercial review", "已决策": "Decided", "待/已批准": "Pending / approved", "执行中": "Executing", "已验证": "Verified", "商务申报": "Commercial claim", "结算中": "Settling", "审计中": "Auditing", "回收中": "Collecting", "已关闭": "Closed",
+  "现场条件": "Site condition", "设计变化": "Design change", "合同审查": "Contract review", "成本偏差": "Cost variance", "数量偏差": "Quantity variance", "工期偏差": "Schedule variance", "技术优化": "Technical optimization", "审计反馈": "Audit feedback", "现场发现": "Site discovery", "图纸审查": "Drawing review", "业主指令": "Owner instruction", "低": "Low", "中": "Medium", "高": "High", "紧急": "Critical",
+  "合同": "Contract", "价格": "Price", "数量": "Quantity", "成本": "Cost", "收入": "Revenue", "质量": "Quality", "安全": "Safety", "影响基线": "Baseline impact", "影响维度": "Impact dimensions", "需要技术线介入": "Technical line involvement required", "事件标题": "Event title", "发现人": "Discovered by", "事件来源": "Event source", "事件分类": "Event type", "严重程度": "Severity", "区域/部位": "Area / location", "轴线/桩号": "Axis / chainage", "楼层/标高": "Level / elevation", "事件说明": "Event description", "动态标签": "Tags", "来源资料编号": "Source references", "建立永久编号工程事件": "Create a permanent engineering event", "推进状态": "Advance status", "三证互证 / 一致性检查": "Three-record consistency check", "成果链": "Outcome chain", "自动提醒": "Automatic alert", "未命名事件": "Untitled event", "未填写事件说明": "No event description", "待定义": "To be defined",
+  "通用": "General", "本地优先，认知诚实": "Local-first, evidence-honest", "搜索范围": "Search scope", "全部": "All", "常用/近期": "Frequent / recent", "其他分类": "Other categories", "暂无常用分类": "No frequent categories", "暂无资料": "No data yet", "没有命中本地资料。系统不会用猜测补齐答案。": "No local data matched. The system will not guess missing answers.",
+  "工作成果": "Work output", "形成成果": "Output", "协同对象": "Collaboration", "交接对象": "Handoff", "协同说明": "Collaboration note", "关联工程事件": "Linked engineering event", "证据引用": "Evidence references", "资料引用": "Source references", "待接收成果": "Incoming outputs", "暂无岗位成果": "No role outputs yet", "请先选择项目": "Select a project first",
+  "待审批": "Pending approval", "已批准": "Approved", "已实施": "Implemented", "合同价": "Contract price", "待组价": "Pending pricing", "未定价": "Unpriced", "金额影响": "Amount impact", "变更编号": "Change ID", "变更事项": "Change item", "原因": "Reason", "状态": "Status", "影响日期": "Impact date", "责任人": "Owner", "资料编号": "Source ID", "风险备注": "Risk note", "净影响": "Net impact", "变更数量": "Change count", "批准或实施前，造价经理可在项目控制台复核。": "Before approval or implementation, the cost manager can review in Project Control.",
+  "通过": "Pass", "需要核对": "Needs review", "阻断": "Block", "提醒": "Warning", "提示": "Notice", "一般提示": "Notice", "预警": "Warning", "紧急阻断": "Critical block", "无风险事项": "No risk items", "需要处理": "Needs attention", "可以进入发布流程": "Ready for release", "暂不能发布，请先处理下列事项": "Not ready for release; resolve the following items first", "未发现需要处理的事项。": "No items requiring attention were found.",
+  "没有足够依据就显示待核对。": "When evidence is insufficient, show Needs review.", "资料服务": "Data service", "项目资料库": "Project data library", "项目经理负责经营指标和人员治理": "Project manager owns KPIs and personnel governance", "造价经理负责造价业务": "Cost manager owns commercial work",
+  "请输入": "Please enter", "请选择": "Please select", "全局口径 · 请统一相关资料口径": "Global basis · align the related source basis", "请核对相关资料": "Check the related sources", "当前项目": "Current project", "当前资料": "Current data", "整体状态": "Overall status",
+  "RECEIPT": "Receipt", "ISSUE": "Issue", "RETURN": "Return", "COUNT": "Count", "CHECKED": "Checked", "EXCEPTION": "Exception", "PENDING": "Pending", "PASS": "Pass", "FAIL": "Fail", "OPEN": "Open", "RECTIFYING": "Rectifying", "CLOSED": "Closed", "COMPLETE": "Complete", "HOLD": "Hold", "REJECT": "Reject", "GO": "Go", "OPTIMIZE": "Optimize",
+};
+
+const UI_PHRASE_TRANSLATIONS = {
+  "组织协同与专用关系管理": "Organization coordination & dedicated relation management",
+  "责任链固定，数据提供依据，责任人做确认": "The responsibility chain is fixed; data provides the basis and the owner confirms.",
+  "数据提供依据，责任人做确认，关系只追加留痕": "Data provides the basis; the owner confirms; relations are append-only.",
+  "既有责任链（系统固定）": "Existing responsibility chain (system-fixed)",
+  "减少选择 · 按岗位契约交接": "Fewer choices · hand off by role contract",
+  "按既有流程：交接 → 复核 → 人工确认 → 关闭": "Existing flow: hand off → review → human confirmation → close",
+  "按既有流程交接": "Hand off by the existing workflow",
+  "固定交付岗位：": "Fixed receiving role:",
+  "固定路径：": "Fixed path:",
+  "固定交接对象": "Fixed handoff recipients",
+  "岗位边界：": "Role boundary:",
+  "升级：": "Escalation: ",
+  "看异常池": "Review the exception queue",
+  "建立造价基准": "Establish the cost baseline",
+  "接收基准": "Receive the baseline",
+  "接收现场问题": "Receive the field issue",
+  "接收技术放行": "Receive the technical release",
+  "接收生产任务": "Receive the production task",
+  "接收实测任务": "Receive the survey task",
+  "接收报验": "Receive the inspection request",
+  "核对材料批次": "Check the material batch",
+  "收成果": "Receive outputs",
+  "巡检发现": "Discover during inspection",
+  "引用造价基准": "Reference the cost baseline",
+  "核到货批次": "Check the delivery batch",
+  "接收项目经理授权": "Receive project-manager authorization",
+  "岗位成果结构化录入；适配器后台留痕": "Structured role-output entry; adapter audit trail",
+  "当前没有可关联的 Core Event，请先在工程事件中建立事件。": "No Core Event is available; create an engineering event first.",
+  "暂无关系记录。岗位成果保存后由系统按 Event → Evidence → Outcome 自动关联。": "No relations yet. After a role output is saved, the system links Event → Evidence → Outcome automatically.",
+  "各岗位只在自己的成果工作面录入，系统后台按数据契约映射到 Core；此处不接收原始 JSON。对应主管负责人仍需人工确认，适配记录保留在下方审计台账。": "Each role enters data only in its own output surface; the adapter maps it to Core by contract. Raw JSON is not accepted here. The responsible head must confirm it, and the adapter audit remains below.",
+  "提交至固定责任岗位": "Submit to the fixed responsible role",
+  "项目经理人工确认": "Project manager human confirmation",
+  "系统自动维护 Event / Evidence / Outcome 关系": "Event / Evidence / Outcome relations maintained automatically",
+  "保存岗位成果后由系统按 Event → Evidence → Outcome 自动关联。": "After a role output is saved, the system links Event → Evidence → Outcome automatically.",
+  "保存岗位成果后，系统自动建立 Event、Evidence、Verification、Outcome 的对应关系；不再手工选择关系类型、起点或终点。": "After a role output is saved, the system links Event, Evidence, Verification, and Outcome; no manual relation type, source, or target selection is needed.",
+  "当前步骤": "Current step",
+  "固定交付路径": "Fixed handoff path",
+  "固定数据流向与交叉预警": "Fixed data flows & cross-line alerts",
+  "部门负责人": "Department head",
+  "数据输入流": "Input streams",
+  "固定交付流向": "Fixed output flow",
+  "升级路径": "Escalation path",
+  "交叉核验规则": "Cross-check rules",
+  "数据流向固定，异常只提醒相关岗位，不跨岗改写事实。": "Data flows are fixed; exceptions alert the related roles without cross-role fact edits.",
+  "当前岗位没有新的交叉预警。": "No new cross-line alerts for this role.",
+  "红线": "Red line",
+  "黄色核对": "Yellow review",
+  "依据记录": "Evidence record",
+  "仅提示，不自动裁决": "Alert only; no automatic decision",
+  "负熵规则：": "Negative-entropy rule:",
+  "三条业务线不建立新金额台账，只把已确认记录映射到现有 Core、P01–P08 和 Outcome。": "The three business lines do not create a second amount ledger; confirmed records map to existing Core, P01–P08, and Outcome.",
+  "协同任务": "Coordination tasks",
+  "暂无协同任务。先把责任线和 Core Event 绑定起来。": "No coordination tasks yet. First bind responsibility lines to a Core Event.",
+  "人工决策记录": "Human decision records",
+  "暂无 GO / OPTIMIZE / HOLD / REJECT 决策记录。": "No GO / OPTIMIZE / HOLD / REJECT decisions yet.",
+  "协同工作流": "Coordination workflow",
+  "分派 → 复核 → 人工确认 → 关闭": "Assign → review → human confirmation → close",
+  "创建协同任务": "Create coordination task",
+  "生产线": "Production line",
+  "技术线": "Technical line",
+  "造价线": "Commercial line",
+  "业主": "Owner",
+  "监理": "Supervision",
+  "审计": "Audit",
+  "建立任务": "Create task",
+  "记录人工决策": "Record human decision",
+  "保存决策": "Save decision",
+  "建立专用关系": "Create dedicated relation",
+  "保存关系": "Save relation",
+  "生产线 / 技术线 / 造价线接入": "Production / technical / commercial line adapters",
+  "预览只读；确认后才写入 Core": "Read-only preview; writes to Core only after confirmation",
+  "只读预览": "Preview (read-only)",
+  "人工确认并映射": "Confirm and map",
+  "当前责任线由系统自动归属；只有对应主管负责人可以确认或修改。": "The responsibility line is assigned automatically; only its head can confirm or modify.",
+  "关系台账": "Relation ledger",
+  "关系": "Relation",
+  "起点": "From",
+  "终点": "To",
+  "建立人": "Created by",
+  "暂无关系记录。关系只追加，不删除原 Event。": "No relations yet. Relations are append-only; the original Event is never deleted.",
+  "三线接入留痕": "Three-line adapter audit",
+  "尚无已确认的三线数据接入。": "No confirmed three-line data adapters yet.",
+  "数据契约与人工闸门": "Data contracts & human gates",
+  "必填": "Required",
+  "系统自动归属": "System owner",
+  "可修改": "Editable by",
+  "仅对应主管负责人": "Only the responsible head",
+  "主管负责人": "responsible head",
+  "现场/生产负责人": "Site/production lead",
+  "生产负责人": "Production lead",
+  "造价负责人": "Commercial lead",
+  "确认进度、实测量和证据引用": "confirms progress, measured quantities, and evidence references",
+  "确认图纸、规范、可行性和实施方案": "confirms drawings, standards, feasibility, and implementation plans",
+  "确认清单、依据、计价口径和金额快照": "confirms BOQ, basis, pricing basis, and amount snapshot",
+};
+
+// Backend contracts keep stable enum codes; the visible label follows the
+// selected UI language. This is separate from UI_TRANSLATIONS because a code
+// such as RECEIPT has no Chinese source text for the generic text translator
+// to recover when the page starts in Chinese.
+const UI_OPTION_LABELS = {
+  GO: { zh: "通过", en: "Go" },
+  OPTIMIZE: { zh: "优化", en: "Optimize" },
+  HOLD: { zh: "暂缓", en: "Hold" },
+  REJECT: { zh: "拒绝", en: "Reject" },
+  PASS: { zh: "通过", en: "Pass" },
+  FAIL: { zh: "不合格", en: "Fail" },
+  RETURN: { zh: "退回", en: "Return" },
+  PENDING: { zh: "待核对", en: "Pending" },
+  RECEIPT: { zh: "入库", en: "Receipt" },
+  ISSUE: { zh: "出库", en: "Issue" },
+  COUNT: { zh: "盘点", en: "Count" },
+  CHECKED: { zh: "已核对", en: "Checked" },
+  EXCEPTION: { zh: "异常", en: "Exception" },
+  OPEN: { zh: "待整改", en: "Open" },
+  RECTIFYING: { zh: "整改中", en: "Rectifying" },
+  CLOSED: { zh: "已关闭", en: "Closed" },
+  COMPLETE: { zh: "完整", en: "Complete" },
+  CRITICAL: { zh: "紧急", en: "Critical" },
+  HIGH: { zh: "高", en: "High" },
+  MEDIUM: { zh: "中", en: "Medium" },
+  LOW: { zh: "低", en: "Low" },
+  NEW: { zh: "新增", en: "New" },
+  RENAME: { zh: "姓名更换", en: "Rename" },
+  ROLE_CHANGE: { zh: "岗位变更", en: "Role change" },
+  LEAVE: { zh: "离岗", en: "Leave" },
+  EVENT_TO_SOURCE: { zh: "工程事件 → 资料来源", en: "Event → Source" },
+  EVENT_TO_TASK: { zh: "工程事件 → 协同任务", en: "Event → Task" },
+  EVENT_TO_PERSON: { zh: "工程事件 → 人员", en: "Event → Person" },
+  EVENT_TO_CAPABILITY: { zh: "工程事件 → P01–P08", en: "Event → P01–P08" },
+  EVENT_TO_OUTCOME: { zh: "工程事件 → 成果", en: "Event → Outcome" },
+  EVENT_PARENT: { zh: "父子事件", en: "Parent/child event" },
+  EVENT_SPLIT_FROM: { zh: "拆分来源", en: "Split from" },
+  EVENT_CANCELLED_BY: { zh: "取消关系", en: "Cancelled by" },
+};
+
+const i18nTextSources = new WeakMap();
+const i18nAttributeSources = new WeakMap();
+let i18nApplying = false;
+
+function selectedLanguage() {
+  const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  if (stored === "zh" || stored === "en") return stored;
+  // Chinese is the safe first-run default. A deliberate user selection is
+  // persisted, so English remains available without making a fresh project
+  // unexpectedly switch language because of the browser locale.
+  return "zh";
+}
+
+function translateUiText(value) {
+  const source = String(value ?? "");
+  if (state.language !== "en" || !source.trim()) return source;
+  const leading = source.match(/^\s*/)?.[0] || "";
+  const trailing = source.match(/\s*$/)?.[0] || "";
+  const core = source.trim();
+  if (UI_PHRASE_TRANSLATIONS[core]) return `${leading}${UI_PHRASE_TRANSLATIONS[core]}${trailing}`;
+  if (UI_TRANSLATIONS[core]) return `${leading}${UI_TRANSLATIONS[core]}${trailing}`;
+  let translated = core;
+  Object.entries({ ...UI_TRANSLATIONS, ...UI_PHRASE_TRANSLATIONS }).sort((left, right) => right[0].length - left[0].length).forEach(([zh, en]) => {
+    // Avoid replacing short Chinese substrings inside user-facing compound
+    // words (for example 收入 inside 验收入库). Exact short labels are still
+    // translated by the lookup above.
+    if ((zh.length >= 3 || zh === "必填") && translated.includes(zh)) translated = translated.split(zh).join(en);
+  });
+  return `${leading}${translated}${trailing}`;
+}
+
+function localizedOptionLabel(option) {
+  const code = String(option ?? "");
+  const label = UI_OPTION_LABELS[code];
+  if (label) return state.language === "en" ? label.en : label.zh;
+  return translateUiText(code);
+}
+
+function applyLanguage(root = document) {
+  if (!root || i18nApplying) return;
+  i18nApplying = true;
+  document.documentElement.lang = state.language === "en" ? "en" : "zh-CN";
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  textNodes.forEach((node) => {
+    const parent = node.parentElement;
+    if (!parent || ["SCRIPT", "STYLE"].includes(parent.tagName)) return;
+    if (!i18nTextSources.has(node)) i18nTextSources.set(node, node.nodeValue || "");
+    const source = i18nTextSources.get(node);
+    node.nodeValue = parent.tagName === "OPTION" ? localizedOptionLabel(source) : translateUiText(source);
+  });
+  root.querySelectorAll?.("[placeholder], [title], [aria-label]").forEach((element) => {
+    ["placeholder", "title", "aria-label"].forEach((attribute) => {
+      if (!element.hasAttribute(attribute)) return;
+      let sources = i18nAttributeSources.get(element);
+      if (!sources) { sources = {}; i18nAttributeSources.set(element, sources); }
+      if (!(attribute in sources)) sources[attribute] = element.getAttribute(attribute) || "";
+      element.setAttribute(attribute, translateUiText(sources[attribute]));
+    });
+  });
+  const selector = $("languageSelect");
+  if (selector) selector.value = state.language;
+  i18nApplying = false;
+}
+
 const state = {
+  language: selectedLanguage(),
   auth: { token: sessionStorage.getItem("buildcostiq_token") || "", user: null },
   sample: null,
   workspace: null,
@@ -24,6 +269,8 @@ const state = {
   changesResult: null,
   evidenceResult: null,
   events: [],
+  eventIntake: null,
+  evidenceIntake: null,
   eventDistillation: null,
   eventDistillText: "",
   eventCrossChecks: {},
@@ -41,7 +288,7 @@ const state = {
   deployment: null,
   coordination: null,
   lineContracts: null,
-  roleWorkProducts: { contracts: {}, records: [], incoming_count: 0, policy: null },
+  roleWorkProducts: { contracts: {}, records: [], incoming_count: 0, policy: null, intelligence: { contracts: {}, alerts: [], alert_counts: {} } },
   linePreview: null,
   sources: [],
   connectors: [],
@@ -203,11 +450,11 @@ const ROLE_VIEW_ACCESS = {
   site_engineer: ["overview", "drawings", "events", "evidence", "coordination"],
   surveyor: ["overview", "drawings", "events", "evidence", "coordination"],
   quality_officer: ["overview", "drawings", "events", "evidence", "coordination"],
-  lab_testing_officer: ["overview", "boq", "drawings", "events", "evidence", "coordination"],
+  lab_testing_officer: ["overview", "drawings", "events", "evidence", "coordination"],
   document_controller: ["overview", "search", "contract", "drawings", "evidence", "coordination"],
   safety_officer: ["overview", "drawings", "changes", "events", "evidence", "coordination"],
-  procurement_officer: ["overview", "contract", "boq", "events", "evidence", "coordination"],
-  warehouse_officer: ["overview", "boq", "events", "evidence", "coordination"],
+  procurement_officer: ["overview", "contract", "events", "evidence", "coordination"],
+  warehouse_officer: ["overview", "events", "evidence", "coordination"],
   administrative_officer: ["overview", "coordination", "personnel"],
 };
 
@@ -595,9 +842,13 @@ async function loadEventKernel() {
     state.events = response.events || [];
     state.eventDistillation = response.distillation || null;
     state.eventCatalog = response.catalog || state.eventCatalog;
+    state.eventIntake = response.event_intake || null;
+    state.evidenceIntake = response.evidence_intake || null;
   } catch (_) {
     state.events = [];
     state.eventDistillation = null;
+    state.eventIntake = null;
+    state.evidenceIntake = null;
   }
 }
 
@@ -629,8 +880,10 @@ async function refreshCoordination() {
 async function refreshRoleWorkProducts() {
   try {
     state.roleWorkProducts = await apiJson("/api/role-work-products?project_id=" + encodeURIComponent(state.projectId));
+    state.eventIntake = state.roleWorkProducts.event_intake || state.eventIntake;
+    state.evidenceIntake = state.roleWorkProducts.evidence_intake || state.evidenceIntake;
   } catch (_) {
-    state.roleWorkProducts = { contracts: {}, records: [], incoming_count: 0, policy: null };
+    state.roleWorkProducts = { contracts: {}, records: [], incoming_count: 0, policy: null, event_intake: null, evidence_intake: null };
   }
 }
 
@@ -673,11 +926,260 @@ function renderP09() {
 
 function coordinationEventOptions(selected = "") {
   const events = state.coordination?.event_index || state.events || [];
+  const fallback = selected || events[0]?.event_id || "";
   return '<option value="">请选择 Core Event</option>' + events.map((event) => {
     const id = event.event_id || "";
     const label = `${id} · ${event.title || "工程事件"}`;
-    return `<option value="${escapeHtml(id)}" ${id === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+    return `<option value="${escapeHtml(id)}" ${id === fallback ? "selected" : ""}>${escapeHtml(label)}</option>`;
   }).join("");
+}
+
+const COORDINATION_ROLE_LINES = {
+  project_manager: "project_manager",
+  cost_manager: "cost",
+  cost_estimator: "cost",
+  technical_lead: "technical",
+  production_manager: "production",
+  site_engineer: "production",
+  surveyor: "production",
+  quality_officer: "technical",
+  lab_testing_officer: "technical",
+  document_controller: "project_manager",
+  safety_officer: "production",
+  procurement_officer: "cost",
+  warehouse_officer: "production",
+  administrative_officer: "project_manager",
+};
+
+function coordinationRoleLabel(role) {
+  const raw = roleWorkbenchContract(role)?.label || state.lineContracts?.role_flows?.roles?.[role]?.label || ROLE_WORKBENCH_SPECS[role]?.title || role;
+  return state.language === "en" ? (UI_TRANSLATIONS[raw] || raw) : raw;
+}
+
+function coordinationStepLabel(step) {
+  if (state.language !== "en") return step;
+  return translateUiText(step) === step ? "Follow the first step in this role workflow" : translateUiText(step);
+}
+
+const ROLE_ALERT_COPY = {
+  MISSING_EVENT: ["成果未绑定工程事件", "Output is not linked to a Core Event"],
+  MISSING_EVIDENCE: ["成果缺少证据引用", "Output has no evidence reference"],
+  INVENTORY_NEGATIVE: ["库存跌破零线", "Inventory is below zero"],
+  WAREHOUSE_EXCEPTION: ["收发存存在异常", "Inventory movement exception"],
+  TEST_BATCH_FAIL: ["材料试验不合格仍进入收发存链", "Failed material test is in the inventory flow"],
+  TEST_BATCH_UNMATCHED: ["材料批次未匹配试验数据", "Material batch has no matching test data"],
+  QUANTITY_OVER_REDLINE: ["材料领用超过基准红线", "Material issue exceeds the baseline red line"],
+  SURPLUS_OVER_REDLINE: ["材料节余超过基准红线", "Material surplus exceeds the baseline red line"],
+  PURCHASE_OVER_REDLINE: ["采购到货超过需求红线", "Procurement receipt is over the demand red line"],
+  PURCHASE_BASELINE_OVER_REDLINE: ["采购需求超过材料基准红线", "Purchase request exceeds the material baseline red line"],
+  RECEIPT_SHORTAGE: ["采购需求尚未形成足量到货", "Procurement demand is not sufficiently received"],
+  QUANTITY_CONFLICT: ["申报量与实测量不一致", "Claimed quantity differs from measured quantity"],
+  QUALITY_RETURN: ["现场成果被质量退回", "Field output was returned by quality"],
+  MEASUREMENT_WITHOUT_CONTROL: ["实测成果缺少控制点", "Survey output has no control-point reference"],
+  LAB_QUALITY_CONFLICT: ["质量结论与试验结果冲突", "Quality conclusion conflicts with the test result"],
+  PRODUCTION_BEFORE_RELEASE: ["技术未放行但生产已有成果", "Production output exists before technical release"],
+};
+
+const ROLE_STREAM_LABELS = {
+  material_baseline: "造价材料基准",
+  procurement_order: "采购订单/到货",
+  procurement_receipt: "采购到货",
+  warehouse_receipt: "入库批次",
+  material_inventory: "库存收发存",
+  site_issue: "现场领料",
+  site_fact: "施工现场事实",
+  site_claim: "现场完成量申报",
+  production_plan: "施工现场计划",
+  production_progress: "生产进度",
+  technical_release: "技术放行/交底",
+  survey_result: "测量实测成果",
+  quantity_measurement: "计量工程量",
+  cost_measurement: "造价计量",
+  cost_claim: "造价申报基础",
+  quality_acceptance: "质量验收",
+  lab_test: "试验检测",
+  role_evidence: "岗位证据",
+  drawings: "图纸版本",
+  site_event: "施工事件",
+  corrective_action: "整改闭环",
+  evidence: "证据关联",
+  signoff: "签认记录",
+  version_history: "版本历史",
+  personnel_registry: "人员名册",
+  authorization: "授权记录",
+  handover: "交接记录",
+  outcome_queue: "Outcome 经营队列",
+  role_work_products: "岗位成果",
+  quantity_over_redline: "数量超红线",
+  inventory_negative: "库存负数",
+  surplus_over_redline: "节余超红线",
+  test_batch_unmatched: "试验批次不匹配",
+  exception_pending: "异常待核对",
+  purchase_over_redline: "采购超红线",
+  receipt_shortage: "到货不足",
+  quantity_conflict: "数量冲突",
+  missing_event: "缺少工程事件",
+  missing_evidence: "缺少证据",
+  production_before_release: "未放行先生产",
+  lab_quality_conflict: "试验与质量冲突",
+  release_without_version: "放行缺图纸版本",
+  progress_without_measurement: "完成量未实测",
+  authorization_missing: "授权缺失",
+};
+
+function roleStreamLabel(value) {
+  const raw = String(value || "");
+  return state.language === "en" ? ({
+    material_baseline: "Cost material baseline", procurement_order: "Procurement order/delivery", warehouse_receipt: "Warehouse receipt batch", material_inventory: "Inventory movements", site_issue: "Site material issue", site_fact: "Site facts", site_claim: "Site quantity claim", production_plan: "Production plan", production_progress: "Production progress", technical_release: "Technical release/briefing", survey_result: "Survey result", quantity_measurement: "Measured quantity", cost_measurement: "Cost measurement", cost_claim: "Cost claim basis", quality_acceptance: "Quality acceptance", lab_test: "Lab test", role_evidence: "Role evidence", drawings: "Drawing version", site_event: "Site event", corrective_action: "Corrective action", evidence: "Evidence links", signoff: "Sign-off", version_history: "Version history", personnel_registry: "Personnel registry", authorization: "Authorization", handover: "Handover record", outcome_queue: "Outcome queue", role_work_products: "Role outputs", procurement_receipt: "Procurement delivery", quantity_over_redline: "Quantity over red line", inventory_negative: "Negative inventory", surplus_over_redline: "Surplus over red line", test_batch_unmatched: "Unmatched test batch", exception_pending: "Exception pending", purchase_over_redline: "Purchase over red line", receipt_shortage: "Receipt shortage", quantity_conflict: "Quantity conflict", missing_event: "Missing Core Event", missing_evidence: "Missing evidence", production_before_release: "Production before release", lab_quality_conflict: "Lab/quality conflict", release_without_version: "Release without drawing version", progress_without_measurement: "Progress without measurement", authorization_missing: "Authorization missing", purchase_baseline_over_redline: "Purchase over material baseline" }[raw] || raw) : (ROLE_STREAM_LABELS[raw] || raw);
+}
+
+function roleAlertTitle(alert) {
+  const copy = ROLE_ALERT_COPY[alert?.code];
+  return state.language === "en" ? (copy?.[1] || "Cross-line alert") : (copy?.[0] || alert?.title || "交叉预警");
+}
+
+function roleAlertMessage(alert) {
+  if (state.language !== "en") return alert?.message || "请按固定责任链核对相关数据。";
+  const code = alert?.code || "";
+  const messages = {
+    MISSING_EVENT: "Link the output to the correct Core Event before handoff.",
+    MISSING_EVIDENCE: "Add the evidence reference; the record remains pending until confirmed.",
+    INVENTORY_NEGATIVE: "Pause the movement and let production and cost leads confirm the source records.",
+    TEST_BATCH_FAIL: "Pause receipt/issue and let testing and technical leads confirm the batch.",
+    TEST_BATCH_UNMATCHED: "Keep the batch pending until a matching test report is linked.",
+    QUANTITY_OVER_REDLINE: "Stop the material issue and let production and cost leads confirm the baseline and source records.",
+    SURPLUS_OVER_REDLINE: "Check the baseline, receipts and site demand with production and cost leads.",
+    PURCHASE_OVER_REDLINE: "Cost management must confirm the quantity before this flow continues.",
+    PURCHASE_BASELINE_OVER_REDLINE: "Cost management must confirm the request against the accepted material baseline.",
+    RECEIPT_SHORTAGE: "Production and warehouse roles must check the delivery plan and receipt record.",
+    QUANTITY_CONFLICT: "Survey and cost roles must reconcile the quantity before measurement.",
+    QUALITY_RETURN: "Resolve the quality return and reinspection before closing the field output.",
+    MEASUREMENT_WITHOUT_CONTROL: "Add the control-point or station reference before using the result.",
+    LAB_QUALITY_CONFLICT: "Testing and technical leads must resolve the conflicting conclusion.",
+    PRODUCTION_BEFORE_RELEASE: "Stop the production handoff until the technical lead confirms release.",
+  };
+  return messages[code] || "Review the evidence with the related role; no automatic decision was made.";
+}
+
+function roleAlertRisk(alert) {
+  return alert?.severity === "block" ? "red" : alert?.severity === "warn" ? "yellow" : "blue";
+}
+
+function renderRoleIntelligencePanel({ compact = false } = {}) {
+  const intelligence = state.roleWorkProducts?.intelligence || {};
+  const contracts = intelligence.contracts || {};
+  const role = currentRole();
+  const contract = contracts[role] || Object.values(contracts)[0];
+  const alerts = (intelligence.alerts || []).filter((item) => isProjectManager() || !role || item.role === role || currentRoles().includes(item.role));
+  if (!contract && !alerts.length) return "";
+  const alertMarkup = alerts.length
+    ? alerts.slice(0, compact ? 4 : 8).map((alert) => `<article class="dashboard-alert risk-${roleAlertRisk(alert)}"><div><strong>${escapeHtml(roleAlertTitle(alert))}</strong><small>${escapeHtml(roleAlertMessage(alert))}</small><small>${escapeHtml((alert.related_roles || []).map((item) => coordinationRoleLabel(item)).join(state.language === "en" ? ", " : "、") || (state.language === "en" ? "Related role confirmation required" : "需要相关岗位确认"))}</small></div><span class="alert-source-badge">${escapeHtml(state.language === "en" ? (alert.severity === "block" ? "Red line" : "Review") : (alert.severity === "block" ? "红线" : "黄色核对"))}</span></article>`).join("")
+    : `<p class="empty-state">${state.language === "en" ? "No new cross-line alerts for this role." : "当前岗位没有新的交叉预警。"}</p>`;
+  const flow = contract ? `<div class="role-intelligence-flow"><div><span class="card-label">${state.language === "en" ? "Department head" : "部门负责人"}</span><strong>${escapeHtml(coordinationRoleLabel(contract.head_role || role))}</strong></div><div><span class="card-label">${state.language === "en" ? "Input streams" : "数据输入流"}</span><strong>${escapeHtml((contract.inputs || []).map(roleStreamLabel).join(state.language === "en" ? ", " : "、"))}</strong></div><div><span class="card-label">${state.language === "en" ? "Fixed output flow" : "固定交付流向"}</span><strong>${escapeHtml((contract.hands_to || []).map(coordinationRoleLabel).join(state.language === "en" ? ", " : "、") || (state.language === "en" ? "No handoff" : "无"))}</strong></div><div><span class="card-label">${state.language === "en" ? "Escalation path" : "升级路径"}</span><strong>${escapeHtml((contract.escalates_to || []).map(coordinationRoleLabel).join(state.language === "en" ? ", " : "、") || (state.language === "en" ? "None" : "无"))}</strong></div></div>` : "";
+  return `<section class="overview-panel role-intelligence-panel"><div class="surface-title"><div><span class="panel-label">ROLE DATA INTELLIGENCE</span><h3>固定数据流向与交叉预警</h3></div><span class="surface-caption">${state.language === "en" ? "Deterministic match · human confirmation" : "稳定键匹配 · 人工确认"}</span></div><p class="business-note">数据流向固定，异常只提醒相关岗位，不跨岗改写事实。${contract ? ` ${state.language === "en" ? "Matching rules" : "交叉核验规则"}：${escapeHtml((contract.checks || []).map(roleStreamLabel).join(state.language === "en" ? ", " : "、"))}` : ""}</p>${flow}<div class="dashboard-alert-list">${alertMarkup}</div></section>`;
+}
+
+function eventRequirementCard(item) {
+  const status = String(item.status || "OPEN").toUpperCase();
+  const statusLabel = { RETURNED: "已退回补充", SUBMITTED: "已提交", OPEN: "待完成" }[status] || status;
+  const feedback = item.feedback || {};
+  const feedbackMarkup = status === "RETURNED" && (feedback.reason || (feedback.required_items || []).length)
+    ? `<div class="event-return-feedback"><strong>造价经理退回要求</strong><span>${escapeHtml(feedback.reason || "请按必补项完善")}</span>${(feedback.required_items || []).length ? `<small>必补：${escapeHtml(feedback.required_items.join("、"))}</small>` : ""}</div>`
+    : "";
+  const submittedIds = item.submitted_product_ids || [];
+  const returnButton = isCostManager() && submittedIds.length
+    ? `<button class="button button-quiet event-return-requirement" data-product-id="${escapeHtml(submittedIds[submittedIds.length - 1])}" data-event-id="${escapeHtml(item.event_id || "")}" type="button">退回补充证据</button>`
+    : "";
+  return `<article class="event-requirement-card ${status === "SUBMITTED" ? "is-complete" : status === "RETURNED" ? "is-returned" : "is-open"}"><div><strong>${escapeHtml(item.label || item.role)}</strong><small>${escapeHtml(item.event_id)} · ${escapeHtml(item.event_title || "工程事件")}</small></div><span>${escapeHtml(statusLabel)}</span><p>${escapeHtml((item.deliverables || []).join("、"))}</p><small>时限：${escapeHtml(item.due_at || `${item.due_hours || "—"} 小时内`)} · ${escapeHtml(coordinationRoleLabel(item.role))}</small>${feedbackMarkup}${returnButton ? `<div class="event-requirement-actions">${returnButton}</div>` : ""}</article>`;
+}
+
+function renderEventAssignmentPanel({ compact = false } = {}) {
+  const packet = state.eventIntake || state.roleWorkProducts?.event_intake || {};
+  const requirements = (packet.requirements || []).filter((item) => isProjectManager() || isCostManager() || currentRoles().includes(item.role));
+  const intake = isCostManager() ? (packet.intake || []).filter((item) => ["SUGGESTED", "UNLINKED"].includes(item.status)) : [];
+  const requirementMarkup = requirements.length
+    ? requirements.slice(0, compact ? 8 : 16).map(eventRequirementCard).join("")
+    : `<p class="empty-state">${state.language === "en" ? "No fixed event requirements for this role." : "当前岗位暂无固定工程事件待办。"}</p>`;
+  const eventOptions = (state.events || []).map((event) => `<option value="${escapeHtml(event.event_id || "")}">${escapeHtml(`${event.event_id || ""} · ${event.title || event.identity?.title || "工程事件"}`)}</option>`).join("");
+  const intakeMarkup = intake.length
+    ? intake.slice(0, compact ? 4 : 10).map((item) => `<article class="event-intake-card"><div><strong>${escapeHtml(item.role_label || coordinationRoleLabel(item.role))}</strong><small>${escapeHtml(item.product_id)} · ${escapeHtml(item.reason || "待造价经理归类")}</small></div><p>关键词：${escapeHtml((item.keywords || []).join("、") || "未提取到稳定关键词")}</p><div class="event-intake-actions"><select data-intake-event="${escapeHtml(item.product_id)}"><option value="">选择已有工程事件</option>${eventOptions}</select><button class="button button-primary event-intake-confirm" data-product-id="${escapeHtml(item.product_id)}" type="button">确认归类</button><button class="button button-quiet event-intake-reject" data-product-id="${escapeHtml(item.product_id)}" type="button">退回待说明</button></div></article>`).join("")
+    : (isCostManager() ? `<p class="empty-state">暂无待造价经理归类的生产/技术成果。</p>` : "");
+  if (!requirements.length && !intake.length && !isCostManager()) return "";
+  return `<section class="overview-panel event-assignment-panel"><div class="surface-title"><div><span class="panel-label">EVENT-DRIVEN WORK QUEUE</span><h3>工程事件固定待办</h3></div><span class="surface-caption">事件由造价经理组织，岗位只接收既定成果要求</span></div><p class="business-note">生产/技术/现场成果先保留原始事实；系统仅按位置与关键词生成候选。造价经理确认后才进入 Event → Evidence → Outcome 链，岗位无需手选事件。</p>${isCostManager() ? `<div class="event-intake-queue"><div class="data-entry-heading"><h4>待归类生产/技术成果</h4><span class="request-status">只允许造价经理确认</span></div>${intakeMarkup}</div>` : ""}<div class="event-requirement-list">${requirementMarkup}</div></section>`;
+}
+
+function bindEventAssignmentPanel() {
+  document.querySelectorAll(".event-intake-confirm").forEach((button) => button.addEventListener("click", () => confirmEventIntake(button.dataset.productId, "LINK")));
+  document.querySelectorAll(".event-intake-reject").forEach((button) => button.addEventListener("click", () => confirmEventIntake(button.dataset.productId, "REJECT")));
+  document.querySelectorAll(".event-return-requirement").forEach((button) => button.addEventListener("click", () => returnEventRequirement(button.dataset.productId, button.dataset.eventId)));
+}
+
+function canManuallyLinkEvidence() {
+  return currentRoles().some((role) => ["cost_manager", "document_controller"].includes(role));
+}
+
+function renderEvidenceAutoPanel({ compact = false } = {}) {
+  const packet = state.evidenceIntake || state.roleWorkProducts?.evidence_intake || {};
+  const intake = (packet.intake || []).filter((item) => isProjectManager() || isCostManager() || currentRoles().includes(item.role));
+  const rows = intake.slice(0, compact ? 8 : 16).map((item) => {
+    const statusLabel = { AUTO_MATCHED: "已自动匹配", REVIEW_REQUIRED: "需要人工确认", LINKED: "已归档关联", UNLINKED: "待补充" }[item.status] || item.status || "待处理";
+    const candidate = item.candidate_sources?.[0];
+    const sourceLabel = candidate ? `${candidate.source_id} · ${candidate.name}` : "暂无稳定来源";
+    const reviewButton = canManuallyLinkEvidence() && item.status === "REVIEW_REQUIRED"
+      ? '<button class="button button-quiet evidence-open-manual" data-view="evidence" type="button">打开 P07 复核</button>'
+      : "";
+    return `<article class="evidence-intake-card evidence-${String(item.status || "").toLowerCase()}"><div><strong>${escapeHtml(item.role_label || coordinationRoleLabel(item.role))}</strong><span>${escapeHtml(statusLabel)}</span></div><small>${escapeHtml(item.product_id)} · ${escapeHtml(item.product_type || "岗位成果")}</small><p>候选来源：${escapeHtml(sourceLabel)}</p><small>${escapeHtml(item.reason || "底层保持可追溯匹配")}</small>${reviewButton}</article>`;
+  }).join("");
+  return `<section class="overview-panel evidence-assignment-panel"><div class="surface-title"><div><span class="panel-label">EVIDENCE AUTO-LINK</span><h3>证据自动关联</h3></div><span class="surface-caption">P07 唯一事实源 · 当前岗位只看相关结果</span></div><p class="business-note"><strong>底层匹配：</strong>系统按单据号、材料批次、日志/照片编号、WBS 和位置匹配已有资料；唯一命中自动投影，多项命中才请求人工确认，不复制原件、不建立第二证据库。</p>${rows || '<p class="empty-state">当前岗位暂无证据匹配任务。</p>'}</section>`;
+}
+
+async function confirmEventIntake(productId, action) {
+  const select = document.querySelector(`[data-intake-event="${CSS.escape(productId)}"]`);
+  const eventId = select?.value || "";
+  if (action === "LINK" && !eventId) {
+    setError("请选择已有工程事件后再确认归类");
+    return;
+  }
+  try {
+    const response = await apiJson("/api/event-intake/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, product_id: productId, action, event_id: eventId }) });
+    state.roleWorkProducts = response.role_work_products || state.roleWorkProducts;
+    state.eventIntake = state.roleWorkProducts.event_intake || state.eventIntake;
+    setStatus(action === "LINK" ? "已由造价经理确认事件归类" : "已退回待说明，原始岗位成果保留");
+    renderRoleOverview();
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+async function returnEventRequirement(productId, eventId) {
+  const reason = window.prompt("请填写退回原因（必填）：", "证据不足，无法证明工程事件核心事实");
+  if (!reason || !reason.trim()) return;
+  const requiredText = window.prompt("请填写必补项，用逗号分隔（可留空）：", "施工日志,现场照片,测量或验收记录");
+  const requiredItems = (requiredText || "").split(/[,，\n]/).map((item) => item.trim()).filter(Boolean);
+  try {
+    const response = await apiJson("/api/event-intake/return", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, product_id: productId, event_id: eventId, reason: reason.trim(), required_items: requiredItems }) });
+    state.roleWorkProducts = response.role_work_products || state.roleWorkProducts;
+    state.eventIntake = state.roleWorkProducts.event_intake || state.eventIntake;
+    setStatus("已退回原岗位补充；原证据版本仍保留");
+    renderRoleOverview();
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+function coordinationFlowContract() {
+  const role = currentRole();
+  const flow = state.lineContracts?.role_flows?.roles?.[role] || {};
+  const workbench = roleWorkbenchContract(role) || {};
+  const collaboration = workbench.collaboration || {};
+  const nextRoles = (flow.next_roles || collaboration.hands_to || []).filter(Boolean);
+  const escalationRoles = (flow.escalates_to || collaboration.escalates_to || []).filter(Boolean);
+  const primaryHandoffRole = nextRoles[0] || "project_manager";
+  const workflow = Array.isArray(flow.workflow) ? flow.workflow : [];
+  const step = workflow[0] || "成果交接";
+  const line = COORDINATION_ROLE_LINES[primaryHandoffRole] || COORDINATION_ROLE_LINES[role] || "project_manager";
+  const targetPath = `Core Event → ${coordinationRoleLabel(primaryHandoffRole)} → Evidence / Verification`;
+  return { role, flow, workbench, nextRoles, escalationRoles, primaryHandoffRole, line, step, stepLabel: coordinationStepLabel(step), targetPath };
 }
 
 function renderCoordination() {
@@ -694,37 +1196,34 @@ function renderCoordination() {
   const adaptations = result.line_adaptations || [];
   const editable = !isKpiOnly();
   const contracts = state.lineContracts?.lines || [];
+  const flowContract = coordinationFlowContract();
   const taskRows = tasks.length ? tasks.map((task) => `<article class="dashboard-issue risk-blue"><span>${escapeHtml(task.task_id || "TASK")}</span><div><strong>${escapeHtml(task.title || "协同任务")}</strong><small>${escapeHtml(task.role || "") } · ${escapeHtml(task.status || "OPEN")} · ${escapeHtml(task.event_id || "")}</small></div>${editable ? `<button class="button button-quiet" data-task-id="${escapeHtml(task.task_id)}" data-task-status="CLOSED" type="button">关闭</button>` : ""}</article>`).join("") : '<p class="empty-state">暂无协同任务。先把责任线和 Core Event 绑定起来。</p>';
   const decisionRows = decisions.length ? decisions.map((decision) => `<article class="dashboard-issue ${decision.status === "CONFIRMED" ? "risk-blue" : "risk-yellow"}"><span>${escapeHtml(decision.decision_type || "DEC")}</span><div><strong>${escapeHtml(decision.event_id || "工程事件")}</strong><small>${escapeHtml(decision.status || "PROPOSED")} · ${escapeHtml(decision.reason || "")}${decision.confirmed_by ? ` · ${escapeHtml(decision.confirmed_by)} 已确认` : " · 等待人工确认"}</small></div>${editable && decision.status !== "CONFIRMED" ? `<button class="button button-quiet" data-decision-id="${escapeHtml(decision.decision_id)}" type="button">人工确认</button>` : ""}</article>`).join("") : '<p class="empty-state">暂无 GO / OPTIMIZE / HOLD / REJECT 决策记录。</p>';
-  const relationRows = relations.length ? relations.map((relation) => `<tr><td>${escapeHtml(relation.relation_type || "")}</td><td>${escapeHtml(relation.from_type || "")} · ${escapeHtml(relation.from_id || "")}</td><td>${escapeHtml(relation.to_type || "")} · ${escapeHtml(relation.to_id || "")}</td><td>${escapeHtml(relation.created_by || "")}</td></tr>`).join("") : '<tr><td colspan="4">暂无关系记录。关系只追加，不删除原 Event。</td></tr>';
+  const relationRows = relations.length ? relations.map((relation) => `<tr><td>${escapeHtml(relation.relation_type || "")}</td><td>${escapeHtml(relation.from_type || "")} · ${escapeHtml(relation.from_id || "")}</td><td>${escapeHtml(relation.to_type || "")} · ${escapeHtml(relation.to_id || "")}</td><td>${escapeHtml(relation.created_by || "")}</td></tr>`).join("") : '<tr><td colspan="4">暂无关系记录。岗位成果保存后由系统按 Event → Evidence → Outcome 自动关联。</td></tr>';
   const adaptationRows = adaptations.length ? adaptations.slice().reverse().map((item) => `<article class="dashboard-issue risk-blue"><span>${escapeHtml(item.line || "line")}</span><div><strong>${escapeHtml(item.adaptation_id || "")}</strong><small>${escapeHtml(item.record_count || 0)} 条 · ${escapeHtml(item.confirmed_by || "")} · ${escapeHtml(item.mapping_targets?.join(" → ") || "")}</small></div></article>`).join("") : '<p class="empty-state">尚无已确认的三线数据接入。</p>';
   const contractCards = contracts.map((contract) => { const responsibility = contract.responsibility || {}; return `<div class="coverage-item"><strong>${escapeHtml(contract.label || contract.line)}</strong><small>v${escapeHtml(contract.version || "1.0")} · 必填 ${escapeHtml((contract.required || []).join("、"))}</small><small>系统自动归属：${escapeHtml(responsibility.head_label || "主管负责人")}（${escapeHtml(responsibility.head_role || "")})</small><small>可修改：仅对应主管负责人；${escapeHtml(contract.human_confirmation || "必须人工确认")}</small></div>`; }).join("");
+  const nextRoleLabels = flowContract.nextRoles.map(coordinationRoleLabel);
+  const escalationLabels = flowContract.escalationRoles.map(coordinationRoleLabel);
+  const events = result.event_index || state.events || [];
+  const defaultEventId = events[0]?.event_id || "";
+  const taskTitle = `${coordinationRoleLabel(flowContract.role)}：${flowContract.step} → ${coordinationRoleLabel(flowContract.primaryHandoffRole)}`;
+  const roleSeparator = state.language === "en" ? ", " : "、";
+  const escalationPrefix = state.language === "en" ? " · Escalation: " : "；升级：";
+  const gateText = state.language === "en" ? "The responsible owner must confirm the output before the next handoff." : (flowContract.flow.gate || "成果提交后由责任人确认");
+  const flowSummary = `<section class="dashboard-panel fixed-coordination-panel"><div class="surface-title"><div><span class="panel-label">FIXED HANDOFF CONTRACT</span><h3>既有责任链（系统固定）</h3></div><span class="surface-caption">减少选择 · 按岗位契约交接</span></div><div class="capability-intro"><strong>${escapeHtml(coordinationRoleLabel(flowContract.role))}</strong><span> → ${escapeHtml(nextRoleLabels.join(roleSeparator) || coordinationRoleLabel("project_manager"))}${escapeHtml(escalationPrefix)}${escapeHtml(escalationLabels.join(roleSeparator) || (state.language === "en" ? "None" : "无"))}</span></div><div class="subcontract-meta-grid"><div><span class="card-label">当前步骤</span><strong>${escapeHtml(flowContract.stepLabel)}</strong></div><div><span class="card-label">固定交付路径</span><strong>${escapeHtml(flowContract.targetPath)}</strong></div><div><span class="card-label">人工闸门</span><strong>${escapeHtml(gateText)}</strong></div></div><p class="business-note">保存岗位成果后，系统自动建立 Event、Evidence、Verification、Outcome 的对应关系；不再手工选择关系类型、起点或终点。</p></section>`;
+  const taskEditor = events.length ? `<form id="coordTaskForm" class="data-entry-card"><h4>按既有流程交接</h4><p class="business-note"><strong>固定交付岗位：</strong>${escapeHtml(coordinationRoleLabel(flowContract.primaryHandoffRole))}<br /><strong>固定路径：</strong>${escapeHtml(flowContract.targetPath)}</p><label>关联工程事件<select id="coordTaskEvent" required>${coordinationEventOptions(defaultEventId)}</select></label><input id="coordTaskTitle" type="hidden" value="${escapeHtml(taskTitle)}" /><button class="button button-primary" type="submit">提交至固定责任岗位</button></form>` : '<div class="data-entry-card"><h4>按既有流程交接</h4><p class="empty-state">当前没有可关联的 Core Event，请先在工程事件中建立事件。</p></div>';
+  const decisionEditor = isProjectManager() && events.length ? `<form id="coordDecisionForm" class="data-entry-card"><h4>项目经理人工确认</h4><label>关联工程事件<select id="coordDecisionEvent" required>${coordinationEventOptions(defaultEventId)}</select></label><label>决策类型<select id="coordDecisionType"><option>GO</option><option>OPTIMIZE</option><option>HOLD</option><option>REJECT</option></select></label><label>依据/理由<textarea id="coordDecisionReason" required placeholder="数据只能提供依据，填写人的判断理由"></textarea></label><label>依据引用<input id="coordDecisionBasis" placeholder="纪要-01,图纸-A-02" /></label><label class="check-line"><input id="coordDecisionConfirm" type="checkbox" /> 我已完成人工确认并承担该决策</label><button class="button button-primary" type="submit">保存决策</button></form>` : "";
   const editor = editable ? `
-    <section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">COORDINATION WORKFLOW</span><h3>协同工作流</h3></div><span class="surface-caption">分派 → 复核 → 人工确认 → 关闭</span></div>
-      <div class="coordination-form-grid">
-        <form id="coordTaskForm" class="data-entry-card"><h4>创建协同任务</h4><label>任务标题<input id="coordTaskTitle" required placeholder="例如：技术负责人确认变更方案" /></label><label>责任线<select id="coordTaskRole"><option value="production">生产线</option><option value="technical">技术线</option><option value="cost">造价线</option><option value="project_manager">项目经理</option><option value="owner">业主</option><option value="supervision">监理</option><option value="audit">审计</option></select></label><label>Core Event<select id="coordTaskEvent" required>${coordinationEventOptions()}</select></label><label>目标路径<input id="coordTaskPath" placeholder="Core.event.technical_track" /></label><label>截止时间<input id="coordTaskDue" type="datetime-local" /></label><button class="button button-primary" type="submit">建立任务</button></form>
-        <form id="coordDecisionForm" class="data-entry-card"><h4>记录人工决策</h4><label>Core Event<select id="coordDecisionEvent" required>${coordinationEventOptions()}</select></label><label>决策类型<select id="coordDecisionType"><option>GO</option><option>OPTIMIZE</option><option>HOLD</option><option>REJECT</option></select></label><label>依据/理由<textarea id="coordDecisionReason" required placeholder="数据只能提供依据，填写人的判断理由"></textarea></label><label>依据引用<input id="coordDecisionBasis" placeholder="纪要-01,图纸-A-02" /></label><label class="check-line"><input id="coordDecisionConfirm" type="checkbox" /> 我已完成人工确认并承担该决策</label><button class="button button-primary" type="submit">保存决策</button></form>
-        <form id="coordRelationForm" class="data-entry-card"><h4>建立专用关系</h4><label>关系类型<select id="coordRelationType"><option value="EVENT_TO_SOURCE">Event → Source</option><option value="EVENT_TO_TASK">Event → Task</option><option value="EVENT_TO_PERSON">Event → Person</option><option value="EVENT_TO_CAPABILITY">Event → P01–P08</option><option value="EVENT_TO_OUTCOME">Event → Outcome</option><option value="EVENT_PARENT">父子事件</option><option value="EVENT_SPLIT_FROM">拆分来源</option><option value="EVENT_CANCELLED_BY">取消关系</option></select></label><label>起点标识<input id="coordRelationFrom" required placeholder="EV-2026-0001" /></label><label>终点类型<input id="coordRelationToType" value="capability" /></label><label>终点标识<input id="coordRelationTo" required placeholder="P07 / source-id / TASK-id" /></label><label>依据引用<input id="coordRelationBasis" placeholder="纪要-01" /></label><button class="button button-primary" type="submit">保存关系</button></form>
-      </div>
+    <section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">COORDINATION WORKFLOW</span><h3>协同工作流</h3></div><span class="surface-caption">按既有流程：交接 → 复核 → 人工确认 → 关闭</span></div>
+      <div class="coordination-form-grid">${taskEditor}${decisionEditor}</div>
     </section>
-    <section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">LINE ADAPTERS</span><h3>生产线 / 技术线 / 造价线接入</h3></div><span class="surface-caption">预览只读；确认后才写入 Core</span></div><div class="data-entry-card"><div class="coordination-form-grid"><label>业务线<select id="lineAdapterLine"><option value="production">生产线</option><option value="technical">技术线</option><option value="cost">造价线</option></select></label><label>记录 JSON<textarea id="lineAdapterRecords" rows="9" placeholder='[{"record_id":"PR-01","event_id":"EV-2026-0001","occurred_at":"2026-08-18T09:00:00+08:00","actor":"现场负责人","status":"COMPLETED","progress":100,"quantity":12,"unit":"m3","evidence_refs":["现场照片-01"]}]'></textarea></label></div><div class="button-row"><button id="lineAdapterPreview" class="button button-quiet" type="button">只读预览</button><button id="lineAdapterConfirm" class="button button-primary" type="button" disabled>人工确认并映射</button></div><div id="lineAdapterStatus" class="request-status">所有数据接入都必须由登录人员确认；系统不会代替 GO / OPTIMIZE / HOLD / REJECT。</div></div></section>` : "";
-  $("workspaceContent").innerHTML = `<div class="surface-title"><div><span class="panel-label">COLLABORATION / RELATION GRAPH</span><h3>组织协同与专用关系管理</h3></div><span class="surface-caption">数据提供依据，责任人做确认，关系只追加留痕</span></div><div class="capability-intro"><strong>负熵规则：</strong><span>三条业务线不建立新金额台账，只把已确认记录映射到现有 Core、P01–P08 和 Outcome。</span></div><div class="dashboard-grid"><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">TASK QUEUE</span><h3>协同任务</h3></div></div><div class="dashboard-issue-list">${taskRows}</div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">DECISION LOG</span><h3>人工决策记录</h3></div></div><div class="dashboard-issue-list">${decisionRows}</div></section></div>${editor}<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">RELATION MANAGEMENT</span><h3>关系台账</h3></div><span class="surface-caption">Event / Source / Person / Capability / Outcome</span></div><div class="table-scroll"><table><thead><tr><th>关系</th><th>起点</th><th>终点</th><th>建立人</th></tr></thead><tbody>${relationRows}</tbody></table></div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">ADAPTER AUDIT</span><h3>三线接入留痕</h3></div></div><div class="dashboard-issue-list">${adaptationRows}</div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">CONTRACTS</span><h3>数据契约与人工闸门</h3></div></div><div class="capability-coverage">${contractCards}</div></section>`;
+    <section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">LINE ADAPTERS</span><h3>生产线 / 技术线 / 造价线接入</h3></div><span class="surface-caption">岗位成果结构化录入；适配器后台留痕</span></div><div class="capability-intro"><strong>岗位边界：</strong><span>各岗位只在自己的成果工作面录入，系统后台按数据契约映射到 Core；此处不接收原始 JSON。对应主管负责人仍需人工确认，适配记录保留在下方审计台账。</span></div></section>` : "";
+  $("workspaceContent").innerHTML = `<div class="surface-title"><div><span class="panel-label">COLLABORATION / RELATION GRAPH</span><h3>组织协同与专用关系管理</h3></div><span class="surface-caption">责任链固定，数据提供依据，责任人做确认</span></div><div class="capability-intro"><strong>负熵规则：</strong><span>三条业务线不建立新金额台账，只把已确认记录映射到现有 Core、P01–P08 和 Outcome。</span></div>${flowSummary}${renderRoleIntelligencePanel({ compact: true })}<div class="dashboard-grid"><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">TASK QUEUE</span><h3>协同任务</h3></div></div><div class="dashboard-issue-list">${taskRows}</div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">DECISION LOG</span><h3>人工决策记录</h3></div></div><div class="dashboard-issue-list">${decisionRows}</div></section></div>${editor}<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">RELATION MANAGEMENT</span><h3>关系台账</h3></div><span class="surface-caption">系统自动维护 Event / Evidence / Outcome 关系</span></div><div class="table-scroll"><table><thead><tr><th>关系</th><th>起点</th><th>终点</th><th>建立人</th></tr></thead><tbody>${relationRows}</tbody></table></div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">ADAPTER AUDIT</span><h3>三线接入留痕</h3></div></div><div class="dashboard-issue-list">${adaptationRows}</div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">CONTRACTS</span><h3>数据契约与人工闸门</h3></div></div><div class="capability-coverage">${contractCards}</div></section>`;
   if (!editable) return;
-  const lineHeadRoles = Object.fromEntries(contracts.map((contract) => [contract.line, contract.responsibility?.head_role || ""]));
-  const lineAdapterCanConfirm = () => currentRoles().includes(lineHeadRoles[$("lineAdapterLine")?.value || ""]);
-  const refreshLineConfirmBoundary = () => {
-    const confirmButton = $("lineAdapterConfirm");
-    if (!confirmButton) return;
-    confirmButton.disabled = !state.linePreview || !lineAdapterCanConfirm();
-    if (!lineAdapterCanConfirm()) $("lineAdapterStatus").textContent = "当前责任线由系统自动归属；只有对应主管负责人可以确认或修改。";
-  };
-  $("lineAdapterLine").addEventListener("change", refreshLineConfirmBoundary);
-  refreshLineConfirmBoundary();
-  $("coordTaskForm").addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/collaboration/task", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, title: $("coordTaskTitle").value, role: $("coordTaskRole").value, event_id: $("coordTaskEvent").value, target_path: $("coordTaskPath").value, due_at: $("coordTaskDue").value }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
-  $("coordDecisionForm").addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/collaboration/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, event_id: $("coordDecisionEvent").value, decision_type: $("coordDecisionType").value, reason: $("coordDecisionReason").value, basis_refs: $("coordDecisionBasis").value.split(",").map((item) => item.trim()).filter(Boolean), confirm: $("coordDecisionConfirm").checked }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
-  $("coordRelationForm").addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/relationships", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, relation_type: $("coordRelationType").value, from_type: "event", from_id: $("coordRelationFrom").value, to_type: $("coordRelationToType").value, to_id: $("coordRelationTo").value, basis_refs: $("coordRelationBasis").value.split(",").map((item) => item.trim()).filter(Boolean) }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
-  $("lineAdapterPreview").addEventListener("click", async () => { try { const records = JSON.parse($("lineAdapterRecords").value || "[]"); state.linePreview = await apiJson("/api/line-adapter/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, line: $("lineAdapterLine").value, records }) }); const responsibility = state.linePreview.preview.responsibility || {}; $("lineAdapterStatus").textContent = `预览通过：${state.linePreview.preview.record_count} 条；系统归属 ${responsibility.head_label || "主管负责人"}，只有对应主管负责人可以确认。`; refreshLineConfirmBoundary(); } catch (error) { $("lineAdapterStatus").textContent = error.message; state.linePreview = null; refreshLineConfirmBoundary(); } });
-  $("lineAdapterConfirm").addEventListener("click", async () => { if (!state.linePreview) return; try { await apiJson("/api/line-adapter/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, preview: state.linePreview.preview }) }); state.linePreview = null; await refreshWorkspace(); setView("coordination"); } catch (error) { $("lineAdapterStatus").textContent = error.message; } });
+  const taskForm = $("coordTaskForm");
+  if (taskForm) taskForm.addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/collaboration/task", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, title: taskTitle, role: COORDINATION_ROLE_LINES[flowContract.primaryHandoffRole] || flowContract.line, event_id: $("coordTaskEvent").value, target_path: flowContract.targetPath, due_at: "" }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
+  const decisionForm = $("coordDecisionForm");
+  if (decisionForm) decisionForm.addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/collaboration/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, event_id: $("coordDecisionEvent").value, decision_type: $("coordDecisionType").value, reason: $("coordDecisionReason").value, basis_refs: $("coordDecisionBasis").value.split(",").map((item) => item.trim()).filter(Boolean), confirm: $("coordDecisionConfirm").checked }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
   document.querySelectorAll("[data-decision-id]").forEach((button) => button.addEventListener("click", async () => { try { await apiJson("/api/collaboration/decision/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, decision_id: button.dataset.decisionId }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } }));
   document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", async () => { try { await apiJson("/api/collaboration/task/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, task_id: button.dataset.taskId, status: button.dataset.taskStatus }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } }));
 }
@@ -877,7 +1376,7 @@ function renderDashboard() {
       ? "查看全部成本明细、基线比对、变更、证据链和审查结果。"
       : spec.focus;
   const manual = ROLE_OPERATION_MANUALS[currentRole()] || ROLE_OPERATION_MANUALS.project_manager;
-  const manualPanel = '<section class="dashboard-panel role-manual-panel"><div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc5</span><h3>' + (isProjectManager() ? "项目经理操作手册" : "本岗位操作手册") + '</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div><div class="overview-cards role-manual-cards"><div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>' + escapeHtml(manual.start) + '</small></div><div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>' + escapeHtml(manual.save) + '</small></div><div class="overview-card"><span class="card-label">交付成果</span><strong>协同</strong><small>' + escapeHtml(manual.handoff) + '</small></div><div class="overview-card"><span class="card-label">完成前复述</span><strong>检查</strong><small>' + escapeHtml(manual.check) + '</small></div></div></section>';
+  const manualPanel = '<section class="dashboard-panel role-manual-panel"><div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc7</span><h3>' + (isProjectManager() ? "项目经理操作手册" : "本岗位操作手册") + '</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div><div class="overview-cards role-manual-cards"><div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>' + escapeHtml(manual.start) + '</small></div><div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>' + escapeHtml(manual.save) + '</small></div><div class="overview-card"><span class="card-label">交付成果</span><strong>协同</strong><small>' + escapeHtml(manual.handoff) + '</small></div><div class="overview-card"><span class="card-label">完成前复述</span><strong>检查</strong><small>' + escapeHtml(manual.check) + '</small></div></div></section>';
   const planAction = isProjectManager() || !canAccessView("plan") ? "" : '<button class="button button-quiet" data-view="plan" type="button">查看成本计划</button>';
   const reviewAction = isCostManager() ? '<button class="button button-quiet" data-view="review" type="button">查看结算初审</button>' : "";
   $("workspaceContent").innerHTML =
@@ -973,11 +1472,15 @@ function renderDashboard() {
     else queueTarget.append(...queue.slice(0, 6).map((entry) => { const item = document.createElement("article"); item.className = "dashboard-issue risk-blue"; const badge = document.createElement("span"); badge.textContent = entry.event_id || "Event"; const body = document.createElement("div"); const title = document.createElement("strong"); title.textContent = entry.title || "工程事件"; const note = document.createElement("small"); note.textContent = `${eventStatusLabel(entry.event_status)} · ${outcomeStatusLabel(entry.outcome_status)} · ${entry.days_open == null ? "时钟待补" : `已打开 ${entry.days_open} 天`} · 预警 ${entry.alert_count || 0} · 泄漏 ${entry.value_leak_count || 0}`; body.append(title, note); item.append(badge, body); return item; }));
   }
 
+  const roleDerivedAlerts = (state.roleWorkProducts?.intelligence?.alerts || [])
+    .filter((item) => currentRoles().includes(item.role) || isProjectManager())
+    .map((item) => ({ ...item, title: roleAlertTitle(item), message: roleAlertMessage(item), risk: { color: roleAlertRisk(item) }, view: "coordination" }));
   const alerts = $("dashboardAlerts");
-  if (!dashboard.alerts?.length) {
+  const combinedAlerts = [...(dashboard.alerts || []), ...roleDerivedAlerts];
+  if (!combinedAlerts.length) {
     alerts.textContent = "当前没有自动预警。建议按周运行一次结算初审，持续形成趋势数据。";
   } else {
-    alerts.replaceChildren(...dashboard.alerts.map((alert) => {
+    alerts.replaceChildren(...combinedAlerts.map((alert) => {
       const item = document.createElement("article");
       item.className = "dashboard-alert risk-" + (alert.risk?.color || "blue");
       const body = document.createElement("div");
@@ -1283,7 +1786,7 @@ function roleProductFieldMarkup(role, field) {
   const attrs = `data-role-product-field="${key}" name="${key}"${required}${placeholder ? ` placeholder="${placeholder}"` : ""}`;
   if (field.kind === "textarea") return `<label>${label}<textarea ${attrs}></textarea></label>`;
   if (field.kind === "select") {
-    const options = (field.options || []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join("");
+    const options = (field.options || []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(localizedOptionLabel(option))}</option>`).join("");
     return `<label>${label}<select ${attrs}>${options}</select></label>`;
   }
   return `<label>${label}<input ${attrs} type="${escapeHtml(field.kind || "text")}"${field.kind === "number" ? " step=\"any\"" : ""} /></label>`;
@@ -1297,7 +1800,9 @@ function renderRoleWorkProductPanel() {
   const forms = roles.map((role) => {
     const contract = roleWorkbenchContract(role);
     const collaboration = contract.collaboration || {};
-    const handoffOptions = (collaboration.hands_to || []).map((target) => `<option value="${escapeHtml(target)}">${escapeHtml(roleLabels(target))}</option>`).join("");
+    const fixedHandoffs = collaboration.hands_to || [];
+    const fixedHandoffLabel = fixedHandoffs.map(roleLabels).join("、") || "本岗位成果暂不交接";
+    const fixedHandoffValue = fixedHandoffs.join(",");
     const fields = (contract.input_fields || []).map((field) => roleProductFieldMarkup(role, field)).join("");
     return `<article class="role-product-card">
       <div class="surface-title"><div><span class="panel-label">${escapeHtml(contract.product_type || "ROLE PRODUCT")}</span><h3>${escapeHtml(contract.label || role)}</h3></div><span class="surface-caption">独立成果 · 可追溯交接</span></div>
@@ -1307,10 +1812,10 @@ function renderRoleWorkProductPanel() {
       <form class="role-product-form" data-role-product-form="${escapeHtml(role)}">
         <div class="role-product-fields">${fields}</div>
         <div class="role-product-links">
-          <label>关联工程事件<input data-role-product-link="event_id" placeholder="EV-2026-0001（可选）" /></label>
+          <div class="fixed-event-assignment"><span>工程事件归类</span><strong>${role === "cost_manager" ? "由本岗位标注并发起" : "系统提取候选，造价经理统一确认"}</strong><small>本岗位不需要选择 Event；原始成果先进入待归类队列。</small></div>
           <label>证据引用<input data-role-product-link="evidence_refs" placeholder="证据编号，用逗号分隔" /></label>
           <label>资料引用<input data-role-product-link="source_refs" placeholder="资料编号，用逗号分隔" /></label>
-          <label>交接对象<select data-role-product-link="handoff_to"${handoffOptions ? "" : " disabled"}><option value="">${handoffOptions ? "请选择下一责任岗位" : "本岗位成果暂不交接"}</option>${handoffOptions}</select></label>
+          <label>固定交接对象<input value="${escapeHtml(fixedHandoffLabel)}" readonly /><input data-role-product-link="handoff_to" type="hidden" value="${escapeHtml(fixedHandoffValue)}" /></label>
         </div>
         <label>协同说明<textarea data-role-product-link="collaboration_note" placeholder="说明需要对方核对的对象、闸门或异常"></textarea></label>
         <div class="action-row"><button class="button button-primary" type="submit">保存本岗位成果</button><span class="request-status" data-role-product-status>保存后自动关联 Event / Evidence / 协同对象</span></div>
@@ -1348,7 +1853,7 @@ async function saveRoleWorkProduct(event) {
         project_id: state.projectId,
         role,
         fields,
-        event_id: link("event_id"),
+        event_id: "",
         evidence_refs: link("evidence_refs"),
         source_refs: link("source_refs"),
         handoff_to: link("handoff_to"),
@@ -1382,7 +1887,7 @@ function renderRoleOverview() {
   };
   const workViews = [...visibleViewsForUser()].filter((view) => !["overview", "personnel", "control"].includes(view));
   const quickLinks = workViews.map((view) => `<button class="overview-card role-link" data-view="${view}" type="button"><span class="card-label">${viewLabels[view] || view}</span><strong>进入</strong><small>${view === "coordination" ? "责任链与人工确认" : "只处理本岗位成果"}</small></button>`).join("");
-  const alertCount = state.events.filter((event) => (event.alerts || []).length).length;
+  const alertCount = state.events.filter((event) => (event.alerts || []).length).length + (state.roleWorkProducts?.intelligence?.alerts || []).length;
   const pendingCount = state.events.filter((event) => !["CLOSED", "COST_CLOSED"].includes(event.state_vector?.event || event.status)).length;
   const assignedSpecs = currentRoles().map((role) => ROLE_WORKBENCH_SPECS[role]).filter(Boolean);
   const output = [...new Set(assignedSpecs.map((item) => item.outputs).filter(Boolean))].join(" + ") || "本岗位成果、审核状态、异常与责任链";
@@ -1401,8 +1906,11 @@ function renderRoleOverview() {
     </section>
     ${renderSubcontractWorkflowPanels()}
     ${renderRoleWorkProductPanel()}
+    ${renderRoleIntelligencePanel()}
+    ${renderEventAssignmentPanel()}
+    ${renderEvidenceAutoPanel()}
     <section class="overview-panel role-manual-panel">
-      <div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc5</span><h3>岗位操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
+      <div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc7</span><h3>岗位操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
       <div class="overview-cards role-manual-cards">
         <div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>${escapeHtml(manual.start)}</small></div>
         <div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>${escapeHtml(manual.save)}</small></div>
@@ -1429,6 +1937,7 @@ function renderRoleOverview() {
     </section>`;
   bindViewButtons();
   bindRoleWorkProductForms();
+  bindEventAssignmentPanel();
 }
 
 function renderOverview() {
@@ -1458,7 +1967,7 @@ function renderOverview() {
       <button class="overview-card" data-view="review" type="button"><span class="card-label">结算初审</span><strong>${review ? (review.publishable ? "通过" : "需处理") : "—"}</strong><small>${review ? `${review.summary.finding_count} 个审查事项` : "尚未运行"}</small></button>
     </div>
     <section class="overview-panel role-manual-panel">
-      <div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc5</span><h3>造价经理操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
+      <div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc7</span><h3>造价经理操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
       <div class="overview-cards role-manual-cards">
         <div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>${escapeHtml(manual.start)}</small></div>
         <div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>${escapeHtml(manual.save)}</small></div>
@@ -3391,38 +3900,67 @@ function renderEventDistillation() {
   else claimList.textContent = "文本中未提取到需要证据确认的主张。";
 }
 
+function roleEventPolicy() {
+  const roles = new Set(currentRoles());
+  const management = roles.has("cost_manager") || roles.has("project_manager");
+  return {
+    canDistill: roles.has("cost_manager"),
+    canInitiate: roles.has("cost_manager"),
+    canTransition: management,
+    canOutcome: roles.has("cost_manager"),
+    canCrossCheck: management || ["cost_estimator", "technical_lead", "quality_officer", "document_controller"].some((role) => roles.has(role)),
+  };
+}
+
+function visibleEventRecords() {
+  const policy = roleEventPolicy();
+  if (policy.canInitiate || currentRoles().includes("project_manager")) return state.events;
+  const packet = state.eventIntake || state.roleWorkProducts?.event_intake || {};
+  const allowed = new Set((packet.requirements || []).map((item) => item.event_id).filter(Boolean));
+  (packet.intake || []).forEach((item) => (item.candidates || []).forEach((candidate) => candidate.event_id && allowed.add(candidate.event_id)));
+  (state.roleWorkProducts?.records || []).forEach((record) => {
+    if (record.links?.event_id) allowed.add(record.links.event_id);
+  });
+  return state.events.filter((event) => allowed.has(event.event_id));
+}
+
 function renderEventList() {
   const target = $("eventList");
   if (!target) return;
-  if (!state.events.length) {
+  const events = visibleEventRecords();
+  if (!events.length) {
     target.className = "event-list empty-state";
-    target.textContent = "尚未建立工程事件。可以先蒸馏本地资料，再从融合建议建立第一个永久编号事件。";
+    target.textContent = roleEventPolicy().canInitiate ? "尚未建立工程事件。可以先蒸馏本地资料，再从融合建议建立第一个永久编号事件。" : "当前岗位暂无已分配工程事件；先保存本岗位成果，系统会自动把它送入事件归类和证据匹配。";
     return;
   }
-  const editable = !isKpiOnly() && Boolean(state.auth.user?.permissions?.includes("edit_business_data"));
-  const outcomeEditable = isCostManager();
+  const policy = roleEventPolicy();
   target.className = "event-list";
-  target.replaceChildren(...state.events.map((event) => {
+  target.replaceChildren(...events.map((event) => {
     const vector = event.state_vector || {};
     const outcome = event.outcome_track || {};
     const outcomeValues = outcome.values || {};
     const item = document.createElement("article");
     item.className = `event-card ${eventRiskClass(event.severity)}`;
+    const eventOrigin = event.origin || {};
+    const eventLocation = eventOrigin.location || {};
+    const eventOrganizer = event.governance?.event_organizer || {};
+    const originLine = `${eventOrganizer.username || "造价经理"} 统一标注/发起 · 原始发现：${eventOrigin.discovered_by || "生产/技术汇总"} · ${eventLocation.zone || eventLocation.place || "位置待补"}`;
     const next = EVENT_NEXT_STATUS[vector.event] || [];
-    const transitions = next.length
+    const transitions = policy.canTransition && next.length
       ? `<select id="eventTransition-${escapeHtml(event.event_id)}">${next.map((status) => `<option value="${status}">${eventStatusLabel(status)}</option>`).join("")}</select><button class="button button-quiet event-transition" data-event-id="${escapeHtml(event.event_id)}" type="button">推进状态</button>`
       : "";
     item.innerHTML = `
       <div class="event-card-head"><div><span class="panel-label">${escapeHtml(event.event_id || "工程事件")}</span><h4>${escapeHtml(event.title || event.identity?.title || "未命名事件")}</h4><small>${escapeHtml(eventTypeLabel(event.event_type || event.classification?.event_type))} · ${escapeHtml(eventStatusLabel(vector.event))} · ${escapeHtml(event.severity || vector.risk || "MEDIUM")}</small></div><span class="event-status-pill">${escapeHtml(eventStatusLabel(vector.event))}</span></div>
       <p class="event-card-summary">${escapeHtml(event.summary || event.identity?.summary || "未填写事件说明")}</p>
+      <div class="event-origin-line">${escapeHtml(originLine)}</div>
       <div class="event-vector">${[
         ["Event", eventStatusLabel(vector.event)], ["Production", `${vector.production ?? 0}%`], ["Technical", vector.technical], ["Commercial", vector.commercial],
         ["Evidence", `${vector.evidence ?? 0}%`], ["Outcome", outcomeStatusLabel(vector.outcome)], ["Leak", vector.value_leak_count ? `${vector.value_leak_count} 个` : "无"], ["Approval", vector.external_approval], ["Measurement", vector.measurement], ["Audit", `${vector.audit_readiness ?? 0}%`], ["Cash", vector.cash], ["Risk", vector.risk],
       ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("")}</div>
       <div class="event-outcome-summary"><span>成果链</span><strong>${escapeHtml((outcome.types || vector.outcome_types || []).map(outcomeTypeLabel).join(" · ") || "待定义")}</strong><small>${escapeHtml(vector.outcome_pending_stage ? `当前卡在：${vector.outcome_pending_stage}` : "实体 → 证据 → 申报 → 确认 → 结算 → 回款")}</small></div>
       <div class="event-card-alerts">${(event.alerts || []).length ? event.alerts.slice(0, 4).map((alert) => `<div class="event-alert ${eventRiskClass(alert.severity)}"><strong>${escapeHtml(alert.title || "自动提醒")}</strong><span>${escapeHtml(alert.message || "")}</span></div>`).join("") : "<span class=\"event-no-alert\">本地规则暂未发现自动预警</span>"}</div>
-      ${outcomeEditable ? `<details class="event-outcome-editor"><summary>记录 Outcome 快照（仅造价经理）</summary><div class="event-outcome-fields"><label>成果类型<input id="outcomeTypes-${escapeHtml(event.event_id)}" value="${escapeHtml((outcome.types || []).join(","))}" placeholder="PHYSICAL,COMMERCIAL" /></label><label>实体<input id="outcomePhysical-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.physical ?? ""}" /></label><label>证据完整<input id="outcomeEvidence-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.evidence_ready ?? ""}" /></label><label>已申报<input id="outcomeSubmitted-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.submitted ?? ""}" /></label><label>已确认<input id="outcomeConfirmed-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.confirmed ?? ""}" /></label><label>收入成立<input id="outcomeRevenue-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.revenue ?? ""}" /></label><label>已结算<input id="outcomeSettled-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.settled ?? ""}" /></label><label>已回款<input id="outcomePaid-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.paid ?? ""}" /></label></div><div class="event-card-actions"><button class="button button-primary event-outcome-save" data-event-id="${escapeHtml(event.event_id)}" type="button">保存成果快照</button>${(OUTCOME_NEXT_STATUS[vector.outcome] || []).length ? `<select id="outcomeTransition-${escapeHtml(event.event_id)}">${OUTCOME_NEXT_STATUS[vector.outcome].map((status) => `<option value="${status}">${outcomeStatusLabel(status)}</option>`).join("")}</select><button class="button button-quiet event-outcome-transition" data-event-id="${escapeHtml(event.event_id)}" type="button">推进成果状态</button>` : ""}</div></details>` : ""}
-      <div class="event-card-actions"><button class="button button-quiet event-cross-check" data-event-id="${escapeHtml(event.event_id)}" type="button">三证互证 / 一致性检查</button>${editable ? transitions : ""}</div>
+      ${policy.canOutcome ? `<details class="event-outcome-editor"><summary>记录 Outcome 快照（仅造价经理）</summary><div class="event-outcome-fields"><label>成果类型<input id="outcomeTypes-${escapeHtml(event.event_id)}" value="${escapeHtml((outcome.types || []).join(","))}" placeholder="PHYSICAL,COMMERCIAL" /></label><label>实体<input id="outcomePhysical-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.physical ?? ""}" /></label><label>证据完整<input id="outcomeEvidence-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.evidence_ready ?? ""}" /></label><label>已申报<input id="outcomeSubmitted-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.submitted ?? ""}" /></label><label>已确认<input id="outcomeConfirmed-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.confirmed ?? ""}" /></label><label>收入成立<input id="outcomeRevenue-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.revenue ?? ""}" /></label><label>已结算<input id="outcomeSettled-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.settled ?? ""}" /></label><label>已回款<input id="outcomePaid-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.paid ?? ""}" /></label></div><div class="event-card-actions"><button class="button button-primary event-outcome-save" data-event-id="${escapeHtml(event.event_id)}" type="button">保存成果快照</button>${(OUTCOME_NEXT_STATUS[vector.outcome] || []).length ? `<select id="outcomeTransition-${escapeHtml(event.event_id)}">${OUTCOME_NEXT_STATUS[vector.outcome].map((status) => `<option value="${status}">${outcomeStatusLabel(status)}</option>`).join("")}</select><button class="button button-quiet event-outcome-transition" data-event-id="${escapeHtml(event.event_id)}" type="button">推进成果状态</button>` : ""}</div></details>` : ""}
+      <div class="event-card-actions">${policy.canCrossCheck ? `<button class="button button-quiet event-cross-check" data-event-id="${escapeHtml(event.event_id)}" type="button">三证互证 / 一致性检查</button>` : ""}${policy.canTransition ? transitions : ""}</div>
       <div id="eventCrossCheck-${escapeHtml(event.event_id)}" class="event-cross-check-output" hidden></div>`;
     const crossCheck = state.eventCrossChecks[event.event_id];
     if (crossCheck) renderEventCrossCheck(item.querySelector(`#eventCrossCheck-${CSS.escape(event.event_id)}`), crossCheck);
@@ -3446,17 +3984,20 @@ function renderEventCrossCheck(target, result) {
 }
 
 function renderEvents() {
-  const editable = !isKpiOnly() && Boolean(state.auth.user?.permissions?.includes("edit_business_data"));
+  const policy = roleEventPolicy();
+  const editable = policy.canDistill;
+  const canInitiateEvent = policy.canInitiate;
   const sourceTypes = Object.entries(EVENT_SOURCE_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
   const eventTypes = Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
   const dimensionInputs = [["cost", "成本"], ["revenue", "收入"], ["schedule", "工期"], ["quality", "质量"], ["safety", "安全"]].map(([value, label]) => `<label class="event-check-label"><input type="checkbox" data-event-dimension="${value}" />${label}</label>`).join("");
   const baselineInputs = [["contract", "合同"], ["price", "价格"], ["quantity", "数量"], ["cost", "成本"]].map(([value, label]) => `<label class="event-check-label"><input type="checkbox" data-event-baseline="${value}" />${label}基线</label>`).join("");
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">CORE / ENGINEERING EVENT KERNEL</span><h3>工程事件内核</h3></div><span class="surface-caption">跨 P01–P08 串起事实、基线、方案、证据、结算和兑现</span></div>
-    <div class="capability-intro event-kernel-intro"><strong>先蒸馏本地资料，再蒸馏文本，最后融合。</strong><span>本地结构化事实优先；文本只做补充；冲突、不确定性和来源会明确标注。Core 不替人做最终决策。</span></div>
-    <section class="event-distill-layout"><div class="event-distill-panel"><div class="data-entry-heading"><div><span class="panel-label">DISTILLATION PIPELINE</span><h3>资料蒸馏与事实融合</h3></div><span class="request-status">默认本地处理 · 不发送外部</span></div><textarea id="eventDistillText" class="event-text-input" placeholder="可粘贴现场记录、会议纪要、设计说明、业主指令或审计意见。系统只提取可回溯事实和待核对主张。" ${editable ? "" : "disabled"}></textarea><div class="action-row"><button id="distillLocal" class="button button-quiet" type="button" ${editable ? "" : "disabled"}>① 蒸馏本地资料</button><button id="distillText" class="button button-primary" type="button" ${editable ? "" : "disabled"}>② 蒸馏文本并融合</button><span id="eventDistillStatus" class="request-status"></span></div></div><aside class="event-pipeline-note"><span class="panel-label">EVIDENCE POLICY</span><h3>认知诚实</h3><p>事实必须有来源；推断必须标注；冲突不静默覆盖；没有足够依据就显示待核对。</p><div class="event-pipeline-step"><b>01</b><span>本地项目资料、P01–P08 记录</span></div><div class="event-pipeline-step"><b>02</b><span>输入文本中的事件、数量、时间、主张</span></div><div class="event-pipeline-step"><b>03</b><span>融合建议只填入草稿，不自动形成结论</span></div></aside></section>
-    <section id="eventDistillationOutput" class="event-distillation-output"></section>
-    <section class="event-create-panel" ${editable ? "" : "hidden"}><div class="data-entry-heading"><div><span class="panel-label">EVENT INTAKE</span><h3>建立永久编号工程事件</h3></div><span class="surface-caption">事件原始事实和状态历史只追加，不覆盖</span></div><div class="event-create-grid"><label>事件标题<input id="eventTitle" /></label><label>发现人<input id="eventDiscoveredBy" placeholder="姓名/岗位" /></label><label>事件来源<select id="eventSourceType">${sourceTypes}</select></label><label>事件分类<select id="eventType">${eventTypes}</select></label><label>严重程度<select id="eventSeverity"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="CRITICAL">紧急</option></select></label><label>区域/部位<input id="eventZone" placeholder="如：K12+300 右幅" /></label><label>轴线/桩号<input id="eventAxis" /></label><label>楼层/标高<input id="eventLevel" /></label><label class="event-span-2">事件说明<textarea id="eventSummary"></textarea></label><label class="event-span-2">动态标签<input id="eventTags" placeholder="用逗号分隔，如：地下障碍,潜在变更" /></label><label class="event-span-2">来源资料编号<input id="eventSourceRefs" placeholder="用逗号分隔，可从项目资料库复制" /></label></div><div class="event-choice-row"><span>影响基线</span>${baselineInputs}</div><div class="event-choice-row"><span>影响维度</span>${dimensionInputs}</div><div class="event-create-grid"><label class="event-check-wide"><input id="eventTechnicalNeeded" type="checkbox" />需要技术线介入</label><label class="event-span-2">技术必要性判断<textarea id="eventTechnicalAssessment" placeholder="为什么需要技术评估，依据是什么"></textarea></label><label class="event-check-wide"><input id="eventTechnicalFeasible" type="checkbox" />已有可行技术方案（通过安全/质量/合规）</label></div><div class="action-row"><button id="saveEngineeringEvent" class="button button-primary" type="button">保存工程事件</button><button id="applyEventSuggestion" class="button button-quiet" type="button">套用上方融合建议</button><span id="eventCreateStatus" class="request-status"></span></div></section>
+    <div class="capability-intro event-kernel-intro"><strong>生产/技术/现场先提交事实，造价经理再标注并发起 Event。</strong><span>岗位日志和照片不会自行创建事件；本地结构化事实优先，候选关联只作为造价经理的待确认队列。</span></div>
+    ${renderEventAssignmentPanel({ compact: true })}
+    <section class="event-distill-layout" ${policy.canDistill ? "" : "hidden"}><div class="event-distill-panel"><div class="data-entry-heading"><div><span class="panel-label">DISTILLATION PIPELINE</span><h3>资料蒸馏与事实融合</h3></div><span class="request-status">默认本地处理 · 不发送外部</span></div><textarea id="eventDistillText" class="event-text-input" placeholder="可粘贴现场记录、会议纪要、设计说明、业主指令或审计意见。系统只提取可回溯事实和待核对主张。" ${editable ? "" : "disabled"}></textarea><div class="action-row"><button id="distillLocal" class="button button-quiet" type="button" ${editable ? "" : "disabled"}>① 蒸馏本地资料</button><button id="distillText" class="button button-primary" type="button" ${editable ? "" : "disabled"}>② 蒸馏文本并融合</button><span id="eventDistillStatus" class="request-status"></span></div></div><aside class="event-pipeline-note"><span class="panel-label">EVIDENCE POLICY</span><h3>认知诚实</h3><p>事实必须有来源；推断必须标注；冲突不静默覆盖；没有足够依据就显示待核对。</p><div class="event-pipeline-step"><b>01</b><span>本地项目资料、P01–P08 记录</span></div><div class="event-pipeline-step"><b>02</b><span>输入文本中的事件、数量、时间、主张</span></div><div class="event-pipeline-step"><b>03</b><span>融合建议只填入草稿，不自动形成结论</span></div></aside></section>
+    <section id="eventDistillationOutput" class="event-distillation-output" ${policy.canDistill ? "" : "hidden"}></section>
+    <section class="event-create-panel" ${canInitiateEvent ? "" : "hidden"}><div class="data-entry-heading"><div><span class="panel-label">EVENT INTAKE</span><h3>建立永久编号工程事件</h3></div><span class="surface-caption">仅造价经理标注、组织并发起；生产/技术成果来自下方待归类队列</span></div><div class="event-create-grid"><label>事件标题<input id="eventTitle" /></label><label>原始发现人/岗位<input id="eventDiscoveredBy" placeholder="生产经理/技术负责人/施工员" /></label><label>事件来源<select id="eventSourceType">${sourceTypes}</select></label><label>事件分类<select id="eventType">${eventTypes}</select></label><label>严重程度<select id="eventSeverity"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="CRITICAL">紧急</option></select></label><label>区域/部位<input id="eventZone" placeholder="如：K12+300 右幅" /></label><label>轴线/桩号<input id="eventAxis" /></label><label>楼层/标高<input id="eventLevel" /></label><label class="event-span-2">事件说明<textarea id="eventSummary"></textarea></label><label class="event-span-2">动态标签<input id="eventTags" placeholder="用逗号分隔，如：地下障碍,潜在变更" /></label><label class="event-span-2">来源资料编号<input id="eventSourceRefs" placeholder="用逗号分隔，可从项目资料库复制" /></label></div><div class="event-choice-row"><span>影响基线</span>${baselineInputs}</div><div class="event-choice-row"><span>影响维度</span>${dimensionInputs}</div><div class="event-create-grid"><label class="event-check-wide"><input id="eventTechnicalNeeded" type="checkbox" />需要技术线介入</label><label class="event-span-2">技术必要性判断<textarea id="eventTechnicalAssessment" placeholder="为什么需要技术评估，依据是什么"></textarea></label><label class="event-check-wide"><input id="eventTechnicalFeasible" type="checkbox" />已有可行技术方案（通过安全/质量/合规）</label></div><div class="action-row"><button id="saveEngineeringEvent" class="button button-primary" type="button">保存工程事件</button><button id="applyEventSuggestion" class="button button-quiet" type="button">套用上方融合建议</button><span id="eventCreateStatus" class="request-status"></span></div></section>
     <section class="event-list-panel"><div class="data-entry-heading"><div><span class="panel-label">EVENT STATE VECTOR</span><h3>工程事件状态向量与预警</h3></div><span class="surface-caption">项目经理看重要指标；造价经理看完整链路；造价员负责操作</span></div><div id="eventList" class="event-list"></div></section>`;
   const draft = state.eventDraft;
   if (editable) {
@@ -3485,6 +4026,7 @@ function renderEvents() {
   }
   renderEventDistillation();
   renderEventList();
+  bindEventAssignmentPanel();
 }
 
 async function distillEventKernel(withText) {
@@ -3631,6 +4173,14 @@ async function saveChanges() {
 
 function renderEvidence() {
   const result = state.evidenceResult;
+  if (!canManuallyLinkEvidence()) {
+    $("workspaceContent").innerHTML = `
+      <div class="surface-title"><div><span class="panel-label">P07 EVIDENCE LINKAGE</span><h3>证据关联（自动投影）</h3></div><span class="surface-caption">当前岗位无需手工选取证据</span></div>
+      <div class="capability-intro"><strong>本岗位只保存自己的工作成果。</strong><span>系统在底层按单据号、批次、日志/照片编号、WBS 和位置自动匹配资料；只有多个来源同时命中时，由造价经理或资料员在 P07 复核。</span></div>
+      ${renderEvidenceAutoPanel()}`;
+    bindViewButtons();
+    return;
+  }
   state.evidenceDraft = result?.links?.length ? result.links.map((item) => ({ ...item })) : (state.evidenceDraft.length ? state.evidenceDraft : [{ link_id: "", source_id: "", target_type: "", target_id: "", relation: "supports", note: "", verified: "false" }]);
   $("workspaceContent").innerHTML = `
     <div class="surface-title"><div><span class="panel-label">P07 EVIDENCE LINKAGE</span><h3>证据关联台</h3></div><span class="surface-caption">把合同、图纸、清单、台账、变更和初审事项串成可回溯证据链</span></div>
@@ -4016,6 +4566,23 @@ $("loginForm").addEventListener("submit", submitLogin);
 $("registerForm").addEventListener("submit", submitRegister);
 $("logoutButton").addEventListener("click", logout);
 $("globalSearchForm").addEventListener("submit", submitGlobalSearch);
+
+function switchLanguage(event) {
+  const language = event.target.value === "en" ? "en" : "zh";
+  state.language = language;
+  localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+  applyLanguage();
+  // Re-render the active surface so labels generated from API contracts and
+  // role-specific dropdowns use the same language immediately.
+  if (state.auth.user && !$('workspaceShell').hidden) setView(state.view);
+}
+
+$("languageSelect")?.addEventListener("change", switchLanguage);
+const languageObserver = new MutationObserver(() => {
+  if (!i18nApplying) applyLanguage();
+});
+languageObserver.observe(document.body, { childList: true, subtree: true });
+applyLanguage();
 
 async function boot() {
   await loadHealth();

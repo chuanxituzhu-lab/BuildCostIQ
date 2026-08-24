@@ -69,7 +69,11 @@ The municipal workflow does not present one universal menu. After login the brow
 
 The field workbench is labelled `施工员/测量员`; existing `现场工程师` aliases remain valid for backwards-compatible login/role migration. Each role home shows only its own outputs, execution loop and completion boundary.
 
-The v0.8.0-rc5 home screen includes a role operation manual for the signed-in role. It presents the minimum Feynman loop—what to receive, what to save, who confirms it, and what to check before handoff. Project managers and authorized administrative officers also see the current-project personnel entry; the project roster is isolated from other projects.
+The v0.8.0-rc7 home screen includes a role operation manual and a fixed event-intake queue for the signed-in role. It presents the minimum Feynman loop—what to receive, what to save, who confirms it, and what to check before handoff. Production, technical and site facts are retained first; only the cost manager labels and starts a Core Event, then the system shows fixed deliverables and due times to the routed roles. Project managers and authorized administrative officers also see the current-project personnel entry; the project roster is isolated from other projects.
+
+Operational roles receive a read-only, role-scoped Event view: warehouse officers see only assigned material events, alerts and fixed requirements; event distillation, event creation, Outcome editing and unrelated transitions are hidden. P07 evidence links remain owned by the cost manager/document controller. Other roles see deterministic evidence projections based on document number, batch, log/photo reference, WBS and location; unique matches are shown automatically, while ambiguous matches remain for human confirmation.
+
+工程事件证据由造价经理归口复核。固定待办中，造价经理可对已归类的岗位成果点击“退回补充证据”，填写退回原因和必补项；岗位工作台会显示 `已退回补充`、原因和必补项。退回不会改写原始成果，岗位重新保存后形成新的成果版本，再由造价经理重新归类并确认；对应接口为 `POST /api/event-intake/return`，仅造价经理可调用。
 
 | Role line | Primary WebUI surfaces |
 |---|---|

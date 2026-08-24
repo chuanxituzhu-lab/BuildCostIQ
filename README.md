@@ -3,7 +3,7 @@
 ## P09 当前能力边界
 P09“全过程成果经营管理”已作为只读派生能力接入。P01–P08 继续保存合同、清单、图纸、基线、成本、变更、证据和结算专业事实；P09 只读取工程事件的 Outcome 快照，计算成果漏斗、六段价值泄漏和异常经营队列，不新增第二金额事实源。
 
-BuildCostIQ version `v0.8.0-rc5` is a local-first construction-cost foundation and P01–P09 project workbench. P01–P08 own professional facts and P09 is a read-only outcome-management projection over the Core Engineering Event Kernel. Local project facts are distilled first, pasted text is distilled second, and fusion preserves provenance, conflicts, claims, and uncertainty. The WebUI keeps the existing local-first intake, recognition, archive, and provenance controls.
+BuildCostIQ version `v0.8.0-rc7` is a local-first construction-cost foundation and P01–P09 project workbench. P01–P08 own professional facts and P09 is a read-only outcome-management projection over the Core Engineering Event Kernel. Local project facts are distilled first, pasted text is distilled second, and fusion preserves provenance, conflicts, claims, and uncertainty. The WebUI keeps the existing local-first intake, recognition, archive, and provenance controls.
 
 ## Quick verification
 
