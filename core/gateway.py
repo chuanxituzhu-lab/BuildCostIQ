@@ -11,9 +11,9 @@ class Capability(Protocol):
 
 
 class CapabilityGateway:
-    """Single controlled entry point for frozen P01-P08 capabilities."""
+    """Single controlled entry point for the P01-P09 capability boundary."""
 
-    ALLOWED = frozenset(f"P{i:02d}" for i in range(1, 9))
+    ALLOWED = frozenset(f"P{i:02d}" for i in range(1, 10))
 
     def __init__(self) -> None:
         self._capabilities: dict[str, Capability] = {}
@@ -21,7 +21,7 @@ class CapabilityGateway:
     def register(self, capability: Capability) -> None:
         capability_id = capability.capability_id
         if capability_id not in self.ALLOWED:
-            raise ValueError(f"Capability {capability_id} is outside frozen P01-P08 boundary")
+            raise ValueError(f"Capability {capability_id} is outside the P01-P09 boundary")
         if capability_id in self._capabilities:
             raise ValueError(f"Capability {capability_id} is already registered")
         self._capabilities[capability_id] = capability
@@ -41,4 +41,3 @@ class MappingProxy(dict[str, Any]):
 
     def __init__(self, source: Mapping[str, Any]) -> None:
         super().__init__(source)
-

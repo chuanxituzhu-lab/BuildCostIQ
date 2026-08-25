@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .gateway import Capability, CapabilityGateway
+from .version import current_version
 
 
 class Runtime:
@@ -12,5 +13,5 @@ class Runtime:
             self.gateway.register(capability)
 
     def health(self) -> dict[str, object]:
-        return {"status": "ok", "version": "0.8.0-rc1", "capabilities": self.gateway.registered}
+        return {"status": "ok", "version": current_version(), "capabilities": self.gateway.registered}
 

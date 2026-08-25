@@ -37,6 +37,10 @@ const state = {
   evidenceDraft: [],
   reviewResult: null,
   dashboard: null,
+  p09: null,
+  coordination: null,
+  lineContracts: null,
+  linePreview: null,
   sources: [],
   connectors: [],
   recognizers: [],
@@ -58,7 +62,7 @@ const state = {
   intakeReports: [],
   basisIntakeReports: [],
   exportWorkspace: { kind: "report", filename: "", directoryHandle: null },
-  personnel: { users: [], audit_log: [] },
+  personnel: { users: [], audit_log: [], roles: [], assignment_catalog: null, policy: null },
 };
 
 const EXPORT_OPTIONS = [
@@ -115,9 +119,29 @@ const EVENT_NEXT_STATUS = {
   EXECUTING: ["VERIFIED"], VERIFIED: ["CLAIMING"], CLAIMING: ["SETTLEMENT"], SETTLEMENT: ["AUDITING"],
   AUDITING: ["COLLECTION"], COLLECTION: ["CLOSED"], CLOSED: [],
 };
+const OUTCOME_STATUS_LABELS = {
+  NOT_FORMED: "未形成成果", PHYSICAL_FORMED: "实体成果", EVIDENCE_READY: "证据完整", SUBMITTED: "已申报",
+  CONFIRMED: "已确认", REVENUE_RECOGNIZED: "收入成立", SETTLED: "已结算", CASH_REALIZED: "已回款",
+  REJECTED: "已拒绝", ABANDONED: "已放弃",
+};
+const OUTCOME_TYPE_LABELS = { PHYSICAL: "实体", COMMERCIAL: "经营", CONTRACTUAL: "合同权利", SCHEDULE: "工期", CASH: "现金" };
+const OUTCOME_NEXT_STATUS = {
+  NOT_FORMED: ["PHYSICAL_FORMED", "REJECTED", "ABANDONED"], PHYSICAL_FORMED: ["EVIDENCE_READY", "REJECTED", "ABANDONED"],
+  EVIDENCE_READY: ["SUBMITTED", "REJECTED", "ABANDONED"], SUBMITTED: ["CONFIRMED", "REJECTED", "ABANDONED"],
+  CONFIRMED: ["REVENUE_RECOGNIZED", "SETTLED", "REJECTED", "ABANDONED"], REVENUE_RECOGNIZED: ["SETTLED", "REJECTED", "ABANDONED"],
+  SETTLED: ["CASH_REALIZED", "REJECTED", "ABANDONED"], CASH_REALIZED: [], REJECTED: [], ABANDONED: [],
+};
 
 function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+
+function outcomeStatusLabel(status) {
+  return OUTCOME_STATUS_LABELS[status] || status || "未形成成果";
+}
+
+function outcomeTypeLabel(type) {
+  return OUTCOME_TYPE_LABELS[type] || type || "—";
 }
 
 function prioritizedCategoryIds(items, fallbackOrder, limit = 5) {
@@ -166,6 +190,66 @@ function currentRole() {
   return state.auth.user?.role || "";
 }
 
+// The municipal workflow is a set of independent role workbenches, not a
+// universal back-office menu.  Keep this catalog in the UI as a projection of
+// the server-side permissions: it controls what a role can discover, while
+// every write/read API still enforces its own permission at the boundary.
+const ROLE_VIEW_ACCESS = {
+  project_manager: ["overview", "dashboard", "search", "events", "p09", "coordination", "connectors", "personnel"],
+  cost_manager: ["overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "evidence", "review", "p09", "coordination", "basis", "connectors", "dashboard", "control"],
+  cost_estimator: ["overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "evidence", "coordination", "basis", "connectors"],
+  technical_lead: ["overview", "drawings", "changes", "events", "evidence", "coordination"],
+  production_manager: ["overview", "drawings", "changes", "events", "evidence", "coordination", "dashboard"],
+  site_engineer: ["overview", "drawings", "events", "evidence", "coordination"],
+  surveyor: ["overview", "drawings", "events", "evidence", "coordination"],
+  quality_officer: ["overview", "drawings", "events", "evidence", "coordination"],
+  lab_testing_officer: ["overview", "boq", "drawings", "events", "evidence", "coordination"],
+  document_controller: ["overview", "search", "contract", "drawings", "evidence", "coordination"],
+  safety_officer: ["overview", "drawings", "changes", "events", "evidence", "coordination"],
+  procurement_officer: ["overview", "contract", "boq", "events", "evidence", "coordination"],
+  warehouse_officer: ["overview", "boq", "events", "evidence", "coordination"],
+  administrative_officer: ["overview", "coordination", "personnel"],
+};
+
+const ROLE_WORKBENCH_SPECS = {
+  project_manager: { title: "项目经理指标台", focus: "只处理未执行、未纠偏、未变现、未成资产四个结果池。", outputs: "决策记录、资源协调、异常处置", workflow: ["看异常", "定责任", "做决策", "验结果"], execution: "只处理升级事项，不代替岗位录入事实。" },
+  cost_manager: { title: "造价经理全权限工作台", focus: "以合同、清单、基线、成本、计量和结算守住经营闸门。", outputs: "目标成本、变更测算、计量结算、经营分析", workflow: ["取基准", "算量价", "审证据", "确认价值"], execution: "所有金额必须有来源、口径和人工确认。" },
+  cost_estimator: { title: "造价员成果工作台", focus: "工程量、签证、计量和成本基础只在造价线上形成，敏感金额按权限脱敏。", outputs: "工程量台账、签证、计量基础、成本事实", workflow: ["接收资料", "整理工程量", "关联证据", "提交造价审核"], execution: "只维护造价基础，不修改技术结论和现场事实。" },
+  technical_lead: { title: "技术负责人工作台", focus: "图纸、方案、交底、技术核定与专业审核形成技术证据。", outputs: "图纸会审、施工方案、技术交底、技术核定", workflow: ["核图纸", "出方案", "做交底", "专业审核"], execution: "方案未通过技术闸门，不进入现场实施。" },
+  production_manager: { title: "生产经理驾驶台", focus: "计划、资源、实物量和偏差纠偏推动现场兑现。", outputs: "总/月/周计划、资源组织、进度纠偏", workflow: ["排计划", "配资源", "盯实物量", "做纠偏"], execution: "只推动生产落地，不代填测量、质量和造价成果。" },
+  site_engineer: { title: "施工员/测量员现场工作台", focus: "记录现场事实、完成量和施工事件，成果交技术、质量和造价线验证。", outputs: "现场事实、日完成量、施工事件、基础实测", workflow: ["发现现场", "记录位置时间", "提交完成量", "等待复核"], execution: "事实一次录入，绑定 WBS/位置/事件后提交验证。" },
+  surveyor: { title: "测量员成果工作台", focus: "放样、坐标、标高和实测工程量只由测量岗位形成。", outputs: "放样记录、坐标标高、实测工程量", workflow: ["领测量任务", "现场实测", "上传成果", "复核签认"], execution: "测量数据只追加版本，不覆盖原始实测。" },
+  quality_officer: { title: "质量负责人工作台", focus: "工序检查、整改复验和实体验收形成物理验收证据。", outputs: "工序检查、检验批、整改复验、验收结论", workflow: ["接收报验", "现场检查", "退回整改", "复验通过"], execution: "不合格必须退回源岗位，不能用口头结论放行。" },
+  lab_testing_officer: { title: "试验检测工作台", focus: "进场批次、取样、试验报告与材料事实相互校验。", outputs: "取样记录、试验报告、检测台账、批次校验", workflow: ["核对批次", "取样送检", "登记报告", "关联材料"], execution: "报告必须绑定材料批次和工程位置，异常立即标记。" },
+  document_controller: { title: "资料员归档工作台", focus: "报验、版本、证据完整性和数字资产归档，不制造业务事实。", outputs: "报验资料、版本台账、证据包、数字资产", workflow: ["收成果", "查完整性", "归档版本", "形成资产"], execution: "只检查和归档，不代替专业岗位补造事实。" },
+  safety_officer: { title: "安全员闭环工作台", focus: "检查、隐患、整改和安全验收形成可追溯证据。", outputs: "安全检查、隐患单、整改复查、安全验收", workflow: ["巡检发现", "下发隐患", "跟踪整改", "复查关闭"], execution: "隐患必须有责任人、期限和关闭证据。" },
+  procurement_officer: { title: "采购员物资工作台", focus: "以造价基准为采购边界，订单、到货和价量偏差回流底座。", outputs: "采购计划、询价比价、订单、到货记录", workflow: ["引用基准", "询价比价", "下单跟货", "核对到货"], execution: "采购不改造价基准，超量超价只形成预警并提交确认。" },
+  warehouse_officer: { title: "仓管员物资工作台", focus: "以采购到货为基数管理收发存、超领、节余和盘点。", outputs: "入库、出库、退库、库存、盘点台账", workflow: ["核到货", "验收入库", "按单发料", "盘点对账"], execution: "收发存绑定采购批次和施工领用，不跨岗改采购事实。" },
+  administrative_officer: { title: "行政协同工作台", focus: "只管理被授权的人员与协同关系，不进入专业事实工作台。", outputs: "人员名册、授权记录、交接留痕、协同通知", workflow: ["接收授权", "维护名册", "记录交接", "回报项目经理"], execution: "没有项目经理授权，不增删人员或改变岗位权限。" },
+};
+
+function currentRoles() {
+  const assigned = state.auth.user?.roles;
+  if (Array.isArray(assigned) && assigned.length) return assigned;
+  return currentRole() ? [currentRole()] : [];
+}
+
+function visibleViewsForUser() {
+  const views = new Set();
+  currentRoles().forEach((role) => (ROLE_VIEW_ACCESS[role] || ["overview", "search", "events", "coordination"]).forEach((view) => views.add(view)));
+  if (canManagePersonnel()) views.add("personnel");
+  if (!isCostManager()) views.delete("control");
+  return views;
+}
+
+function canAccessView(view) {
+  return visibleViewsForUser().has(view);
+}
+
+function workbenchSpec() {
+  return ROLE_WORKBENCH_SPECS[currentRole()] || ROLE_WORKBENCH_SPECS.site_engineer;
+}
+
 function isProjectManager() {
   return currentRole() === "project_manager";
 }
@@ -178,12 +262,20 @@ function isEstimator() {
   return currentRole() === "cost_estimator";
 }
 
+function isAdministrativeOfficer() {
+  return currentRole() === "administrative_officer";
+}
+
 function isManager() {
   return isCostManager();
 }
 
 function canManagePersonnel() {
   return Boolean(state.auth.user?.permissions?.includes("manage_personnel"));
+}
+
+function canAuthorizePersonnel() {
+  return Boolean(state.auth.user?.permissions?.includes("authorize_personnel_admin"));
 }
 
 function canViewCostDetail() {
@@ -206,21 +298,17 @@ function showWorkspace(user) {
   state.auth.user = user;
   $("authShell").hidden = true;
   $("workspaceShell").hidden = false;
-  $("globalSearchForm").hidden = false;
+  $("globalSearchForm").hidden = !canAccessView("search");
   $("userSession").hidden = false;
   $("userRole").textContent = `${user.role_label} · ${user.username}`;
-  $("personnelTab").hidden = !canManagePersonnel();
-  $("controlTab").hidden = !isCostManager();
-  $("workspaceTitle").textContent = isProjectManager()
-    ? "项目经理指标台"
-    : isCostManager() ? "造价经理全权限工作台" : "造价员操作工作台";
+  $("personnelTab").hidden = !canAccessView("personnel");
+  $("controlTab").hidden = !canAccessView("control");
+  const spec = workbenchSpec();
+  $("workspaceTitle").textContent = spec.title;
+  $("workspaceTitle").title = spec.focus;
   document.querySelectorAll("#workspaceTabs .workspace-tab").forEach((tab) => {
     const view = tab.dataset.view;
-    tab.hidden = view === "control"
-      ? !isCostManager()
-      : view === "personnel"
-        ? !canManagePersonnel()
-        : isKpiOnly() && !["overview", "dashboard", "search", "events", "connectors"].includes(view);
+    tab.hidden = !canAccessView(view);
   });
 }
 
@@ -353,6 +441,7 @@ function applyWorkspace(workspace) {
   state.basisReferences = workspace.basis_references || [];
   state.events = workspace.events || state.events || [];
   state.eventDistillation = workspace.event_distillation || state.eventDistillation || null;
+  state.coordination = workspace.collaboration || state.coordination || null;
   if (state.sources.length && !state.fileName) state.sourceName = state.sources[state.sources.length - 1].name;
   const boq = workspace.boq?.result;
   const contract = workspace.contract?.result;
@@ -398,10 +487,12 @@ async function loadWorkspace() {
     applyWorkspace(await apiJson(`/api/workspace?project_id=${encodeURIComponent(state.projectId)}`));
     await loadEventKernel();
     await refreshDashboard();
+    await refreshCoordination();
   } catch (error) {
     await ensureProject();
     await loadEventKernel();
     await refreshDashboard();
+    await refreshCoordination();
   }
 }
 
@@ -409,7 +500,9 @@ async function refreshWorkspace() {
   applyWorkspace(await apiJson(`/api/workspace?project_id=${encodeURIComponent(state.projectId)}`));
   await loadEventKernel();
   await refreshDashboard();
+  await refreshCoordination();
   renderDashboardIfVisible();
+  await refreshP09();
 }
 
 async function loadEventKernel() {
@@ -430,6 +523,118 @@ async function refreshDashboard() {
   } catch (_) {
     state.dashboard = null;
   }
+}
+
+async function refreshP09() {
+  try {
+    state.p09 = await apiJson("/api/p09?project_id=" + encodeURIComponent(state.projectId));
+  } catch (_) {
+    state.p09 = null;
+  }
+}
+
+async function refreshCoordination() {
+  try {
+    state.coordination = await apiJson("/api/collaboration?project_id=" + encodeURIComponent(state.projectId));
+    state.lineContracts = await apiJson("/api/line-contracts");
+  } catch (_) {
+    state.coordination = null;
+  }
+}
+
+function renderP09() {
+  const result = state.p09;
+  if (!result) {
+    renderBlockedStep("P09 全过程成果经营", "成果经营数据暂时不可用，请确认已经登录并建立项目。", "回到项目总览", "overview");
+    refreshP09().then(() => { if (state.view === "p09") renderP09(); });
+    return;
+  }
+  const summary = result.summary || {};
+  const funnel = result.funnel || [];
+  const leaks = result.value_leaks || [];
+  const queue = result.daily_queue || [];
+  const metrics = [
+    ["事件", summary.event_count || 0],
+    ["未闭环", summary.open_event_count || 0],
+    ["成果状态", summary.outcome_count || 0],
+    ["价值泄漏", dashboardMoney(summary.value_leak_total) + " · " + (summary.value_leak_count || 0) + "段"],
+  ];
+  $("workspaceContent").innerHTML =
+    '<div class="surface-title"><div><span class="panel-label">P09 OUTCOME MANAGEMENT</span><h3>全过程成果经营台</h3></div><span class="surface-caption">只读派生：Event → Evidence → Outcome → Value Realization</span></div>' +
+    '<div class="capability-intro"><strong>不新增专业金额事实。</strong><span>P09 读取 P01–P08 与工程事件内核，只把成果转化状态、价值泄漏和异常经营队列整理成可执行视图。</span></div>' +
+    '<div id="p09Metrics" class="dashboard-metrics"></div>' +
+    '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">OUTCOME FUNNEL</span><h3>成果转化漏斗</h3></div><span class="surface-caption">实体形成不等于事件关闭，回款状态独立推进</span></div><div id="p09Funnel" class="outcome-funnel"></div></section>' +
+    '<div class="dashboard-grid"><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">VALUE LEAK</span><h3>价值泄漏</h3></div></div><div id="p09Leaks" class="dashboard-issue-list"></div></section>' +
+    '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">DAILY QUEUE</span><h3>今日经营队列</h3></div></div><div id="p09Queue" class="dashboard-issue-list"></div></section></div>' +
+    '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">BOUNDARY</span><h3>能力边界</h3></div><span class="surface-caption">单一事实源 · 历史追加 · 派生结果</span></div><div id="p09Rules" class="capability-coverage"></div></section>';
+  $("p09Metrics").replaceChildren(...metrics.map(([label, value]) => { const item = document.createElement("div"); item.className = "dashboard-metric"; const title = document.createElement("span"); title.className = "dashboard-metric-label"; title.textContent = label; const strong = document.createElement("strong"); strong.textContent = String(value); item.append(title, strong); return item; }));
+  $("p09Funnel").replaceChildren(...funnel.map((stage, index) => { const item = document.createElement("div"); item.className = "outcome-funnel-stage"; const label = document.createElement("span"); label.textContent = stage.label || stage.stage; const amount = document.createElement("strong"); amount.textContent = dashboardMoney(stage.amount); const rate = document.createElement("small"); rate.textContent = index ? (stage.conversion_rate == null ? "—" : dashboardPercent(stage.conversion_rate)) + " 转化" : (stage.event_count || 0) + " 项事件"; item.append(label, amount, rate); return item; }));
+  const leakTarget = $("p09Leaks");
+  if (!leaks.length) leakTarget.textContent = "当前没有可计算的价值泄漏。";
+  else leakTarget.replaceChildren(...leaks.slice(0, 8).map((leak) => { const item = document.createElement("article"); item.className = "dashboard-issue risk-yellow"; const badge = document.createElement("span"); badge.textContent = leak.code || "LEAK"; const body = document.createElement("div"); const title = document.createElement("strong"); title.textContent = (leak.title || leak.event_id) + " · " + dashboardMoney(leak.amount); const note = document.createElement("small"); note.textContent = (leak.from_stage || "") + " → " + (leak.to_stage || "") + " · " + (leak.reason || "待补充原因"); body.append(title, note); item.append(badge, body); return item; }));
+  const queueTarget = $("p09Queue");
+  if (!queue.length) queueTarget.textContent = "当前没有待处理异常。";
+  else queueTarget.replaceChildren(...queue.slice(0, 8).map((entry) => { const item = document.createElement("article"); item.className = "dashboard-issue risk-blue"; const badge = document.createElement("span"); badge.textContent = entry.event_id || "Event"; const body = document.createElement("div"); const title = document.createElement("strong"); title.textContent = entry.title || "工程事件"; const note = document.createElement("small"); note.textContent = eventStatusLabel(entry.event_status) + " · " + outcomeStatusLabel(entry.outcome_status) + " · " + (entry.days_open == null ? "时钟待补" : "已打开 " + entry.days_open + " 天"); body.append(title, note); item.append(badge, body); return item; }));
+  const ruleTarget = $("p09Rules");
+  ruleTarget.replaceChildren(...Object.entries(result.rules || {}).map(([key, value]) => { const item = document.createElement("div"); item.className = "coverage-item"; const title = document.createElement("strong"); title.textContent = key; const status = document.createElement("small"); status.textContent = value ? "已启用" : "未启用"; item.append(title, status); return item; }));
+}
+
+function coordinationEventOptions(selected = "") {
+  const events = state.coordination?.event_index || state.events || [];
+  return '<option value="">请选择 Core Event</option>' + events.map((event) => {
+    const id = event.event_id || "";
+    const label = `${id} · ${event.title || "工程事件"}`;
+    return `<option value="${escapeHtml(id)}" ${id === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+}
+
+function renderCoordination() {
+  const result = state.coordination;
+  if (!result) {
+    renderBlockedStep("组织协同与关系管理", "协同数据暂时不可用，请确认已经登录并建立项目。", "返回项目总览", "overview");
+    refreshCoordination().then(() => { if (state.view === "coordination") renderCoordination(); });
+    return;
+  }
+  const workflow = result.workflow || {};
+  const tasks = workflow.tasks || [];
+  const decisions = workflow.decisions || [];
+  const relations = result.relationships || [];
+  const adaptations = result.line_adaptations || [];
+  const editable = !isKpiOnly();
+  const contracts = state.lineContracts?.lines || [];
+  const taskRows = tasks.length ? tasks.map((task) => `<article class="dashboard-issue risk-blue"><span>${escapeHtml(task.task_id || "TASK")}</span><div><strong>${escapeHtml(task.title || "协同任务")}</strong><small>${escapeHtml(task.role || "") } · ${escapeHtml(task.status || "OPEN")} · ${escapeHtml(task.event_id || "")}</small></div>${editable ? `<button class="button button-quiet" data-task-id="${escapeHtml(task.task_id)}" data-task-status="CLOSED" type="button">关闭</button>` : ""}</article>`).join("") : '<p class="empty-state">暂无协同任务。先把责任线和 Core Event 绑定起来。</p>';
+  const decisionRows = decisions.length ? decisions.map((decision) => `<article class="dashboard-issue ${decision.status === "CONFIRMED" ? "risk-blue" : "risk-yellow"}"><span>${escapeHtml(decision.decision_type || "DEC")}</span><div><strong>${escapeHtml(decision.event_id || "工程事件")}</strong><small>${escapeHtml(decision.status || "PROPOSED")} · ${escapeHtml(decision.reason || "")}${decision.confirmed_by ? ` · ${escapeHtml(decision.confirmed_by)} 已确认` : " · 等待人工确认"}</small></div>${editable && decision.status !== "CONFIRMED" ? `<button class="button button-quiet" data-decision-id="${escapeHtml(decision.decision_id)}" type="button">人工确认</button>` : ""}</article>`).join("") : '<p class="empty-state">暂无 GO / OPTIMIZE / HOLD / REJECT 决策记录。</p>';
+  const relationRows = relations.length ? relations.map((relation) => `<tr><td>${escapeHtml(relation.relation_type || "")}</td><td>${escapeHtml(relation.from_type || "")} · ${escapeHtml(relation.from_id || "")}</td><td>${escapeHtml(relation.to_type || "")} · ${escapeHtml(relation.to_id || "")}</td><td>${escapeHtml(relation.created_by || "")}</td></tr>`).join("") : '<tr><td colspan="4">暂无关系记录。关系只追加，不删除原 Event。</td></tr>';
+  const adaptationRows = adaptations.length ? adaptations.slice().reverse().map((item) => `<article class="dashboard-issue risk-blue"><span>${escapeHtml(item.line || "line")}</span><div><strong>${escapeHtml(item.adaptation_id || "")}</strong><small>${escapeHtml(item.record_count || 0)} 条 · ${escapeHtml(item.confirmed_by || "")} · ${escapeHtml(item.mapping_targets?.join(" → ") || "")}</small></div></article>`).join("") : '<p class="empty-state">尚无已确认的三线数据接入。</p>';
+  const contractCards = contracts.map((contract) => { const responsibility = contract.responsibility || {}; return `<div class="coverage-item"><strong>${escapeHtml(contract.label || contract.line)}</strong><small>v${escapeHtml(contract.version || "1.0")} · 必填 ${escapeHtml((contract.required || []).join("、"))}</small><small>系统自动归属：${escapeHtml(responsibility.head_label || "主管负责人")}（${escapeHtml(responsibility.head_role || "")})</small><small>可修改：仅对应主管负责人；${escapeHtml(contract.human_confirmation || "必须人工确认")}</small></div>`; }).join("");
+  const editor = editable ? `
+    <section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">COORDINATION WORKFLOW</span><h3>协同工作流</h3></div><span class="surface-caption">分派 → 复核 → 人工确认 → 关闭</span></div>
+      <div class="coordination-form-grid">
+        <form id="coordTaskForm" class="data-entry-card"><h4>创建协同任务</h4><label>任务标题<input id="coordTaskTitle" required placeholder="例如：技术负责人确认变更方案" /></label><label>责任线<select id="coordTaskRole"><option value="production">生产线</option><option value="technical">技术线</option><option value="cost">造价线</option><option value="project_manager">项目经理</option><option value="owner">业主</option><option value="supervision">监理</option><option value="audit">审计</option></select></label><label>Core Event<select id="coordTaskEvent" required>${coordinationEventOptions()}</select></label><label>目标路径<input id="coordTaskPath" placeholder="Core.event.technical_track" /></label><label>截止时间<input id="coordTaskDue" type="datetime-local" /></label><button class="button button-primary" type="submit">建立任务</button></form>
+        <form id="coordDecisionForm" class="data-entry-card"><h4>记录人工决策</h4><label>Core Event<select id="coordDecisionEvent" required>${coordinationEventOptions()}</select></label><label>决策类型<select id="coordDecisionType"><option>GO</option><option>OPTIMIZE</option><option>HOLD</option><option>REJECT</option></select></label><label>依据/理由<textarea id="coordDecisionReason" required placeholder="数据只能提供依据，填写人的判断理由"></textarea></label><label>依据引用<input id="coordDecisionBasis" placeholder="纪要-01,图纸-A-02" /></label><label class="check-line"><input id="coordDecisionConfirm" type="checkbox" /> 我已完成人工确认并承担该决策</label><button class="button button-primary" type="submit">保存决策</button></form>
+        <form id="coordRelationForm" class="data-entry-card"><h4>建立专用关系</h4><label>关系类型<select id="coordRelationType"><option value="EVENT_TO_SOURCE">Event → Source</option><option value="EVENT_TO_TASK">Event → Task</option><option value="EVENT_TO_PERSON">Event → Person</option><option value="EVENT_TO_CAPABILITY">Event → P01–P08</option><option value="EVENT_TO_OUTCOME">Event → Outcome</option><option value="EVENT_PARENT">父子事件</option><option value="EVENT_SPLIT_FROM">拆分来源</option><option value="EVENT_CANCELLED_BY">取消关系</option></select></label><label>起点标识<input id="coordRelationFrom" required placeholder="EV-2026-0001" /></label><label>终点类型<input id="coordRelationToType" value="capability" /></label><label>终点标识<input id="coordRelationTo" required placeholder="P07 / source-id / TASK-id" /></label><label>依据引用<input id="coordRelationBasis" placeholder="纪要-01" /></label><button class="button button-primary" type="submit">保存关系</button></form>
+      </div>
+    </section>
+    <section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">LINE ADAPTERS</span><h3>生产线 / 技术线 / 造价线接入</h3></div><span class="surface-caption">预览只读；确认后才写入 Core</span></div><div class="data-entry-card"><div class="coordination-form-grid"><label>业务线<select id="lineAdapterLine"><option value="production">生产线</option><option value="technical">技术线</option><option value="cost">造价线</option></select></label><label>记录 JSON<textarea id="lineAdapterRecords" rows="9" placeholder='[{"record_id":"PR-01","event_id":"EV-2026-0001","occurred_at":"2026-08-18T09:00:00+08:00","actor":"现场负责人","status":"COMPLETED","progress":100,"quantity":12,"unit":"m3","evidence_refs":["现场照片-01"]}]'></textarea></label></div><div class="button-row"><button id="lineAdapterPreview" class="button button-quiet" type="button">只读预览</button><button id="lineAdapterConfirm" class="button button-primary" type="button" disabled>人工确认并映射</button></div><div id="lineAdapterStatus" class="request-status">所有数据接入都必须由登录人员确认；系统不会代替 GO / OPTIMIZE / HOLD / REJECT。</div></div></section>` : "";
+  $("workspaceContent").innerHTML = `<div class="surface-title"><div><span class="panel-label">COLLABORATION / RELATION GRAPH</span><h3>组织协同与专用关系管理</h3></div><span class="surface-caption">数据提供依据，责任人做确认，关系只追加留痕</span></div><div class="capability-intro"><strong>负熵规则：</strong><span>三条业务线不建立新金额台账，只把已确认记录映射到现有 Core、P01–P08 和 Outcome。</span></div><div class="dashboard-grid"><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">TASK QUEUE</span><h3>协同任务</h3></div></div><div class="dashboard-issue-list">${taskRows}</div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">DECISION LOG</span><h3>人工决策记录</h3></div></div><div class="dashboard-issue-list">${decisionRows}</div></section></div>${editor}<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">RELATION MANAGEMENT</span><h3>关系台账</h3></div><span class="surface-caption">Event / Source / Person / Capability / Outcome</span></div><div class="table-scroll"><table><thead><tr><th>关系</th><th>起点</th><th>终点</th><th>建立人</th></tr></thead><tbody>${relationRows}</tbody></table></div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">ADAPTER AUDIT</span><h3>三线接入留痕</h3></div></div><div class="dashboard-issue-list">${adaptationRows}</div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">CONTRACTS</span><h3>数据契约与人工闸门</h3></div></div><div class="capability-coverage">${contractCards}</div></section>`;
+  if (!editable) return;
+  const lineHeadRoles = Object.fromEntries(contracts.map((contract) => [contract.line, contract.responsibility?.head_role || ""]));
+  const lineAdapterCanConfirm = () => currentRoles().includes(lineHeadRoles[$("lineAdapterLine")?.value || ""]);
+  const refreshLineConfirmBoundary = () => {
+    const confirmButton = $("lineAdapterConfirm");
+    if (!confirmButton) return;
+    confirmButton.disabled = !state.linePreview || !lineAdapterCanConfirm();
+    if (!lineAdapterCanConfirm()) $("lineAdapterStatus").textContent = "当前责任线由系统自动归属；只有对应主管负责人可以确认或修改。";
+  };
+  $("lineAdapterLine").addEventListener("change", refreshLineConfirmBoundary);
+  refreshLineConfirmBoundary();
+  $("coordTaskForm").addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/collaboration/task", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, title: $("coordTaskTitle").value, role: $("coordTaskRole").value, event_id: $("coordTaskEvent").value, target_path: $("coordTaskPath").value, due_at: $("coordTaskDue").value }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
+  $("coordDecisionForm").addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/collaboration/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, event_id: $("coordDecisionEvent").value, decision_type: $("coordDecisionType").value, reason: $("coordDecisionReason").value, basis_refs: $("coordDecisionBasis").value.split(",").map((item) => item.trim()).filter(Boolean), confirm: $("coordDecisionConfirm").checked }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
+  $("coordRelationForm").addEventListener("submit", async (event) => { event.preventDefault(); try { await apiJson("/api/relationships", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, relation_type: $("coordRelationType").value, from_type: "event", from_id: $("coordRelationFrom").value, to_type: $("coordRelationToType").value, to_id: $("coordRelationTo").value, basis_refs: $("coordRelationBasis").value.split(",").map((item) => item.trim()).filter(Boolean) }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } });
+  $("lineAdapterPreview").addEventListener("click", async () => { try { const records = JSON.parse($("lineAdapterRecords").value || "[]"); state.linePreview = await apiJson("/api/line-adapter/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, line: $("lineAdapterLine").value, records }) }); const responsibility = state.linePreview.preview.responsibility || {}; $("lineAdapterStatus").textContent = `预览通过：${state.linePreview.preview.record_count} 条；系统归属 ${responsibility.head_label || "主管负责人"}，只有对应主管负责人可以确认。`; refreshLineConfirmBoundary(); } catch (error) { $("lineAdapterStatus").textContent = error.message; state.linePreview = null; refreshLineConfirmBoundary(); } });
+  $("lineAdapterConfirm").addEventListener("click", async () => { if (!state.linePreview) return; try { await apiJson("/api/line-adapter/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, preview: state.linePreview.preview }) }); state.linePreview = null; await refreshWorkspace(); setView("coordination"); } catch (error) { $("lineAdapterStatus").textContent = error.message; } });
+  document.querySelectorAll("[data-decision-id]").forEach((button) => button.addEventListener("click", async () => { try { await apiJson("/api/collaboration/decision/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, decision_id: button.dataset.decisionId }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } }));
+  document.querySelectorAll("[data-task-id]").forEach((button) => button.addEventListener("click", async () => { try { await apiJson("/api/collaboration/task/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, task_id: button.dataset.taskId, status: button.dataset.taskStatus }) }); await refreshWorkspace(); setView("coordination"); } catch (error) { setError(error.message); } }));
 }
 
 async function loadConnectors() {
@@ -489,6 +694,8 @@ function renderAssist() {
   }
   tasks.push({ tone: "next", title: "查找资料或提问", note: "本地检索优先；回答会标注命中依据和不确定性。", view: "search" });
   tasks.push({ tone: state.events.length ? (state.events.some((event) => event.alerts?.length) ? "warn" : "done") : "next", title: state.events.length ? `工程事件内核已记录 ${state.events.length} 项` : "建立工程事件", note: "先蒸馏本地资料，再融合文本事实；状态、证据和预警集中呈现。", view: "events" });
+  const pendingDecisions = state.coordination?.workflow?.decision_counts?.PROPOSED || 0;
+  tasks.push({ tone: pendingDecisions ? "warn" : "next", title: pendingDecisions ? `有 ${pendingDecisions} 项决策等待人工确认` : "建立组织协同关系", note: "把生产、技术、造价责任线绑定到 Core Event；数据只提供依据。", view: "coordination" });
   const structuredStages = [
     ["contract", "P01 合同与招采依据", state.contractResult, "补充合同主数据和履约义务"],
     ["drawings", "P03 图纸登记", state.drawingsResult, "登记图号、版本和审阅状态"],
@@ -520,7 +727,7 @@ function renderAssist() {
     tasks.push({ tone: state.reviewResult.publishable ? "done" : "warn", title: state.reviewResult.publishable ? "初审通过发布闸门" : "初审发现需要处理的问题", note: state.reviewResult.publishable ? "可以进入发布流程。" : "查看下方审查事项并回到资料核对。", view: "review" });
   }
   tasks.push({ tone: "plugin", title: "插件中心", note: "像插件市场一样选择 Excel、Word、CAD/算量、预算软件和识别工具。", view: "connectors", pluginMarketplace: true });
-  $("assistList").replaceChildren(...tasks.map((task) => {
+  $("assistList").replaceChildren(...tasks.filter((task) => canAccessView(task.view)).map((task) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `assist-item assist-${task.tone}`;
@@ -574,31 +781,33 @@ function renderDashboard() {
   const periods = dashboard.periods || {};
   const week = periods.week || {};
   const month = periods.month || {};
-  const roleTitle = isProjectManager() ? "项目经理经营看板" : isCostManager() ? "造价经理经营看板" : "造价员操作看板";
+  const spec = workbenchSpec();
+  const roleTitle = isProjectManager() ? "项目经理经营看板" : isCostManager() ? "造价经理经营看板" : `${spec.title} · 经营看板`;
   const roleNote = isProjectManager()
     ? "仅保留项目经理需要的关键指标、风险预警和周期趋势。"
     : isCostManager()
       ? "查看全部成本明细、基线比对、变更、证据链和审查结果。"
-      : "负责资料录入和业务操作；敏感价格与成本明细按权限隐藏。";
-  const planAction = isProjectManager() ? "" : '<button class="button button-quiet" data-view="plan" type="button">查看成本计划</button>';
+      : spec.focus;
+  const planAction = isProjectManager() || !canAccessView("plan") ? "" : '<button class="button button-quiet" data-view="plan" type="button">查看成本计划</button>';
   const reviewAction = isCostManager() ? '<button class="button button-quiet" data-view="review" type="button">查看结算初审</button>' : "";
   $("workspaceContent").innerHTML =
     '<div class="surface-title"><div><span class="panel-label">PROJECT INTELLIGENCE</span><h3>' + roleTitle + '</h3></div><span class="surface-caption">本地自动汇总 · 打开看板即刷新预警</span></div>' +
     '<div class="dashboard-intro"><strong id="dashboardProjectName"></strong><span id="dashboardRoleNote"></span><small id="dashboardGeneratedAt"></small></div>' +
     '<section class="dashboard-alert-panel"><div class="surface-title"><div><span class="panel-label">AUTOMATED ALERTS</span><h3>需要优先处理</h3></div><span class="surface-caption">红色立即处理 · 黄色安排核对 · 蓝色关注趋势</span></div><div id="dashboardAlerts" class="dashboard-alert-list"></div></section>' +
     '<div id="dashboardMetrics" class="dashboard-metrics"></div>' +
+    '<section class="dashboard-panel outcome-management-panel"><div class="surface-title"><div><span class="panel-label">OUTCOME / VALUE LEAK</span><h3>成果转化漏斗与价值泄漏</h3></div><span class="surface-caption">实体只录一次；后续状态和差额由现有造价事实派生</span></div><div id="dashboardOutcomeFunnel" class="outcome-funnel"></div><div id="dashboardValueLeaks" class="dashboard-issue-list"></div><div id="dashboardDailyQueue" class="dashboard-issue-list"></div></section>' +
     '<div class="dashboard-grid">' +
       '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">BASELINE / COMPARISON</span><h3>成本基线与造价资料比对</h3></div>' + planAction + '</div><div id="dashboardComparisonSummary" class="dashboard-comparison-summary"></div><div id="dashboardComparisonTable" class="dashboard-table"></div></section>' +
       '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">WEEKLY / MONTHLY</span><h3>问题周期趋势</h3></div>' + reviewAction + '</div><div id="dashboardPeriods" class="dashboard-periods"></div><div id="dashboardRecurring" class="dashboard-recurring"></div></section>' +
     '</div>' +
-    '<section class="dashboard-panel dashboard-capability-panel"><div class="surface-title"><div><span class="panel-label">P01 — P08 COVERAGE</span><h3>全能力工作面状态</h3></div><span class="surface-caption">汇总不替代业务页面，点击后进入对应能力工作台</span></div><div id="dashboardCapabilities" class="dashboard-capability-grid"></div></section>' +
+    '<section class="dashboard-panel dashboard-capability-panel"><div class="surface-title"><div><span class="panel-label">P01 — P09 COVERAGE</span><h3>全能力工作面状态</h3></div><span class="surface-caption">汇总不替代业务页面，点击后进入对应能力工作台</span></div><div id="dashboardCapabilities" class="dashboard-capability-grid"></div></section>' +
     '<section class="dashboard-panel dashboard-issues-panel"><div class="surface-title"><div><span class="panel-label">ISSUE QUEUE</span><h3>当前问题与处理入口</h3></div><span class="surface-caption">每次运行初审会保留本地快照，支持近7天和近30天统计</span></div><div id="dashboardIssues" class="dashboard-issue-list"></div></section>';
 
   $("dashboardProjectName").textContent = dashboard.project?.name || state.projectName || "当前项目";
   $("dashboardRoleNote").textContent = roleNote;
   $("dashboardGeneratedAt").textContent = "刷新时间：" + new Date(dashboard.generated_at).toLocaleString("zh-CN");
-  const capabilityViews = [["P01", "合同与招采依据", "contract"], ["P02", "清单资料", "boq"], ["P03", "图纸资料", "drawings"], ["P04", "零号台账", "baseline"], ["P05", "成本计划", "plan"], ["P06", "变更管理", "changes"], ["P07", "证据关联", "evidence"], ["P08", "结算初审", "review"]];
-  $("dashboardCapabilities").replaceChildren(...capabilityViews.map(([id, label, view]) => {
+  const capabilityViews = [["P01", "合同与招采依据", "contract"], ["P02", "清单资料", "boq"], ["P03", "图纸资料", "drawings"], ["P04", "零号台账", "baseline"], ["P05", "成本计划", "plan"], ["P06", "变更管理", "changes"], ["P07", "证据关联", "evidence"], ["P08", "结算初审", "review"], ["P09", "成果经营", "p09"]];
+  $("dashboardCapabilities").replaceChildren(...capabilityViews.filter(([, , view]) => canAccessView(view)).map(([id, label, view]) => {
     const item = document.createElement(isKpiOnly() ? "div" : "button");
     if (!isKpiOnly()) item.type = "button";
     item.className = "dashboard-capability-item";
@@ -631,6 +840,45 @@ function renderDashboard() {
     item.append(title, strong, small);
     return item;
   }));
+
+  const outcomeManagement = dashboard.outcome_management || {};
+  const funnelTarget = $("dashboardOutcomeFunnel");
+  if (funnelTarget) {
+    const funnel = outcomeManagement.funnel || [];
+    funnelTarget.replaceChildren(...funnel.map((stage, index) => {
+      const item = document.createElement("div");
+      item.className = "outcome-funnel-stage";
+      const label = document.createElement("span"); label.textContent = stage.label || stage.stage;
+      const amount = document.createElement("strong"); amount.textContent = dashboardMoney(stage.amount);
+      const rate = document.createElement("small"); rate.textContent = index === 0 ? `${stage.event_count || 0} 项事件` : `${stage.conversion_rate == null ? "—" : dashboardPercent(stage.conversion_rate)} 转化`;
+      item.append(label, amount, rate);
+      return item;
+    }));
+  }
+  const leaksTarget = $("dashboardValueLeaks");
+  if (leaksTarget) {
+    const leaks = outcomeManagement.value_leaks || [];
+    leaksTarget.replaceChildren();
+    if (!leaks.length) {
+      leaksTarget.textContent = "当前没有可计算的价值泄漏；先在工程事件中记录 Outcome 快照。";
+    } else {
+      const heading = document.createElement("div"); heading.className = "panel-label"; heading.textContent = `价值泄漏 ${dashboardMoney(outcomeManagement.value_leak_total)} · ${outcomeManagement.value_leak_count || 0} 个阶段`;
+      leaksTarget.append(heading, ...leaks.slice(0, 6).map((leak) => {
+        const item = document.createElement("article"); item.className = "dashboard-issue risk-yellow";
+        const badge = document.createElement("span"); badge.textContent = leak.code || "LEAK";
+        const body = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `${leak.title || leak.event_id} · ${dashboardMoney(leak.amount)}`; const note = document.createElement("small"); note.textContent = `${leak.from_stage || ""} → ${leak.to_stage || ""} · ${leak.reason || "待补充原因"}`; body.append(title, note); item.append(badge, body); return item;
+      }));
+    }
+  }
+  const queueTarget = $("dashboardDailyQueue");
+  if (queueTarget) {
+    const queue = outcomeManagement.daily_queue || [];
+    queueTarget.replaceChildren();
+    const heading = document.createElement("div"); heading.className = "panel-label"; heading.textContent = "今日经营队列（只看异常）";
+    queueTarget.append(heading);
+    if (!queue.length) queueTarget.append(Object.assign(document.createElement("small"), { textContent: "当前没有待处理异常。" }));
+    else queueTarget.append(...queue.slice(0, 6).map((entry) => { const item = document.createElement("article"); item.className = "dashboard-issue risk-blue"; const badge = document.createElement("span"); badge.textContent = entry.event_id || "Event"; const body = document.createElement("div"); const title = document.createElement("strong"); title.textContent = entry.title || "工程事件"; const note = document.createElement("small"); note.textContent = `${eventStatusLabel(entry.event_status)} · ${outcomeStatusLabel(entry.outcome_status)} · ${entry.days_open == null ? "时钟待补" : `已打开 ${entry.days_open} 天`} · 预警 ${entry.alert_count || 0} · 泄漏 ${entry.value_leak_count || 0}`; body.append(title, note); item.append(badge, body); return item; }));
+  }
 
   const alerts = $("dashboardAlerts");
   if (!dashboard.alerts?.length) {
@@ -928,9 +1176,57 @@ function renderSearch() {
   renderSearchResults();
 }
 
+function renderRoleOverview() {
+  const spec = workbenchSpec();
+  const assignedLabels = state.auth.user?.role_labels?.length
+    ? state.auth.user.role_labels.join(" + ")
+    : state.auth.user?.role_label || "当前岗位";
+  const viewLabels = {
+    search: "资料与问题检索", contract: "合同与招采依据", boq: "清单资料", drawings: "图纸资料",
+    baseline: "零号台账", plan: "成本计划", changes: "变更管理", events: "工程事件", evidence: "证据关联",
+    coordination: "组织协同", basis: "外部依据库", dashboard: "经营看板",
+  };
+  const workViews = [...visibleViewsForUser()].filter((view) => !["overview", "personnel", "control"].includes(view));
+  const quickLinks = workViews.map((view) => `<button class="overview-card role-link" data-view="${view}" type="button"><span class="card-label">${viewLabels[view] || view}</span><strong>进入</strong><small>${view === "coordination" ? "责任链与人工确认" : "只处理本岗位成果"}</small></button>`).join("");
+  const alertCount = state.events.filter((event) => (event.alerts || []).length).length;
+  const pendingCount = state.events.filter((event) => !["CLOSED", "COST_CLOSED"].includes(event.state_vector?.event || event.status)).length;
+  const assignedSpecs = currentRoles().map((role) => ROLE_WORKBENCH_SPECS[role]).filter(Boolean);
+  const output = [...new Set(assignedSpecs.map((item) => item.outputs).filter(Boolean))].join(" + ") || "本岗位成果、审核状态、异常与责任链";
+  const workflow = [...new Set(assignedSpecs.flatMap((item) => item.workflow || []))].slice(0, 6);
+  const execution = [...new Set(assignedSpecs.map((item) => item.execution).filter(Boolean))].join(" ");
+  $("workspaceContent").innerHTML = `
+    <div class="surface-title"><div><span class="panel-label">ROLE WORKBENCH</span><h3>${spec.title}</h3></div><span class="surface-caption">${escapeHtml(assignedLabels)} · 独立工作面</span></div>
+    <div class="capability-intro"><strong>本岗位核心成果：</strong><span>${escapeHtml(output)}</span><br><small>${escapeHtml(spec.focus)}</small></div>
+    <section class="overview-panel role-execution-panel">
+      <div class="surface-title"><div><span class="panel-label">ROLE EXECUTION LOOP</span><h3>本岗位执行流程</h3></div><span class="surface-caption">只做本岗位动作</span></div>
+      <div class="role-workflow">${workflow.map((step, index) => `<span class="role-workflow-step"><b>${index + 1}</b>${escapeHtml(step)}</span>`).join('<span class="role-workflow-arrow">→</span>')}</div>
+      <p class="business-note">${escapeHtml(execution)}</p>
+    </section>
+    <div class="overview-cards role-work-cards">
+      <div class="overview-card"><span class="card-label">我的工作</span><strong>${workViews.length}</strong><small>个授权工作面</small></div>
+      <div class="overview-card"><span class="card-label">待交成果</span><strong>${pendingCount}</strong><small>工程事件仍在流转</small></div>
+      <div class="overview-card"><span class="card-label">审核状态</span><strong>人工闸门</strong><small>专业审核 → 造价总审</small></div>
+      <div class="overview-card"><span class="card-label">异常 / 退回</span><strong>${alertCount}</strong><small>只显示与本岗相关的风险入口</small></div>
+      <div class="overview-card"><span class="card-label">直接责任链</span><strong>Event → 成果</strong><small>Evidence → Verification → Outcome</small></div>
+    </div>
+    <section class="overview-panel">
+      <div class="surface-title"><div><span class="panel-label">AUTHORIZED WORK SURFACES</span><h3>进入本岗位工作</h3></div><span class="surface-caption">没有授权的模块不会出现在此处</span></div>
+      <div class="overview-cards role-link-grid">${quickLinks || '<p class="empty-state">当前账号没有可操作的专业工作面，请联系项目经理配置岗位。</p>'}</div>
+    </section>
+    <section class="overview-panel">
+      <div class="surface-title"><div><span class="panel-label">SHARED FOUNDATION</span><h3>底座自动链接</h3></div><span class="surface-caption">只读共享，不跨岗代填</span></div>
+      <div class="capability-intro"><span>所有成果统一绑定 Project + WBS + Location + Event + Time；本岗位只产生自己的事实，系统自动把它链接到技术、生产、造价、证据和 Outcome。</span></div>
+    </section>`;
+  bindViewButtons();
+}
+
 function renderOverview() {
   if (isKpiOnly()) {
     renderDashboard();
+    return;
+  }
+  if (!isCostManager()) {
+    renderRoleOverview();
     return;
   }
   const items = state.boqResult?.items || [];
@@ -996,11 +1292,11 @@ function renderOverview() {
   bindSourceLibrarySearch();
   const capabilityPanel = document.createElement("div");
   capabilityPanel.className = "overview-panel capability-coverage-panel";
-  capabilityPanel.innerHTML = '<div class="surface-title"><div><span class="panel-label">P01 — P08 WORKBENCH</span><h3>八项能力入口</h3></div><span class="surface-caption">每项能力都有独立工作面，结果统一回到当前项目</span></div><div id="capabilityCoverage" class="capability-coverage"></div>';
+  capabilityPanel.innerHTML = '<div class="surface-title"><div><span class="panel-label">P01 — P09 WORKBENCH</span><h3>九项能力入口</h3></div><span class="surface-caption">P01–P08 保存专业事实，P09 汇总成果经营派生结果</span></div><div id="capabilityCoverage" class="capability-coverage"></div>';
   $("workspaceContent").append(capabilityPanel);
   const coverage = [
     ["contract", "P01", "合同与招采依据", state.contractResult], ["boq", "P02", "清单资料", state.boqResult], ["drawings", "P03", "图纸资料", state.drawingsResult], ["baseline", "P04", "零号台账", state.baselineResult],
-    ["plan", "P05", "成本计划", state.planResult], ["changes", "P06", "变更管理", state.changesResult], ["evidence", "P07", "证据关联", state.evidenceResult], ["review", "P08", "结算初审", state.reviewResult],
+    ["plan", "P05", "成本计划", state.planResult], ["changes", "P06", "变更管理", state.changesResult], ["evidence", "P07", "证据关联", state.evidenceResult], ["review", "P08", "结算初审", state.reviewResult], ["p09", "P09", "成果经营", state.p09],
   ];
   $("capabilityCoverage").replaceChildren(...coverage.map(([view, id, label, result]) => {
     const button = document.createElement("button");
@@ -1067,9 +1363,9 @@ function fallbackConnectorEntries() {
 
 function fallbackRecognizerEntries() {
   return [
-    { id: "local-auto", name: "本地自动识别", status: "ready", description: "先在本机提取文字并归档分类。", formats: ["本地文件"], directions: ["local"], requires_explicit_consent: false },
-    { id: "microsoft-markitdown", name: "Microsoft MarkItDown（本地）", status: "optional", description: "在本机把 PDF、Office、HTML、CSV 等资料转换为 Markdown。", formats: [".pdf", ".docx", ".xlsx", ".html", ".csv"], directions: ["local"], requires_explicit_consent: false },
-    { id: "baidu-ocr", name: "百度 OCR", status: "requires_configuration", description: "明确确认后才发送指定图片。", formats: [".png", ".jpg", ".jpeg", ".pdf"], directions: ["import"], requires_explicit_consent: true },
+    { id: "local-auto", name: "本地自动识别", status: "ready", description: "先在本机提取文字并归档分类。", requires_explicit_consent: false },
+    { id: "microsoft-markitdown", name: "Microsoft MarkItDown（本地）", status: "optional", description: "在本机把 PDF、Office、HTML、CSV 等资料转换为 Markdown。", requires_explicit_consent: false },
+    { id: "baidu-ocr", name: "百度 OCR", status: "requires_configuration", description: "明确确认后才发送指定图片。", requires_explicit_consent: true },
   ];
 }
 
@@ -1086,38 +1382,6 @@ function connectorCatalogStatus(connector) {
   if (connector.status === "optional") return "本地可选工具";
   if (connector.status === "requires_configuration") return "需配置后使用";
   return "本地可直接使用";
-}
-
-function renderPluginMarketplace() {
-  const entries = connectorCatalogEntries();
-  $("workspaceContent").innerHTML = `
-    <div class="surface-title"><div><span class="panel-label">PLUGIN MARKETPLACE</span><h3>插件中心</h3></div><button id="backFromMarketplace" class="button button-quiet" type="button">返回项目总览</button></div>
-    <div class="capability-intro"><strong>先选择插件，再进入二级接入工作面。</strong><span>像 Codex 插件市场一样集中选择 Excel、Word、CAD/算量、预算软件、识别工具和外部依据接口；打开插件不会上传资料。</span></div>
-    <div class="plugin-marketplace-meta"><span>可用插件 ${entries.length} 个</span><span>数据默认留在本地 · 外部传输需明确授权</span></div>
-    <div id="pluginMarketplaceGrid" class="plugin-marketplace-grid"></div>`;
-  const target = $("pluginMarketplaceGrid");
-  target.replaceChildren(...entries.map((connector) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "connector-item plugin-marketplace-item";
-    const kind = document.createElement("span");
-    kind.className = "connector-kind";
-    kind.textContent = ["local-auto", "microsoft-markitdown", "baidu-ocr"].includes(connector.id) ? "识别工具" : "业务接入";
-    const name = document.createElement("strong");
-    name.textContent = connector.name;
-    const note = document.createElement("small");
-    note.textContent = connector.description || "进入二级接入工作面";
-    const status = document.createElement("span");
-    status.className = `connector-status connector-${connector.status || "ready"}`;
-    status.textContent = connectorCatalogStatus(connector);
-    const action = document.createElement("span");
-    action.className = "connector-open";
-    action.textContent = "选择并进入 →";
-    item.append(kind, name, note, status, action);
-    item.addEventListener("click", () => openConnectorWorkspace(connector.id));
-    return item;
-  }));
-  $("backFromMarketplace").addEventListener("click", () => setView("overview"));
 }
 
 function openConnectorWorkspace(id) {
@@ -1183,6 +1447,28 @@ function runConnectorAction(actionId) {
   if (actions[actionId]) actions[actionId]();
 }
 
+function renderPluginMarketplace() {
+  const entries = connectorCatalogEntries();
+  $("workspaceContent").innerHTML = '<div class="surface-title"><div><span class="panel-label">PLUGIN MARKETPLACE</span><h3>三方工具接入中心</h3></div><span class="surface-caption">像 Codex 插件市场一样选择工具，再进入接入向导</span></div>' +
+    '<div class="capability-intro"><strong>本地优先、按需接入。</strong><span>打开目录不会发送任何项目资料；文件交换、外部依据和 OCR 均在下一步由用户明确选择。</span></div>' +
+    '<div class="plugin-marketplace-meta"><span>可接入工具</span><strong>' + entries.length + '</strong><span>数据边界</span><strong>本地保存 · 明确授权外发</strong></div>' +
+    '<section class="plugin-marketplace-grid"></section>';
+  const target = $("workspaceContent").querySelector(".plugin-marketplace-grid");
+  target.replaceChildren(...entries.map((connector) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "connector-item plugin-marketplace-item";
+    const name = document.createElement("strong"); name.textContent = connector.name;
+    const kind = document.createElement("span"); kind.className = "connector-kind"; kind.textContent = connector.category === "basis" ? "外部依据" : connector.id.includes("ocr") || connector.id.includes("markitdown") ? "识别工具" : "三方工具";
+    const note = document.createElement("small"); note.textContent = connector.description;
+    const status = document.createElement("span"); status.className = `connector-status connector-${connector.status}`; status.textContent = connectorCatalogStatus(connector);
+    const action = document.createElement("span"); action.className = "connector-open"; action.textContent = "点击进入接入 →";
+    item.append(kind, name, note, status, action);
+    item.addEventListener("click", () => openConnectorWorkspace(connector.id));
+    return item;
+  }));
+}
+
 function renderConnectorWorkspace() {
   if (!state.connectorFocusId) {
     renderPluginMarketplace();
@@ -1200,7 +1486,7 @@ function renderConnectorWorkspace() {
     ? "本次操作只取得你明确选择的外部依据或图片；项目资料默认不外发。"
     : "数据先留在本地；需要与外部软件交换时，由你主动导入或导出本地文件。";
   $("workspaceContent").innerHTML = `
-    <div class="surface-title"><div><span class="panel-label">PLUGIN CONNECTOR</span><h3>${escapeHtml(connector.name)}</h3></div><button id="backFromConnector" class="button button-quiet" type="button">返回插件中心</button></div>
+    <div class="surface-title"><div><span class="panel-label">CONNECTOR WORKSPACE</span><h3>${escapeHtml(connector.name)}</h3></div><button id="backFromConnector" class="button button-quiet" type="button">返回插件中心</button></div>
     <div class="capability-intro"><strong>${escapeHtml(connector.description || "选择后进入对应接入流程")}</strong><span>${escapeHtml(consentNote)}</span></div>
     <div class="connector-summary-grid">
       <div><span>支持格式</span><strong>${escapeHtml((connector.formats || []).join(" / ") || "按工具说明")}</strong></div>
@@ -1555,21 +1841,65 @@ function renderPersonnelTable(container) {
     return;
   }
   const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>用户名</th><th>角色</th><th>权限级别</th><th>成本明细</th><th>录入时间</th></tr></thead>";
+  table.innerHTML = "<thead><tr><th>姓名/登录名</th><th>主岗位</th><th>岗位组合</th><th>权限级别</th><th>成本明细</th><th>人员管理授权</th><th>录入时间</th><th>操作</th></tr></thead>";
   const body = document.createElement("tbody");
   users.forEach((user) => {
     const row = document.createElement("tr");
+    const assignedRoles = user.roles || [user.role];
+    const isMergedFieldRole = assignedRoles.includes("surveyor") && assignedRoles.includes("site_engineer");
+    const assignmentLabel = isMergedFieldRole
+      ? "施工员 + 测量员（合并）"
+      : assignedRoles.map((role) => (state.personnel.roles || []).find((item) => item.role === role)?.label || role).join("、");
     [
       user.username,
       user.role_label,
+      assignmentLabel,
       `L${user.role_level}`,
       user.can_view_cost_detail ? "可查看" : "按角色隐藏",
+      user.role === "administrative_officer"
+        ? user.personnel_admin_authorized ? "已获项目经理授权" : "待项目经理授权"
+        : "—",
       user.created_at ? new Date(user.created_at).toLocaleString("zh-CN") : "—",
     ].forEach((value) => {
       const cell = document.createElement("td");
       cell.textContent = String(value ?? "—");
       row.append(cell);
     });
+    const actions = document.createElement("td");
+    actions.className = "action-row";
+    if (canAuthorizePersonnel() && user.role === "administrative_officer") {
+      const authorization = document.createElement("button");
+      authorization.className = "button button-quiet";
+      authorization.type = "button";
+      authorization.textContent = user.personnel_admin_authorized ? "撤销授权" : "授权管理";
+      authorization.addEventListener("click", () => togglePersonnelAdmin(user.id, !user.personnel_admin_authorized));
+      actions.append(authorization);
+    }
+    const remove = document.createElement("button");
+    remove.className = "button button-danger";
+    remove.type = "button";
+    remove.textContent = "删除";
+    remove.disabled = user.id === state.auth.user?.id;
+    remove.title = remove.disabled ? "不能删除当前登录账号" : "删除后从活动人员名册移除，操作会留痕";
+    remove.addEventListener("click", () => deletePersonnel(user));
+    actions.append(remove);
+    const rename = document.createElement("button");
+    rename.className = "button button-quiet";
+    rename.type = "button";
+    rename.textContent = "更换姓名";
+    rename.title = "保留原 user_id、密码、岗位和项目成果，仅更新姓名/登录名";
+    rename.addEventListener("click", () => renamePersonnel(user));
+    actions.append(rename);
+    if (assignedRoles.includes("surveyor") || assignedRoles.includes("site_engineer")) {
+      const roleToggle = document.createElement("button");
+      roleToggle.className = "button button-quiet";
+      roleToggle.type = "button";
+      roleToggle.textContent = isMergedFieldRole ? "拆分岗位" : "合并测量/施工";
+      roleToggle.title = isMergedFieldRole ? "恢复为单一主岗位" : "让同一账号同时承担施工员和测量员";
+      roleToggle.addEventListener("click", () => toggleFieldRoleAssignment(user, !isMergedFieldRole));
+      actions.append(roleToggle);
+    }
+    row.append(actions);
     body.append(row);
   });
   table.append(body);
@@ -1602,13 +1932,24 @@ function renderPersonnel() {
     setView(isKpiOnly() ? "dashboard" : "overview");
     return;
   }
+  const fallbackRoles = [
+    ["project_manager", "项目经理"], ["cost_manager", "造价经理"], ["cost_estimator", "造价员"],
+    ["technical_lead", "技术负责人"], ["production_manager", "生产经理"], ["site_engineer", "施工员/测量员"],
+    ["surveyor", "测量员"], ["quality_officer", "质量负责人"], ["lab_testing_officer", "试验检测员"],
+    ["document_controller", "资料员"], ["safety_officer", "安全员"], ["procurement_officer", "采购员"],
+    ["warehouse_officer", "仓管员"], ["administrative_officer", "行政人员"],
+  ];
+  const roles = state.personnel.roles?.length ? state.personnel.roles : fallbackRoles.map(([role, label]) => ({ role, label }));
+  const roleOptions = roles.map((role) => `<option value="${escapeHtml(role.role)}">${escapeHtml(role.label)}${role.description ? ` · ${escapeHtml(role.description)}` : ""}</option>`).join("");
+  const policyText = state.personnel.policy?.authorization || "项目经理可直接管理；行政人员需经项目经理明确授权后管理；其他岗位无人员管理权限。";
+  const handoverText = state.personnel.policy?.handover || "更换姓名只更新登录名和显示名，保留原账号的 user_id、密码、岗位、审计和项目成果。";
   $("workspaceContent").innerHTML =
-    '<div class="surface-title"><div><span class="panel-label">PERSONNEL MANAGEMENT</span><h3>人员管理</h3></div><span class="surface-caption">项目经理与造价经理均可录入；密码仅保存在本机</span></div>' +
-    '<div class="notice-line"><strong>后台权限</strong><span>项目经理和造价经理可以新增项目经理、造价经理、造价员账号；造价员没有人员管理入口。</span></div>' +
+    '<div class="surface-title"><div><span class="panel-label">PERSONNEL MANAGEMENT</span><h3>人员管理</h3></div><span class="surface-caption">项目经理直管；行政人员授权后协同；密码仅保存在本机</span></div>' +
+    `<div class="notice-line"><strong>人员治理规则</strong><span>${escapeHtml(policyText)} ${escapeHtml(handoverText)}</span></div>` +
     '<div class="control-grid personnel-grid">' +
     '<section class="control-panel"><span class="panel-label">NEW PERSONNEL</span><h3>录入人员</h3>' +
-    '<form id="personnelForm" class="work-form"><div class="field-grid"><label>用户名<input id="personnelUsername" autocomplete="off" required minlength="2" maxlength="64" /></label><label>初始密码<input id="personnelPassword" type="password" autocomplete="new-password" required minlength="6" /></label></div>' +
-    '<div class="field-grid"><label>角色<select id="personnelRole"><option value="project_manager">项目经理（重要指标）</option><option value="cost_manager">造价经理（全部权限）</option><option value="cost_estimator">造价员（操作层）</option></select></label><div class="permission-note">新增后仅显示角色和权限摘要，不显示密码。</div></div>' +
+    '<form id="personnelForm" class="work-form"><div class="field-grid"><label>姓名/登录名<input id="personnelUsername" autocomplete="off" required minlength="1" maxlength="64" /></label><label>初始密码<input id="personnelPassword" type="password" autocomplete="new-password" required minlength="6" /></label></div>' +
+    `<div class="field-grid"><label>岗位角色<select id="personnelRole">${roleOptions}</select></label><div class="permission-note">新增后仅显示角色和权限摘要，不显示密码。施工员与测量员可在列表中按工程情况合并或拆分；人员增减会写入审计留痕。</div></div>` +
     '<div class="action-row"><button class="button button-primary" type="submit">保存人员</button><span id="personnelStatus" class="request-status"></span></div></form></section>' +
     '<section class="control-panel"><div class="surface-title"><div><span class="panel-label">LOCAL USERS</span><h3>已登记人员</h3></div><span class="surface-caption">共 <strong id="personnelCount">0</strong> 人</span></div><div id="personnelTable" class="table-wrap"></div></section></div>' +
     '<section class="control-panel audit-panel"><div class="surface-title"><div><span class="panel-label">PERSONNEL AUDIT TRAIL</span><h3>人员管理留痕</h3></div><span class="surface-caption">新增账号会记录操作人、角色、时间和目标</span></div><div id="personnelAudit" class="audit-list"></div></section>';
@@ -1616,6 +1957,84 @@ function renderPersonnel() {
   renderPersonnelTable($("personnelTable"));
   renderPersonnelAudit($("personnelAudit"));
   $("personnelForm").addEventListener("submit", savePersonnel);
+}
+
+function syncCurrentPersonnelUser() {
+  const current = (state.personnel.users || []).find((item) => item.id === state.auth.user?.id);
+  if (current) {
+    state.auth.user = current;
+    $("userRole").textContent = `${current.role_label} · ${current.username}`;
+  }
+}
+
+async function renamePersonnel(user) {
+  const nextName = window.prompt("输入接管后的姓名/登录名。原 user_id、密码和项目成果会保留。", user.username);
+  if (!nextName || nextName.trim() === user.username) return;
+  setError("");
+  try {
+    state.personnel = await apiJson("/api/personnel/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: user.id, new_username: nextName.trim() }),
+    });
+    syncCurrentPersonnelUser();
+    renderPersonnel();
+    setStatus(`账号已由“${user.username}”交接为“${nextName.trim()}”，原有成果继续保留`);
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+async function toggleFieldRoleAssignment(user, merged) {
+  const roles = merged
+    ? ["surveyor", "site_engineer"]
+    : [user.role];
+  if (merged && !window.confirm("确认让该账号同时承担施工员和测量员吗？原有成果不复制、不丢失。")) return;
+  setError("");
+  try {
+    state.personnel = await apiJson("/api/personnel/roles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: user.id, roles }),
+    });
+    syncCurrentPersonnelUser();
+    renderPersonnel();
+    setStatus(merged ? "已合并施工员与测量员岗位" : "已拆分为单一主岗位");
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+async function togglePersonnelAdmin(userId, authorized) {
+  setError("");
+  try {
+    state.personnel = await apiJson("/api/personnel/authorize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, authorized }),
+    });
+    renderPersonnel();
+    setStatus(authorized ? "行政人员已获得人员管理授权" : "行政人员授权已撤销");
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+async function deletePersonnel(user) {
+  if (user.id === state.auth.user?.id) return;
+  if (!window.confirm(`确定从活动名册删除“${user.username}”（${user.role_label}）吗？删除会保留审计记录。`)) return;
+  setError("");
+  try {
+    state.personnel = await apiJson("/api/personnel/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: user.id }),
+    });
+    renderPersonnel();
+    setStatus("人员已从活动名册移除，操作已留痕");
+  } catch (error) {
+    setError(error.message);
+  }
 }
 
 async function savePersonnel(event) {
@@ -2916,9 +3335,12 @@ function renderEventList() {
     return;
   }
   const editable = !isKpiOnly() && Boolean(state.auth.user?.permissions?.includes("edit_business_data"));
+  const outcomeEditable = isCostManager();
   target.className = "event-list";
   target.replaceChildren(...state.events.map((event) => {
     const vector = event.state_vector || {};
+    const outcome = event.outcome_track || {};
+    const outcomeValues = outcome.values || {};
     const item = document.createElement("article");
     item.className = `event-card ${eventRiskClass(event.severity)}`;
     const next = EVENT_NEXT_STATUS[vector.event] || [];
@@ -2930,9 +3352,11 @@ function renderEventList() {
       <p class="event-card-summary">${escapeHtml(event.summary || event.identity?.summary || "未填写事件说明")}</p>
       <div class="event-vector">${[
         ["Event", eventStatusLabel(vector.event)], ["Production", `${vector.production ?? 0}%`], ["Technical", vector.technical], ["Commercial", vector.commercial],
-        ["Evidence", `${vector.evidence ?? 0}%`], ["Approval", vector.external_approval], ["Measurement", vector.measurement], ["Audit", `${vector.audit_readiness ?? 0}%`], ["Cash", vector.cash], ["Risk", vector.risk],
+        ["Evidence", `${vector.evidence ?? 0}%`], ["Outcome", outcomeStatusLabel(vector.outcome)], ["Leak", vector.value_leak_count ? `${vector.value_leak_count} 个` : "无"], ["Approval", vector.external_approval], ["Measurement", vector.measurement], ["Audit", `${vector.audit_readiness ?? 0}%`], ["Cash", vector.cash], ["Risk", vector.risk],
       ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("")}</div>
+      <div class="event-outcome-summary"><span>成果链</span><strong>${escapeHtml((outcome.types || vector.outcome_types || []).map(outcomeTypeLabel).join(" · ") || "待定义")}</strong><small>${escapeHtml(vector.outcome_pending_stage ? `当前卡在：${vector.outcome_pending_stage}` : "实体 → 证据 → 申报 → 确认 → 结算 → 回款")}</small></div>
       <div class="event-card-alerts">${(event.alerts || []).length ? event.alerts.slice(0, 4).map((alert) => `<div class="event-alert ${eventRiskClass(alert.severity)}"><strong>${escapeHtml(alert.title || "自动提醒")}</strong><span>${escapeHtml(alert.message || "")}</span></div>`).join("") : "<span class=\"event-no-alert\">本地规则暂未发现自动预警</span>"}</div>
+      ${outcomeEditable ? `<details class="event-outcome-editor"><summary>记录 Outcome 快照（仅造价经理）</summary><div class="event-outcome-fields"><label>成果类型<input id="outcomeTypes-${escapeHtml(event.event_id)}" value="${escapeHtml((outcome.types || []).join(","))}" placeholder="PHYSICAL,COMMERCIAL" /></label><label>实体<input id="outcomePhysical-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.physical ?? ""}" /></label><label>证据完整<input id="outcomeEvidence-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.evidence_ready ?? ""}" /></label><label>已申报<input id="outcomeSubmitted-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.submitted ?? ""}" /></label><label>已确认<input id="outcomeConfirmed-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.confirmed ?? ""}" /></label><label>收入成立<input id="outcomeRevenue-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.revenue ?? ""}" /></label><label>已结算<input id="outcomeSettled-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.settled ?? ""}" /></label><label>已回款<input id="outcomePaid-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.paid ?? ""}" /></label></div><div class="event-card-actions"><button class="button button-primary event-outcome-save" data-event-id="${escapeHtml(event.event_id)}" type="button">保存成果快照</button>${(OUTCOME_NEXT_STATUS[vector.outcome] || []).length ? `<select id="outcomeTransition-${escapeHtml(event.event_id)}">${OUTCOME_NEXT_STATUS[vector.outcome].map((status) => `<option value="${status}">${outcomeStatusLabel(status)}</option>`).join("")}</select><button class="button button-quiet event-outcome-transition" data-event-id="${escapeHtml(event.event_id)}" type="button">推进成果状态</button>` : ""}</div></details>` : ""}
       <div class="event-card-actions"><button class="button button-quiet event-cross-check" data-event-id="${escapeHtml(event.event_id)}" type="button">三证互证 / 一致性检查</button>${editable ? transitions : ""}</div>
       <div id="eventCrossCheck-${escapeHtml(event.event_id)}" class="event-cross-check-output" hidden></div>`;
     const crossCheck = state.eventCrossChecks[event.event_id];
@@ -2940,6 +3364,8 @@ function renderEventList() {
     return item;
   }));
   target.querySelectorAll(".event-transition").forEach((button) => button.addEventListener("click", () => transitionEngineeringEvent(button.dataset.eventId)));
+  target.querySelectorAll(".event-outcome-save").forEach((button) => button.addEventListener("click", () => recordEventOutcome(button.dataset.eventId)));
+  target.querySelectorAll(".event-outcome-transition").forEach((button) => button.addEventListener("click", () => transitionEventOutcome(button.dataset.eventId)));
   target.querySelectorAll(".event-cross-check").forEach((button) => button.addEventListener("click", () => crossCheckEngineeringEvent(button.dataset.eventId)));
 }
 
@@ -3053,6 +3479,42 @@ async function transitionEngineeringEvent(eventId) {
     state.events = state.events.map((event) => event.event_id === eventId ? result.event : event);
     await refreshDashboard();
     setStatus(`${eventId} 已推进到${eventStatusLabel(select.value)}`);
+    renderEvents();
+  } catch (error) { setError(error.message); }
+}
+
+function outcomeNumber(id) {
+  const value = $(id)?.value.trim();
+  return value === "" ? null : Number(value);
+}
+
+async function recordEventOutcome(eventId) {
+  try {
+    const types = ($(`outcomeTypes-${eventId}`)?.value || "").split(",").map((value) => value.trim().toUpperCase()).filter(Boolean);
+    const values = {
+      physical: outcomeNumber(`outcomePhysical-${eventId}`), evidence_ready: outcomeNumber(`outcomeEvidence-${eventId}`),
+      submitted: outcomeNumber(`outcomeSubmitted-${eventId}`), confirmed: outcomeNumber(`outcomeConfirmed-${eventId}`),
+      revenue: outcomeNumber(`outcomeRevenue-${eventId}`), settled: outcomeNumber(`outcomeSettled-${eventId}`), paid: outcomeNumber(`outcomePaid-${eventId}`),
+    };
+    const result = await apiJson("/api/event-kernel/outcome", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, event_id: eventId, operation: "snapshot", changes: { types, values }, reason: "WebUI 成果快照" }) });
+    state.events = state.events.map((event) => event.event_id === eventId ? result.event : event);
+    await refreshDashboard();
+    setStatus(`${eventId} 的 Outcome 快照已追加，历史版本未覆盖`);
+    renderEvents();
+  } catch (error) { setError(error.message); }
+}
+
+async function transitionEventOutcome(eventId) {
+  const select = $(`outcomeTransition-${eventId}`);
+  if (!select) return;
+  const target = select.value;
+  const reason = ["REJECTED", "ABANDONED"].includes(target) ? (window.prompt("请记录拒绝/放弃原因") || "") : "";
+  if (["REJECTED", "ABANDONED"].includes(target) && !reason.trim()) return;
+  try {
+    const result = await apiJson("/api/event-kernel/outcome", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, event_id: eventId, operation: "transition", target_status: target, reason }) });
+    state.events = state.events.map((event) => event.event_id === eventId ? result.event : event);
+    await refreshDashboard();
+    setStatus(`${eventId} 的成果状态已推进到${outcomeStatusLabel(target)}`);
     renderEvents();
   } catch (error) { setError(error.message); }
 }
@@ -3389,15 +3851,13 @@ function renderBlockedStep(title, message, actionLabel, view) {
 }
 
 function bindViewButtons() {
-  document.querySelectorAll("#workspaceContent [data-view], #assistList [data-view]").forEach((button) => button.addEventListener("click", () => {
-    if (button.dataset.pluginMarketplace === "true") state.connectorFocusId = "";
-    setView(button.dataset.view);
-  }));
+  document.querySelectorAll("#workspaceContent [data-view], #assistList [data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 }
 
 function setView(view) {
-  if (isKpiOnly() && !["overview", "dashboard", "search", "events", "connectors", "personnel"].includes(view)) view = "dashboard";
-  if (view === "personnel" && !canManagePersonnel()) view = isKpiOnly() ? "dashboard" : "overview";
+  if (!canAccessView(view)) {
+    view = canAccessView("overview") ? "overview" : [...visibleViewsForUser()][0] || "overview";
+  }
   state.view = view;
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
   if (view === "overview") renderOverview();
@@ -3415,6 +3875,10 @@ function setView(view) {
   if (view === "connectors") renderConnectorWorkspace();
   if (view === "basis") renderBasis();
   if (view === "dashboard") renderDashboard();
+  if (view === "p09") {
+    renderP09();
+  }
+  if (view === "coordination") renderCoordination();
   if (view === "personnel") renderPersonnel();
   if (view === "control") renderControl();
   renderAssist();
@@ -3437,6 +3901,7 @@ async function loadHealth() {
 
 function submitGlobalSearch(event) {
   event.preventDefault();
+  if (!canAccessView("search")) return;
   const input = $("globalSearchInput");
   const query = input?.value.trim() || "";
   if (!query) {

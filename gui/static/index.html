@@ -15,7 +15,7 @@
           <div>
             <h1>造价资料工作台</h1>
             <p class="subtitle">把清单资料、成本计划和结算初审集中在一个工作面完成。</p>
-            <p id="releaseHighlights" class="release-highlights">v0.8.0-rc1：工程事件内核把本地资料、文本事实、三证互证和状态预警串到 P01–P08。</p>
+            <p id="releaseHighlights" class="release-highlights">版本信息读取中：工程事件内核把本地资料、文本事实、三证互证和状态预警串到 P01–P08。</p>
           </div>
         </div>
       </div>
@@ -26,14 +26,14 @@
           <button class="button button-quiet global-search-button" type="submit">检索</button>
         </form>
         <div id="health" class="health health-pending">资料服务连接中</div>
-        <div class="runtime-version"><span>当前版本</span><strong id="runtimeVersion">v0.8.0-rc1</strong></div>
+        <div class="runtime-version"><span>当前版本</span><strong id="runtimeVersion">v—</strong></div>
         <div id="userSession" class="user-session" hidden><span id="userRole"></span><button id="logoutButton" class="icon-button" type="button">退出登录</button></div>
       </div>
     </header>
 
     <main>
       <section id="authShell" class="auth-shell">
-        <div class="auth-intro"><span class="panel-label">LOCAL ACCESS</span><h2>登录本地工作台</h2><p>项目经理只看重要指标，造价经理拥有完整权限，造价员负责业务操作；账号、项目资料和操作记录均保存在当前环境。</p></div>
+        <div class="auth-intro"><span class="panel-label">LOCAL ACCESS</span><h2>登录本地工作台</h2><p>项目经理负责项目指标与人员治理；造价经理负责造价业务；生产、技术、现场和资料岗位按职责协同。账号、项目资料和操作记录均保存在当前环境。</p></div>
         <div class="auth-grid">
           <form id="loginForm" class="auth-card">
             <span class="panel-label">SIGN IN</span><h3>人员登录</h3>
@@ -45,7 +45,7 @@
             <span class="panel-label">REGISTER</span><h3>注册人员</h3>
             <label>用户名<input id="registerUsername" autocomplete="username" required /></label>
             <label>密码（至少 6 位）<input id="registerPassword" type="password" autocomplete="new-password" required /></label>
-            <label>工作台角色<select id="registerRole"><option value="cost_manager">造价经理工作台（全部权限）</option><option value="project_manager">项目经理工作台（重要指标）</option><option value="cost_estimator">造价员工作台（操作层）</option></select></label>
+            <label>工作台角色<select id="registerRole"><option value="cost_manager">造价经理（造价业务）</option><option value="project_manager">项目经理工作台（指标与人员治理）</option><option value="cost_estimator">造价员（造价操作）</option><option value="technical_lead">技术负责人</option><option value="production_manager">生产经理</option><option value="site_engineer">施工员/测量员</option><option value="surveyor">测量员</option><option value="quality_officer">质量负责人</option><option value="lab_testing_officer">试验检测员</option><option value="document_controller">资料员</option><option value="safety_officer">安全员</option><option value="procurement_officer">采购员</option><option value="warehouse_officer">仓管员</option><option value="administrative_officer">行政人员（需授权后管理人员）</option></select></label>
             <button class="button button-quiet" type="submit">注册并进入</button>
           </form>
         </div>
@@ -77,6 +77,8 @@
           <button class="workspace-tab" data-view="events" type="button"><span>Core</span>工程事件内核</button>
           <button class="workspace-tab" data-view="evidence" type="button"><span>07</span>证据关联</button>
           <button class="workspace-tab" data-view="review" type="button"><span>08</span>结算初审</button>
+          <button class="workspace-tab" data-view="p09" type="button"><span>09</span>成果经营</button>
+          <button class="workspace-tab" data-view="coordination" type="button"><span>协同</span>关系与确认</button>
           <button class="workspace-tab" data-view="basis" type="button"><span>依据</span>外部依据库</button>
           <button class="workspace-tab" data-view="connectors" type="button"><span>工具</span>三方工具接入</button>
           <button class="workspace-tab" data-view="dashboard" type="button"><span>看板</span>经营看板</button>

@@ -58,6 +58,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('id="loginForm"', body)
         self.assertIn('id="personnelTab"', body)
         self.assertIn("项目经理工作台", body)
+        self.assertIn("施工员/测量员", body)
         self.assertIn("经营看板", body)
         self.assertIn('data-view="connectors"', body)
         self.assertIn("三方工具接入", body)
@@ -65,12 +66,12 @@ class WebUiTests(unittest.TestCase):
         with urlopen(f"{self.base_url}/api/health", timeout=2) as response:
             health = json.load(response)
         self.assertEqual(health["review_capability"], "P08")
-        self.assertEqual(health["runtime"]["capabilities"], [f"P{i:02d}" for i in range(1, 9)])
+        self.assertEqual(health["runtime"]["capabilities"], [f"P{i:02d}" for i in range(1, 10)])
 
         with urlopen(f"{self.base_url}/api/architecture", timeout=2) as response:
             architecture = json.load(response)
-        self.assertEqual(architecture["registered"], [f"P{i:02d}" for i in range(1, 9)])
-        self.assertEqual(architecture["capabilities"][-1]["id"], "P08")
+        self.assertEqual(architecture["registered"], [f"P{i:02d}" for i in range(1, 10)])
+        self.assertEqual(architecture["capabilities"][-1]["id"], "P09")
         self.assertEqual(architecture["capabilities"][-1]["status"], "implemented")
         self.assertTrue(any(layer["id"] == "gateway" for layer in architecture["layers"]))
 
@@ -209,7 +210,71 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(manager_workspace["access"], "full")
         self.assertEqual(manager_workspace["cost_plan"]["result"]["summary"]["contract_subtotal"], 1000.0)
 
-    def test_personnel_management_is_available_to_both_managers_only(self):
+    def test_role_workbench_projection_and_capability_boundary(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        def register(role):
+            result = post_json("/api/auth/register", {"username": f"{role}-{suffix}", "password": "local-pass", "role": role}, self.manager_token)
+            return result["token"]
+
+        project_id = f"role-workbench-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "岗位工作台边界测试项目"}, self.manager_token)
+        site_token = register("site_engineer")
+        tech_token = register("technical_lead")
+        post_json("/api/drawings", {"project_id": project_id, "source_id": "role-drawing", "drawings": [{"drawing_no": "S-01", "name": "道路平面"}]}, self.manager_token)
+
+        with urlopen(self.auth_request(f"/api/workspace?project_id={project_id}", site_token), timeout=2) as response:
+            site_workspace = json.load(response)
+        self.assertIn("drawings", site_workspace["visible_views"])
+        self.assertNotIn("contract", site_workspace["visible_views"])
+        self.assertNotIn("baseline", site_workspace["visible_views"])
+        self.assertNotIn("contract", site_workspace)
+        self.assertNotIn("baseline", site_workspace)
+
+        with urlopen(self.auth_request(f"/api/workspace?project_id={project_id}", tech_token), timeout=2) as response:
+            tech_workspace = json.load(response)
+        self.assertIn("changes", tech_workspace["visible_views"])
+        self.assertNotIn("boq", tech_workspace["visible_views"])
+        self.assertNotIn("boq", tech_workspace)
+
+        with self.assertRaises(HTTPError) as denied_boq:
+            post_json("/api/boq", {"project_id": project_id, "source_id": "role-boq", "rows": [["项目编码", "项目名称", "计量单位", "工程量"], ["0101", "土方", "m3", 1]]}, site_token)
+        self.assertEqual(denied_boq.exception.code, 403)
+        with self.assertRaises(HTTPError) as denied_dashboard:
+            urlopen(self.auth_request(f"/api/dashboard?project_id={project_id}", tech_token), timeout=2)
+        self.assertEqual(denied_dashboard.exception.code, 403)
+
+        # P04 is a cost opening baseline: field and production roles may use
+        # derived references, but cannot enter or modify the zero ledger.
+        production_token = register("production_manager")
+        with self.assertRaises(HTTPError) as denied_baseline:
+            post_json(
+                "/api/baseline",
+                {"project_id": project_id, "source_id": "role-baseline", "entries": [{"name": "土方", "quantity": 1, "unit_price": 1}]},
+                production_token,
+            )
+        self.assertEqual(denied_baseline.exception.code, 403)
+
+        with self.assertRaises(HTTPError) as denied_p09:
+            urlopen(self.auth_request(f"/api/p09?project_id={project_id}", tech_token), timeout=2)
+        self.assertEqual(denied_p09.exception.code, 403)
+
+        with urlopen(self.auth_request(f"/api/dashboard?project_id={project_id}", production_token), timeout=2) as response:
+            production_dashboard = json.load(response)
+        self.assertEqual(production_dashboard["outcome_management"]["status"], "restricted")
+        self.assertEqual(production_dashboard["capabilities"]["P09"]["status"], "restricted")
+
+    def test_personnel_management_is_project_manager_controlled_with_admin_delegation(self):
         suffix = uuid4().hex[:10]
 
         def post_json(path, payload, token):
@@ -229,29 +294,75 @@ class WebUiTests(unittest.TestCase):
                 token,
             )["token"]
 
-        project_manager_token = register("project_manager", self.manager_token)
+        project_manager = post_json("/api/auth/register", {"username": f"personnel-project-manager-{suffix}", "password": "local-pass", "role": "project_manager"}, self.manager_token)
+        project_manager_token = project_manager["token"]
+        admin = post_json("/api/auth/register", {"username": f"personnel-admin-{suffix}", "password": "local-pass", "role": "administrative_officer"}, project_manager_token)
+        admin_token = admin["token"]
         estimator_token = register("cost_estimator", self.manager_token)
 
-        for token in (self.manager_token, project_manager_token):
+        with self.assertRaises(HTTPError) as denied_cost_manager:
+            urlopen(self.auth_request("/api/personnel", self.manager_token), timeout=2)
+        self.assertEqual(denied_cost_manager.exception.code, 403)
+
+        for token in (project_manager_token,):
             with urlopen(self.auth_request("/api/personnel", token), timeout=2) as response:
                 snapshot = json.load(response)
             self.assertIn("users", snapshot)
             self.assertIn("audit_log", snapshot)
+            self.assertIn("roles", snapshot)
+            self.assertEqual(snapshot["policy"]["delegated_manager_role"], "administrative_officer")
             self.assertTrue(all("password" not in user for user in snapshot["users"]))
 
-        manager_created = post_json(
-            "/api/personnel",
-            {"username": f"created-by-cost-manager-{suffix}", "password": "local-pass", "role": "cost_manager"},
-            self.manager_token,
-        )
         project_manager_created = post_json(
             "/api/personnel",
             {"username": f"created-by-project-manager-{suffix}", "password": "local-pass", "role": "cost_estimator"},
             project_manager_token,
         )
-        self.assertTrue(any(user["username"] == f"created-by-cost-manager-{suffix}" for user in manager_created["users"]))
         self.assertTrue(any(user["username"] == f"created-by-project-manager-{suffix}" for user in project_manager_created["users"]))
         self.assertIn("personnel.created", [event["action"] for event in project_manager_created["audit_log"]])
+
+        field_user = post_json(
+            "/api/personnel",
+            {"username": f"field-a-{suffix}", "password": "local-pass", "role": "surveyor"},
+            project_manager_token,
+        )
+        field_record = next(item for item in field_user["users"] if item["username"] == f"field-a-{suffix}")
+        field_session = post_json("/api/auth/login", {"username": f"field-a-{suffix}", "password": "local-pass"}, project_manager_token)
+        handed_over = post_json(
+            "/api/personnel/rename",
+            {"user_id": field_record["id"], "new_username": f"field-b-{suffix}"},
+            project_manager_token,
+        )
+        renamed_record = next(item for item in handed_over["users"] if item["id"] == field_record["id"])
+        self.assertEqual(renamed_record["username"], f"field-b-{suffix}")
+        self.assertEqual(renamed_record["name_history"][0]["username"], f"field-a-{suffix}")
+        with urlopen(self.auth_request("/api/auth/me", field_session["token"]), timeout=2) as response:
+            self.assertEqual(json.load(response)["user"]["username"], f"field-b-{suffix}")
+        merged = post_json(
+            "/api/personnel/roles",
+            {"user_id": field_record["id"], "roles": ["surveyor", "site_engineer"]},
+            project_manager_token,
+        )
+        merged_record = next(item for item in merged["users"] if item["id"] == field_record["id"])
+        self.assertEqual(merged_record["role_assignment"], "merged")
+        login = post_json("/api/auth/login", {"username": f"field-b-{suffix}", "password": "local-pass"}, project_manager_token)
+        self.assertEqual(login["user"]["id"], field_record["id"])
+        with self.assertRaises(HTTPError):
+            post_json("/api/auth/login", {"username": f"field-a-{suffix}", "password": "local-pass"}, project_manager_token)
+
+        with self.assertRaises(HTTPError) as denied_admin_before_grant:
+            urlopen(self.auth_request("/api/personnel", admin_token), timeout=2)
+        self.assertEqual(denied_admin_before_grant.exception.code, 403)
+
+        authorized = post_json("/api/personnel/authorize", {"user_id": admin["user"]["id"], "authorized": True}, project_manager_token)
+        self.assertTrue(next(item for item in authorized["users"] if item["id"] == admin["user"]["id"])["personnel_admin_authorized"])
+        with urlopen(self.auth_request("/api/personnel", admin_token), timeout=2) as response:
+            delegated_snapshot = json.load(response)
+        self.assertTrue(any(item["username"] == f"personnel-admin-{suffix}" for item in delegated_snapshot["users"]))
+
+        deleted = post_json("/api/personnel/delete", {"user_id": admin["user"]["id"]}, project_manager_token)
+        self.assertFalse(any(item["id"] == admin["user"]["id"] for item in deleted["users"]))
+        self.assertIn("personnel.deleted", [event["action"] for event in deleted["audit_log"]])
 
         with self.assertRaises(HTTPError) as denied_get:
             urlopen(self.auth_request("/api/personnel", estimator_token), timeout=2)
@@ -908,6 +1019,60 @@ class WebUiTests(unittest.TestCase):
         with urlopen(self.auth_request(f"/api/event-kernel?project_id={project_id}", pm["token"]), timeout=2) as response:
             pm_kernel = json.load(response)
         self.assertNotIn("commercial_track", pm_kernel["events"][0])
+
+    def test_outcome_endpoint_and_dashboard_funnel_keep_one_source_of_truth(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token=None):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token or self.manager_token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        project_id = f"outcome-web-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "成果链测试项目"})
+        created = post_json(
+            "/api/event-kernel/events",
+            {
+                "project_id": project_id,
+                "title": "地下管线冲突",
+                "summary": "形成可计量工程成果",
+                "discovered_by": "现场员",
+                "location": {"zone": "K12"},
+                "source_refs": ["S-01"],
+                "dimensions": {"cost": True, "revenue": True},
+            },
+        )
+        event_id = created["event"]["event_id"]
+        updated = post_json(
+            "/api/event-kernel/outcome",
+            {"project_id": project_id, "event_id": event_id, "operation": "snapshot", "changes": {"types": ["PHYSICAL", "COMMERCIAL"], "values": {"physical": 1000, "evidence_ready": 900, "submitted": 850, "confirmed": 800, "settled": 700, "paid": 500}}},
+        )
+        self.assertEqual(updated["outcome"]["value_leak_count"], 5)
+        self.assertEqual(len(updated["event"]["outcome_track"]["revisions"]), 1)
+        dashboard_request = self.auth_request(f"/api/dashboard?project_id={project_id}")
+        with urlopen(dashboard_request, timeout=2) as response:
+            dashboard = json.load(response)
+        outcome = dashboard["outcome_management"]
+        self.assertEqual(outcome["value_leak_count"], 5)
+        self.assertEqual(outcome["funnel"][0]["amount"], 1000.0)
+        self.assertTrue(outcome["rules"]["event_closed_not_outcome_closed"])
+
+        pm = post_json("/api/auth/register", {"username": f"outcome-pm-{suffix}", "password": "local-pass", "role": "project_manager"}, self.manager_token)
+        with urlopen(self.auth_request(f"/api/dashboard?project_id={project_id}", pm["token"]), timeout=2) as response:
+            pm_dashboard = json.load(response)
+        self.assertIsNone(pm_dashboard["outcome_management"]["funnel"][0]["amount"])
+        self.assertEqual(pm_dashboard["outcome_management"]["value_leak_count"], 5)
+
+        with urlopen(self.auth_request(f"/api/p09?project_id={project_id}"), timeout=2) as response:
+            p09 = json.load(response)
+        self.assertEqual(p09["capability_id"], "P09")
+        self.assertEqual(p09["summary"]["event_count"], 1)
+        self.assertTrue(p09["rules"]["derived_values_only"])
 
 
 if __name__ == "__main__":

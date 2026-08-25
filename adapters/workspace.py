@@ -60,6 +60,12 @@ class LocalProjectWorkspace:
             "review": None,
             "events": [],
             "event_distillation": None,
+            # Adapter-owned coordination and line-ingestion projections. They
+            # reference Core/P01-P08 facts and never replace those facts.
+            "line_adaptations": [],
+            "collaboration": {"tasks": [], "decisions": []},
+            "relationships": [],
+            "golden_scenario": None,
             "basis_references": [],
             "alert_snapshots": [],
             "audit_log": [],
