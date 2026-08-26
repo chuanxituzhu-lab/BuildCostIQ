@@ -9,7 +9,7 @@ class CoreTests(unittest.TestCase):
     def test_default_runtime_exposes_p01_to_p09(self):
         runtime = Runtime(build_default_plugins())
         self.assertEqual(runtime.gateway.registered, tuple(f"P{i:02d}" for i in range(1, 10)))
-        self.assertEqual(runtime.health()["version"], "0.8.0-rc5")
+        self.assertEqual(runtime.health()["version"], "0.8.0-rc9")
 
     def test_p10_is_rejected(self):
         class P10:

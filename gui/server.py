@@ -53,6 +53,9 @@ from adapters import (
 )
 from adapters.connectors import build_project_bundle, connector_catalog
 from adapters.recognition import RecognitionError, recognition_catalog, recognize_source
+from adapters.role_intelligence import ROLE_DEPARTMENT_HEADS, role_intelligence_snapshot
+from adapters.event_intake import event_intake_snapshot
+from adapters.evidence_intake import evidence_intake_snapshot
 from adapters.search import build_evidence_answer, search_local_evidence
 from core import (
     DIMENSIONS,
@@ -86,6 +89,7 @@ from plugins import build_default_plugins
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
+DEFAULT_PERSONNEL_PASSWORD = "123456"
 RUNTIME = Runtime(build_default_plugins())
 MAX_BODY_BYTES = 50_000_000
 DEPLOYMENT_CONFIG: DeploymentConfig
@@ -298,6 +302,17 @@ def _optional_actor(headers: Mapping[str, str] | None = None) -> dict[str, Any] 
     return refreshed
 
 
+def _invalidate_sessions_for_user(user_id: str, except_token: str = "") -> None:
+    """Revoke active browser sessions after a personnel credential reset."""
+    target_id = str(user_id or "").strip()
+    except_token = str(except_token or "").strip()
+    if not target_id:
+        return
+    for token, actor in list(SESSIONS.items()):
+        if token != except_token and str(actor.get("id", "")) == target_id:
+            SESSIONS.pop(token, None)
+
+
 def _require_actor(headers: Mapping[str, str], permission: str | None = None) -> dict[str, Any]:
     actor = _optional_actor(headers)
     if actor is None:
@@ -391,11 +406,11 @@ _ROLE_WORKSPACE_VIEWS: dict[str, set[str]] = {
     "site_engineer": {"overview", "drawings", "events", "evidence", "coordination"},
     "surveyor": {"overview", "drawings", "events", "evidence", "coordination"},
     "quality_officer": {"overview", "drawings", "events", "evidence", "coordination"},
-    "lab_testing_officer": {"overview", "boq", "drawings", "events", "evidence", "coordination"},
+    "lab_testing_officer": {"overview", "drawings", "events", "evidence", "coordination"},
     "document_controller": {"overview", "search", "contract", "drawings", "evidence", "coordination"},
     "safety_officer": {"overview", "drawings", "changes", "events", "evidence", "coordination"},
-    "procurement_officer": {"overview", "contract", "boq", "events", "evidence", "coordination"},
-    "warehouse_officer": {"overview", "boq", "events", "evidence", "coordination"},
+    "procurement_officer": {"overview", "contract", "events", "evidence", "coordination"},
+    "warehouse_officer": {"overview", "events", "evidence", "coordination"},
     "administrative_officer": {"overview", "coordination", "personnel"},
 }
 
@@ -415,7 +430,10 @@ _WORKSPACE_KEY_VIEWS = {
 
 _CAPABILITY_ROLE_ACCESS: dict[str, set[str]] = {
     "contract": {"cost_manager", "cost_estimator", "procurement_officer", "document_controller"},
-    "boq": {"cost_manager", "cost_estimator", "procurement_officer", "warehouse_officer", "lab_testing_officer"},
+    # P02 is the authoritative quantity basis. Only the two cost roles need
+    # its full menu; procurement, lab and warehouse receive scoped material
+    # references through their own contracts instead of a duplicate BOQ view.
+    "boq": {"cost_manager", "cost_estimator"},
     "drawings": {"cost_manager", "technical_lead", "production_manager", "site_engineer", "surveyor", "quality_officer", "lab_testing_officer", "document_controller", "safety_officer"},
     # P04 零号台账 is the commercial opening baseline.  Only its two cost
     # roles may enter or modify it; other roles receive derived references.
@@ -427,6 +445,11 @@ _CAPABILITY_ROLE_ACCESS: dict[str, set[str]] = {
     "p09": {"project_manager", "cost_manager"},
     "search": {"project_manager", "cost_manager", "cost_estimator", "document_controller"},
 }
+
+_EVIDENCE_MANUAL_ROLES = {"cost_manager", "document_controller"}
+_EVENT_DISTILL_ROLES = {"cost_manager"}
+_EVENT_CHECK_ROLES = {"cost_manager", "project_manager", "cost_estimator", "technical_lead", "quality_officer", "document_controller"}
+_EVENT_TRANSITION_ROLES = {"cost_manager", "project_manager"}
 
 
 def _actor_roles(actor: Mapping[str, Any]) -> set[str]:
@@ -803,6 +826,14 @@ def _project(payload: object, actor: Mapping[str, Any] | None = None) -> dict[st
     existed = PROJECT_WORKSPACE.load(project_id) is not None
     state = PROJECT_WORKSPACE.create(project_id, name)
     if actor and not existed:
+        # The creator is the first member of a new project.  This keeps the
+        # project roster isolated while ensuring the person who opened the
+        # project can immediately manage its personnel or invite the next
+        # role owner.  Other users are added only through the existing
+        # personnel/invite flow.
+        actor_id = str(actor.get("id", "")).strip()
+        if actor_id:
+            AUTH_STORE.add_user_to_project(project_id, actor_id)
         state = PROJECT_WORKSPACE.append_audit(project_id, "project.created", actor, project_id, {"name": name})
     return state
 
@@ -1003,6 +1034,18 @@ def _auth_login(payload: object) -> dict[str, Any]:
     return {"token": token, "user": user}
 
 
+def _auth_password_change(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("密码修改请求必须是 JSON 对象")
+    current_password = str(payload.get("current_password", payload.get("old_password", "")))
+    new_password = str(payload.get("new_password", ""))
+    confirm_password = str(payload.get("confirm_password", new_password))
+    if new_password != confirm_password:
+        raise ValueError("两次输入的新密码不一致")
+    user = AUTH_STORE.change_user_password(dict(actor), current_password, new_password)
+    return {"ok": True, "user": user}
+
+
 def _personnel_create(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object")
@@ -1012,17 +1055,18 @@ def _personnel_create(payload: object, actor: Mapping[str, Any]) -> dict[str, An
     raw_password = payload.get("password")
     password = str(raw_password).strip() if raw_password is not None else ""
     temporary_password = ""
+    must_change_password = False
     if not password:
-        # Managed personnel are entered by the project manager or an
-        # authorized administrative officer.  Keep the login credential
-        # secure while removing the need for the manager to invent a
-        # password: the one-time value is returned only in this response.
-        temporary_password = f"BC-{secrets.token_urlsafe(9)}"
+        # Keep onboarding simple: all centrally-created personnel start with
+        # the documented password and are expected to change it after login.
+        temporary_password = DEFAULT_PERSONNEL_PASSWORD
         password = temporary_password
+        must_change_password = True
     user = AUTH_STORE.register(
         username,
         password,
         role,
+        must_change_password=must_change_password,
     )
     if project_id:
         AUTH_STORE.add_user_to_project(project_id, str(user["id"]))
@@ -1040,7 +1084,7 @@ def _personnel_create(payload: object, actor: Mapping[str, Any]) -> dict[str, An
             "password": temporary_password,
             "role": user["role"],
             "role_label": user["role_label"],
-            "notice": "请将此初始密码安全交给本人；刷新人员管理后不再显示。",
+            "notice": "初始密码为 123456；请将其安全交给本人，并在首次登录后修改密码。刷新人员管理后不再显示。",
         }
     return snapshot
 
@@ -1086,6 +1130,57 @@ def _personnel_roles(payload: object, actor: Mapping[str, Any]) -> dict[str, Any
         raise ValueError("缺少目标人员或岗位组合")
     project_id = str(payload.get("project_id", "")).strip() or None
     return AUTH_STORE.update_roles(dict(actor), user_id, roles, project_id=project_id)
+
+
+def _personnel_invite_create(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("岗位邀请请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    _workspace(project_id)
+    return AUTH_STORE.create_project_invite(
+        dict(actor),
+        project_id,
+        str(payload.get("role", "")).strip(),
+        payload.get("expires_hours", 72),
+    )
+
+
+def _personnel_invites(project_id: str, actor: Mapping[str, Any]) -> dict[str, Any]:
+    _workspace(project_id)
+    return AUTH_STORE.list_project_invites(dict(actor), project_id)
+
+
+def _personnel_invite_revoke(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("岗位邀请撤销请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    _workspace(project_id)
+    return AUTH_STORE.revoke_project_invite(
+        dict(actor),
+        project_id,
+        str(payload.get("invite_id", "")).strip(),
+    )
+
+
+def _personnel_password_reset(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("密码重置请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    user_id = str(payload.get("user_id", "")).strip()
+    return AUTH_STORE.reset_user_password(dict(actor), user_id, project_id)
+
+
+def _invite_accept(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("岗位邀请接受请求必须是 JSON 对象")
+    result = AUTH_STORE.accept_project_invite(
+        str(payload.get("token", "")).strip(),
+        str(payload.get("username", "")).strip(),
+        str(payload.get("password", "")),
+    )
+    session_token = secrets.token_urlsafe(32)
+    SESSIONS[session_token] = result["user"]
+    return {"token": session_token, **result}
 
 
 def _source_for(state: dict[str, Any], source_id: str) -> dict[str, Any]:
@@ -1369,8 +1464,34 @@ def _event_public(event: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[st
     return visible
 
 
+def _events_for_actor(state: Mapping[str, Any], actor: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Keep the Event view role-scoped; operational roles see assigned events only."""
+    roles = _actor_roles(actor)
+    events = [item for item in state.get("events") or [] if isinstance(item, Mapping)]
+    if roles.intersection({ROLE_COST_MANAGER, ROLE_PROJECT_MANAGER}):
+        return events
+    packet = event_intake_snapshot(state, sorted(roles))
+    allowed = {str(item.get("event_id")) for item in packet.get("requirements") or [] if item.get("event_id")}
+    for item in packet.get("intake") or []:
+        for candidate in item.get("candidates") or []:
+            if candidate.get("event_id"):
+                allowed.add(str(candidate["event_id"]))
+    for product in state.get("role_work_products") or []:
+        if not isinstance(product, Mapping) or str(product.get("role")) not in roles:
+            continue
+        event_id = str(_mapping(product.get("links")).get("event_id") or "").strip()
+        if event_id:
+            allowed.add(event_id)
+    return [event for event in events if str(event.get("event_id")) in allowed]
+
+
 def _event_kernel_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
     snapshot = state.get("event_distillation")
+    actor_roles = _actor_roles(actor)
+    event_packet = event_intake_snapshot(
+        state,
+        None if actor_roles.intersection({ROLE_COST_MANAGER, ROLE_PROJECT_MANAGER}) else sorted(actor_roles),
+    )
     if (actor or {}).get("role") == ROLE_PROJECT_MANAGER:
         visible_snapshot = None
         if isinstance(snapshot, Mapping):
@@ -1380,7 +1501,7 @@ def _event_kernel_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -
         visible_snapshot = _redact_sensitive(snapshot, actor) if isinstance(snapshot, Mapping) else None
     return {
         "project": dict(state.get("project") or {}),
-        "events": [_event_public(event, actor) for event in state.get("events") or [] if isinstance(event, Mapping)],
+        "events": [_event_public(event, actor) for event in _events_for_actor(state, actor)],
         "distillation": visible_snapshot,
         "catalog": {
             "statuses": list(EVENT_STATUSES),
@@ -1393,6 +1514,11 @@ def _event_kernel_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -
             "outcome_transitions": {key: sorted(value) for key, value in OUTCOME_ALLOWED_TRANSITIONS.items()},
         },
         "privacy": {"local_only": True, "external_sent": False},
+        "event_intake": event_packet,
+        "evidence_intake": evidence_intake_snapshot(
+            state,
+            None if actor_roles.intersection({ROLE_COST_MANAGER, ROLE_PROJECT_MANAGER}) else sorted(actor_roles),
+        ),
     }
 
 
@@ -1402,6 +1528,8 @@ def _event_input_mapping(payload: Mapping[str, Any], key: str) -> dict[str, Any]
 
 
 def _create_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if ROLE_COST_MANAGER not in _actor_roles(actor):
+        raise PermissionError("工程事件只能由造价经理标注、组织并发起")
     if not isinstance(payload, dict):
         raise ValueError("工程事件请求必须是 JSON 对象")
     project_id = str(payload.get("project_id", "")).strip()
@@ -1434,6 +1562,12 @@ def _create_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict
         for key in ("responsibility", "formal_basis", "emergency_override", "external_approval"):
             if key in governance:
                 event["governance"][key] = copy.deepcopy(governance[key])
+    event["governance"]["event_organizer"] = {
+        "role": ROLE_COST_MANAGER,
+        "user_id": actor.get("id", ""),
+        "username": actor.get("username", ""),
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
     validate_event(event)
     state = PROJECT_WORKSPACE.save_event(project_id, event)
     PROJECT_WORKSPACE.append_audit(project_id, "event.created", actor, event["event_id"], {"event_type": event["classification"]["event_type"], "source_refs": event["origin"]["source_refs"]})
@@ -1441,6 +1575,8 @@ def _create_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict
 
 
 def _distill_event_kernel(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not _actor_roles(actor).intersection(_EVENT_DISTILL_ROLES):
+        raise PermissionError("工程事件蒸馏由造价经理统一执行；当前岗位提交本岗位事实即可")
     if not isinstance(payload, dict):
         raise ValueError("蒸馏请求必须是 JSON 对象")
     project_id = str(payload.get("project_id", "")).strip()
@@ -1473,6 +1609,8 @@ def _distill_event_kernel(payload: object, actor: Mapping[str, Any]) -> dict[str
 
 
 def _transition_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not _actor_roles(actor).intersection(_EVENT_TRANSITION_ROLES):
+        raise PermissionError("工程事件状态由造价经理或项目经理推进")
     if not isinstance(payload, dict):
         raise ValueError("状态推进请求必须是 JSON 对象")
     project_id = str(payload.get("project_id", "")).strip()
@@ -1490,6 +1628,8 @@ def _transition_engineering_event(payload: object, actor: Mapping[str, Any]) -> 
 
 def _update_engineering_outcome(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
     """Record an Outcome snapshot or move its independent state machine."""
+    if ROLE_COST_MANAGER not in _actor_roles(actor):
+        raise PermissionError("Outcome 只由造价经理登记；其他岗位只查看对应状态")
     if not isinstance(payload, dict):
         raise ValueError("Outcome 请求必须是 JSON 对象")
     project_id = str(payload.get("project_id", "")).strip()
@@ -1522,6 +1662,8 @@ def _update_engineering_outcome(payload: object, actor: Mapping[str, Any]) -> di
 
 
 def _cross_check_engineering_event(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not _actor_roles(actor).intersection(_EVENT_CHECK_ROLES):
+        raise PermissionError("一致性检查由管理、造价、技术和资料岗位执行")
     if not isinstance(payload, dict):
         raise ValueError("互证请求必须是 JSON 对象")
     project_id = str(payload.get("project_id", "")).strip()
@@ -1694,6 +1836,15 @@ def _line_contracts() -> dict[str, Any]:
 def _role_work_products_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
     """Return only own/incoming role products plus the matching role contracts."""
     roles = _actor_roles(actor)
+    intelligence_roles = set(ROLE_DEPARTMENT_HEADS) if ROLE_PROJECT_MANAGER in roles else roles
+    event_packet = event_intake_snapshot(
+        state,
+        None if roles.intersection({ROLE_COST_MANAGER, ROLE_PROJECT_MANAGER}) else sorted(roles),
+    )
+    evidence_packet = evidence_intake_snapshot(
+        state,
+        None if roles.intersection({ROLE_COST_MANAGER, ROLE_PROJECT_MANAGER}) else sorted(roles),
+    )
     records = []
     for item in state.get("role_work_products") or []:
         if not isinstance(item, Mapping):
@@ -1719,6 +1870,13 @@ def _role_work_products_response(state: Mapping[str, Any], actor: Mapping[str, A
             "second_amount_ledger": False,
             "human_confirmation_required": True,
         },
+        "intelligence": role_intelligence_snapshot(
+            state,
+            sorted(intelligence_roles),
+            role_workbench_contracts(),
+        ),
+        "event_intake": event_packet,
+        "evidence_intake": evidence_packet,
     }
 
 
@@ -1766,6 +1924,8 @@ def _role_work_product_create(payload: object, actor: Mapping[str, Any]) -> dict
     if any(item not in allowed_handoffs for item in handoff_to):
         raise ValueError("交接对象不在本岗位责任契约内")
     event_id = str(payload.get("event_id", "")).strip()
+    if event_id and role != ROLE_COST_MANAGER:
+        raise ValueError("生产、技术及现场岗位不能自行选择工程事件；请提交成果，由造价经理统一归类")
     evidence_refs = _references(payload.get("evidence_refs"))
     source_refs = _references(payload.get("source_refs"))
     stamp = datetime.now(timezone.utc).isoformat()
@@ -1793,6 +1953,8 @@ def _role_work_product_create(payload: object, actor: Mapping[str, Any]) -> dict
         "updated_at": stamp,
         "adapter_projection": True,
         "maps_to": list(contract.get("maps_to") or []),
+        "event_link_state": "LINKED" if event_id else "UNLINKED",
+        "event_review_state": "CONFIRMED" if event_id and role == ROLE_COST_MANAGER else "PENDING",
     }
     # A role product belongs to an existing project; do not let a typo create
     # an ungoverned parallel project workspace.
@@ -1806,6 +1968,110 @@ def _role_work_product_create(payload: object, actor: Mapping[str, Any]) -> dict
         {"role": role, "product_type": record["product_type"], "handoff_to": handoff_to, "event_id": event_id},
     )
     return {"record": _redact_sensitive(record, actor), "role_work_products": _role_work_products_response(state, actor)}
+
+
+def _confirm_event_intake(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    """Let only the cost manager attach a submitted fact to an existing Event."""
+    if ROLE_COST_MANAGER not in _actor_roles(actor):
+        raise PermissionError("工程事件归类只能由造价经理确认")
+    if not isinstance(payload, Mapping):
+        raise ValueError("事件归类请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    product_id = str(payload.get("product_id", "")).strip()
+    action = str(payload.get("action", "LINK")).strip().upper()
+    event_id = str(payload.get("event_id", "")).strip()
+    if not project_id or not product_id:
+        raise ValueError("事件归类请求缺少项目或岗位成果标识")
+    if action not in {"LINK", "REJECT"}:
+        raise ValueError("事件归类动作只能是 LINK 或 REJECT")
+    state = _workspace(project_id)
+    product = next((item for item in state.get("role_work_products") or [] if str(item.get("product_id")) == product_id), None)
+    if not isinstance(product, Mapping):
+        raise FileNotFoundError("岗位成果不存在")
+    if action == "LINK":
+        if not event_id:
+            raise ValueError("确认归类必须选择已有工程事件")
+        if not any(str(item.get("event_id")) == event_id for item in state.get("events") or [] if isinstance(item, Mapping)):
+            raise FileNotFoundError("工程事件不存在")
+        updates = {
+            "links": {"event_id": event_id},
+            "event_link_state": "CONFIRMED",
+            "event_review_state": "CONFIRMED",
+            "event_feedback": {},
+            "event_linked_by": {"role": ROLE_COST_MANAGER, "user_id": actor.get("id", ""), "username": actor.get("username", "")},
+            "event_linked_at": datetime.now(timezone.utc).isoformat(),
+            "event_reviewed_by": {"role": ROLE_COST_MANAGER, "user_id": actor.get("id", ""), "username": actor.get("username", "")},
+            "event_reviewed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        updates = {
+            "event_link_state": "REJECTED",
+            "event_linked_by": {"role": ROLE_COST_MANAGER, "user_id": actor.get("id", ""), "username": actor.get("username", "")},
+            "event_linked_at": datetime.now(timezone.utc).isoformat(),
+        }
+    state = PROJECT_WORKSPACE.update_role_work_product(project_id, product_id, updates)
+    PROJECT_WORKSPACE.append_audit(project_id, "event_intake.confirmed", actor, product_id, {"action": action, "event_id": event_id})
+    updated = next(item for item in state.get("role_work_products") or [] if str(item.get("product_id")) == product_id)
+    return {"record": _redact_sensitive(updated, actor), "role_work_products": _role_work_products_response(state, actor)}
+
+
+def _return_event_requirement(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    """Return an event-linked role product to its owner with explicit supplement requirements."""
+    if ROLE_COST_MANAGER not in _actor_roles(actor):
+        raise PermissionError("工程事件证据退回只能由造价经理发起")
+    if not isinstance(payload, Mapping):
+        raise ValueError("证据退回请求必须是 JSON 对象")
+    project_id = str(payload.get("project_id", "")).strip()
+    product_id = str(payload.get("product_id", "")).strip()
+    event_id = str(payload.get("event_id", "")).strip()
+    reason = str(payload.get("reason", "")).strip()
+    if not project_id or not product_id or not reason:
+        raise ValueError("证据退回必须包含项目、岗位成果和退回原因")
+    required_items = payload.get("required_items", [])
+    if isinstance(required_items, str):
+        required_items = [item.strip() for item in required_items.replace("\n", ",").split(",") if item.strip()]
+    elif isinstance(required_items, (list, tuple, set)):
+        required_items = [str(item).strip() for item in required_items if str(item).strip()]
+    else:
+        required_items = []
+    state = _workspace(project_id)
+    product = next((item for item in state.get("role_work_products") or [] if str(item.get("product_id")) == product_id), None)
+    if not isinstance(product, Mapping):
+        raise FileNotFoundError("岗位成果不存在")
+    linked_event = str(_mapping(product.get("links")).get("event_id") or "").strip()
+    event_id = event_id or linked_event
+    if str(product.get("event_link_state", "")).upper() != "CONFIRMED" or not event_id or event_id != linked_event:
+        raise ValueError("只能退回已归类到该工程事件的岗位成果")
+    if not any(str(item.get("event_id")) == event_id for item in state.get("events") or [] if isinstance(item, Mapping)):
+        raise FileNotFoundError("工程事件不存在")
+    if str(product.get("role")) == ROLE_COST_MANAGER:
+        raise ValueError("造价经理不能把自己的事件归类成果退回给自己")
+    stamp = datetime.now(timezone.utc).isoformat()
+    reviewer = {"role": ROLE_COST_MANAGER, "user_id": actor.get("id", ""), "username": actor.get("username", "")}
+    feedback = {
+        "status": "RETURNED",
+        "reason": reason,
+        "required_items": required_items,
+        "returned_by": reviewer,
+        "returned_at": stamp,
+    }
+    updates = {
+        "event_review_state": "RETURNED",
+        "event_feedback": feedback,
+        "event_reviewed_by": reviewer,
+        "event_reviewed_at": stamp,
+        "updated_at": stamp,
+    }
+    state = PROJECT_WORKSPACE.update_role_work_product(project_id, product_id, updates)
+    PROJECT_WORKSPACE.append_audit(
+        project_id,
+        "event_intake.returned",
+        actor,
+        product_id,
+        {"event_id": event_id, "reason": reason, "required_items": required_items},
+    )
+    updated = next(item for item in state.get("role_work_products") or [] if str(item.get("product_id")) == product_id)
+    return {"record": _redact_sensitive(updated, actor), "role_work_products": _role_work_products_response(state, actor)}
 
 
 def _coordination_response(state: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -2514,7 +2780,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 10)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "v0.8.0-rc5：P09 仍只由 P01–P08 事实派生；人员名册按项目独立维护，首页按岗位提供输入→操作→成果→复核手册；项目经理或授权行政人员可在当前项目新增人员",
+        "release_highlights": "v0.8.0-rc8：项目级岗位邀请进入中央 WebUI；岗位只读边界、证据自动投影和人员项目隔离继续生效",
     }
 
 
@@ -2626,6 +2892,17 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json(AUTH_STORE.personnel_snapshot(project_id))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
+        elif path == "/api/personnel/invites":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0].strip()
+                self._write_json(_personnel_invites(project_id, actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
         elif path == "/api/source/view":
             try:
                 actor = _require_actor(self.headers, "view_source")
@@ -2674,6 +2951,16 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 actor = _require_actor(self.headers, "view_workspace")
                 project_id = parse_qs(parsed.query).get("project_id", [""])[0]
                 self._write_json(_role_work_products_response(_workspace(project_id), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+        elif path == "/api/role-intelligence":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                packet = _role_work_products_response(_workspace(project_id), actor)
+                self._write_json({"project_id": project_id, **(packet.get("intelligence") or {})})
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
             except FileNotFoundError as exc:
@@ -2805,10 +3092,29 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 401)
             return
+        if path == "/api/auth/password-change":
+            try:
+                actor = _require_actor(self.headers)
+                result = _auth_password_change(self._read_json(), actor)
+                current_token = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+                _invalidate_sessions_for_user(str(actor.get("id", "")), except_token=current_token)
+                SESSIONS[current_token] = result["user"]
+                self._write_json(result)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
         if path == "/api/auth/logout":
             token = self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             SESSIONS.pop(token, None)
             self._write_json({"ok": True})
+            return
+        if path == "/api/invite/accept":
+            try:
+                self._write_json(_invite_accept(self._read_json()))
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
             return
         if path == "/api/search":
             try:
@@ -2965,6 +3271,65 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": str(exc)}, 403)
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/personnel/invites":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_invite_create(self._read_json(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/personnel/invites/revoke":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_personnel_invite_revoke(self._read_json(), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/personnel/password-reset":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                payload = self._read_json()
+                result = _personnel_password_reset(payload, actor)
+                if isinstance(payload, dict):
+                    _invalidate_sessions_for_user(str(payload.get("user_id", "")))
+                self._write_json(result)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/event-intake/confirm":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_confirm_event_intake(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            return
+        if path == "/api/event-intake/return":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_redact_sensitive(_return_event_requirement(self._read_json(), actor), actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
             return
         if path == "/api/role-work-products":
             try:
@@ -3140,6 +3505,8 @@ class BuildCostHandler(BaseHTTPRequestHandler):
         if capability:
             try:
                 _require_capability_role(actor, capability)
+                if capability == "evidence" and not _actor_roles(actor).intersection(_EVIDENCE_MANUAL_ROLES):
+                    raise PermissionError("P07 证据链由造价经理或资料员统一归档；当前岗位使用底层自动匹配结果")
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
                 return

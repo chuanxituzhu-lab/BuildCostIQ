@@ -69,7 +69,11 @@ The municipal workflow does not present one universal menu. After login the brow
 
 The field workbench is labelled `施工员/测量员`; existing `现场工程师` aliases remain valid for backwards-compatible login/role migration. Each role home shows only its own outputs, execution loop and completion boundary.
 
-The v0.8.0-rc5 home screen includes a role operation manual for the signed-in role. It presents the minimum Feynman loop—what to receive, what to save, who confirms it, and what to check before handoff. Project managers and authorized administrative officers also see the current-project personnel entry; the project roster is isolated from other projects.
+The v0.8.0-rc9 home screen includes a role operation manual and a fixed event-intake queue for the signed-in role. It presents the minimum Feynman loop—what to receive, what to save, who confirms it, and what to check before handoff. Production, technical and site facts are retained first; only the cost manager labels and starts a Core Event, then the system shows fixed deliverables and due times to the routed roles. Project managers and authorized administrative officers also see the current-project personnel entry; the project roster is isolated from other projects.
+
+Operational roles receive a read-only, role-scoped Event view: warehouse officers see only assigned material events, alerts and fixed requirements; event distillation, event creation, Outcome editing and unrelated transitions are hidden. P07 evidence links remain owned by the cost manager/document controller. Other roles see deterministic evidence projections based on document number, batch, log/photo reference, WBS and location; unique matches are shown automatically, while ambiguous matches remain for human confirmation.
+
+工程事件证据由造价经理归口复核。固定待办中，造价经理可对已归类的岗位成果点击“退回补充证据”，填写退回原因和必补项；岗位工作台会显示 `已退回补充`、原因和必补项。退回不会改写原始成果，岗位重新保存后形成新的成果版本，再由造价经理重新归类并确认；对应接口为 `POST /api/event-intake/return`，仅造价经理可调用。
 
 | Role line | Primary WebUI surfaces |
 |---|---|
@@ -85,7 +89,12 @@ The v0.8.0-rc5 home screen includes a role operation manual for the signed-in ro
 
 普通岗位首页固定为“我的工作 → 待交成果 → 审核状态 → 异常/退回 → 直接责任链”。岗位菜单由服务端和前端同一份角色契约投影；隐藏菜单不是唯一安全措施，`/api/search` 及 P01–P08 写接口也按岗位能力拒绝越权请求。
 
+人员进入方式采用“中央 WebUI + 项目岗位邀请”：项目经理或授权行政人员在人员管理面板生成当前项目的岗位邀请链接，岗位人员在浏览器接受邀请并设置密码后，系统自动加入该项目名册并投影对应角色界面。邀请链接一次性、可过期、可撤销；服务端只保存 token 哈希，接受/撤销/过期和项目绑定均进入人员审计。岗位电脑只需打开中央节点地址，可将链接创建为桌面快捷方式，不需要安装一份 BuildCostIQ，也不会因人员更换而丢失历史成果。
+
 当前岗位的“直接责任链”来自 `/api/line-contracts` 的 `role_flows` 契约。卡片只展示本岗位应接收的输入、应保存的成果、下一接收岗位、升级对象和不可修改项；项目经理额外看到跨线升级关系，造价经理额外看到商业总审边界。它是现有 Core/P01–P08/P09 的交接说明，不新增状态机、金额事实或 P09。
+
+人员管理中的“重置密码”只对项目经理和已授权行政人员开放。新录入人员的初始密码统一为 `123456`，首次登录后可点击顶部“修改密码”自行更换；服务端只保存哈希，不保存明文。系统不提供查看原密码；重置会立即使旧密码失效，并在当前操作结果中显示一次性临时密码，供安全交接给接任人员。该操作写入人员审计，但不会记录密码本身。
+重置还会撤销该账号已有的浏览器会话，接任人员使用新临时密码重新登录即可。
 
 分包管理使用现有组织协同工作流，不建立第二金额事实源：技术负责人按“拆包 → 审方案 → 交底 → 技术放行 → 验收移交”推进，生产经理按“接放行 → 排产配资源 → 跟踪实物量 → 纠偏 → 量验移交”推进；每一步均绑定 Core Event、Evidence 和人工确认。
 
@@ -112,7 +121,8 @@ The v0.8.0-rc5 home screen includes a role operation manual for the signed-in ro
 - `POST /api/auth/register` and `POST /api/auth/login` — local role registration and login; the returned bearer token is held in the browser session.
 - `GET /api/auth/me` — current local role and permissions.
 - `GET /api/personnel?project_id=...` — the current project's personnel list and project-scoped personnel audit trail; requires `manage_personnel`.
-- `POST /api/personnel` — project managers or explicitly authorized administrative officers enter `project_id`, a person's name, and role. The server generates an initial password and returns it only once in the create response; the person then logs in with that name and password. The credential is not stored in the personnel snapshot and is not shown after refresh. An explicit password remains accepted for scripted/local migrations.
+- `POST /api/personnel` — project managers or explicitly authorized administrative officers enter `project_id`, a person's name, and role. When no password is supplied, the server uses the fixed onboarding password `123456` and returns it only once in the create response; the person then logs in and changes it from the header “修改密码” action. The credential is not stored in the personnel snapshot and is not shown after refresh. An explicit password remains accepted for scripted/local migrations.
+- `POST /api/auth/password-change` — an authenticated person verifies the current password and changes only their own password; the server stores a hash, clears the first-login marker, preserves the current session, and revokes other sessions for that account.
 - Personnel add/remove/rename/role-change/authorization requests carry `project_id`; removing a person removes the membership from that project without deleting the account or its work in another project.
 - `GET /api/source/view?project_id=...&source_id=...` — authenticated inline view of an original source; add `derived=1` for a Markdown recognition copy.
 - `POST /api/source/modify` — authenticated metadata revision; requires `modify_source` and appends an audit event.

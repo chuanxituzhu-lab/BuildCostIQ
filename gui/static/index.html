@@ -15,11 +15,12 @@
           <div>
             <h1>造价资料工作台</h1>
             <p class="subtitle">把清单资料、成本计划和结算初审集中在一个工作面完成。</p>
-            <p id="releaseHighlights" class="release-highlights">版本信息读取中：v0.8.0-rc5 已按项目隔离人员名册，并把各岗位的输入、操作、成果和复核写入首页操作手册。</p>
+            <p id="releaseHighlights" class="release-highlights">版本信息读取中：v0.8.0-rc8 已接入项目级岗位邀请和中央 WebUI 入口。</p>
           </div>
         </div>
       </div>
       <div class="runtime-meta">
+        <label class="language-switcher" for="languageSelect"><span>语言</span><select id="languageSelect" aria-label="界面语言"><option value="zh">中文</option><option value="en">English</option></select></label>
         <form id="globalSearchForm" class="global-search" hidden>
           <label class="visually-hidden" for="globalSearchInput">搜索资料或问题</label>
           <input id="globalSearchInput" type="search" placeholder="查资料或问问题" autocomplete="off" />
@@ -28,13 +29,13 @@
         <div id="health" class="health health-pending">资料服务连接中</div>
         <div id="deploymentStatus" class="deployment-status" title="当前数据服务节点" hidden></div>
         <div class="runtime-version"><span>当前版本</span><strong id="runtimeVersion">v—</strong></div>
-        <div id="userSession" class="user-session" hidden><span id="userRole"></span><button id="logoutButton" class="icon-button" type="button">退出登录</button></div>
+        <div id="userSession" class="user-session" hidden><span id="userRole"></span><button id="changePasswordButton" class="icon-button" type="button" data-i18n="修改密码">修改密码</button><button id="logoutButton" class="icon-button" type="button" data-i18n="退出登录">退出登录</button></div>
       </div>
     </header>
 
     <main>
       <section id="authShell" class="auth-shell">
-        <div class="auth-intro"><span class="panel-label">LOCAL ACCESS · v0.8.0-rc5</span><h2>登录本地工作台</h2><p>登录后首页就是你的岗位操作手册：先看本岗位输入，再按步骤保存成果，最后提交责任线复核。项目经理负责经营指标和人员治理；造价经理负责造价业务；生产、技术、现场、物资和资料岗位只处理各自工作面。</p></div>
+        <div class="auth-intro"><span class="panel-label">LOCAL ACCESS · v0.8.0-rc8</span><h2>登录本地工作台</h2><p>登录后首页就是你的岗位操作手册：先看本岗位输入，再按步骤保存成果，最后提交责任线复核。项目经理负责经营指标和人员治理；造价经理负责造价业务；生产、技术、现场、物资和资料岗位只处理各自工作面。</p></div>
         <div class="auth-grid">
           <form id="loginForm" class="auth-card">
             <span class="panel-label">SIGN IN</span><h3>人员登录</h3><p class="permission-note">已登记人员直接使用项目经理/行政人员提供的姓名（登录名）和初始密码进入对应岗位工作台。</p>
@@ -48,6 +49,13 @@
             <label>密码（至少 6 位）<input id="registerPassword" type="password" autocomplete="new-password" required /></label>
             <label>工作台角色<select id="registerRole"><option value="cost_manager">造价经理（造价业务）</option><option value="project_manager">项目经理工作台（指标与人员治理）</option><option value="cost_estimator">造价员（造价操作）</option><option value="technical_lead">技术负责人</option><option value="production_manager">生产经理</option><option value="site_engineer">施工员/测量员</option><option value="surveyor">测量员</option><option value="quality_officer">质量负责人</option><option value="lab_testing_officer">试验检测员</option><option value="document_controller">资料员</option><option value="safety_officer">安全员</option><option value="procurement_officer">采购员</option><option value="warehouse_officer">仓管员</option><option value="administrative_officer">行政人员（需授权后管理人员）</option></select></label>
             <button class="button button-quiet" type="submit">注册并进入</button>
+          </form>
+          <form id="inviteForm" class="auth-card" hidden>
+            <span class="panel-label">PROJECT INVITE</span><h3>接受岗位邀请</h3>
+            <p id="inviteProjectNotice" class="permission-note">项目经理或授权行政人员已为你分配岗位；接受后只进入该项目的岗位工作台。</p>
+            <label>姓名/登录名<input id="inviteUsername" autocomplete="username" required maxlength="64" /></label>
+            <label>设置登录密码（至少 6 位）<input id="invitePassword" type="password" autocomplete="new-password" minlength="6" required /></label>
+            <button class="button button-primary" type="submit">接受邀请并进入</button>
           </form>
         </div>
         <p id="authMessage" class="auth-message" role="alert"></p>

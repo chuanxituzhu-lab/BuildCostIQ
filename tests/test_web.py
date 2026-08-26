@@ -57,6 +57,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn(".pdf", body)
         self.assertIn('id="loginForm"', body)
         self.assertIn('id="deploymentStatus"', body)
+        self.assertIn('id="languageSelect"', body)
+        self.assertIn('option value="en">English', body)
         self.assertIn('id="personnelTab"', body)
         self.assertIn("项目经理工作台", body)
         self.assertIn("施工员/测量员", body)
@@ -340,12 +342,33 @@ class WebUiTests(unittest.TestCase):
         credentials = managed_personnel["temporary_credentials"]
         self.assertEqual(credentials["username"], f"managed-warehouse-{suffix}")
         self.assertEqual(credentials["role"], "warehouse_officer")
+        self.assertEqual(credentials["password"], "123456")
         managed_login = post_json(
             "/api/auth/login",
             {"username": credentials["username"], "password": credentials["password"]},
             project_manager_token,
         )
         self.assertEqual(managed_login["user"]["role"], "warehouse_officer")
+        password_changed = post_json(
+            "/api/auth/password-change",
+            {"current_password": "123456", "new_password": "new-pass-123", "confirm_password": "new-pass-123"},
+            managed_login["token"],
+        )
+        self.assertEqual(password_changed["user"]["id"], managed_login["user"]["id"])
+        self.assertFalse(password_changed["user"]["must_change_password"])
+        changed_login = post_json(
+            "/api/auth/login",
+            {"username": credentials["username"], "password": "new-pass-123"},
+            project_manager_token,
+        )
+        self.assertEqual(changed_login["user"]["id"], managed_login["user"]["id"])
+        with self.assertRaises(HTTPError) as old_password_denied:
+            post_json(
+                "/api/auth/login",
+                {"username": credentials["username"], "password": "123456"},
+                project_manager_token,
+            )
+        self.assertEqual(old_password_denied.exception.code, 401)
         with urlopen(self.auth_request("/api/personnel", project_manager_token), timeout=2) as response:
             refreshed_personnel = json.load(response)
         self.assertNotIn("temporary_credentials", refreshed_personnel)
@@ -415,6 +438,122 @@ class WebUiTests(unittest.TestCase):
                 estimator_token,
             )
         self.assertEqual(denied_post.exception.code, 403)
+
+    def test_project_role_invite_binds_one_user_to_one_project_and_is_one_time(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token=None):
+            headers = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        project_manager = post_json(
+            "/api/auth/register",
+            {"username": f"invite-manager-{suffix}", "password": "local-pass", "role": "project_manager"},
+            self.manager_token,
+        )
+        project_id = f"invite-project-{suffix}"
+        # The project creator is automatically bound to the new project
+        # roster, so the manager can immediately issue role invitations.
+        post_json("/api/project", {"project_id": project_id, "name": "岗位邀请项目"}, project_manager["token"])
+
+        created = post_json(
+            "/api/personnel/invites",
+            {"project_id": project_id, "role": "warehouse_officer", "expires_hours": 24},
+            project_manager["token"],
+        )
+        self.assertEqual(created["project_id"], project_id)
+        self.assertEqual(created["role"], "warehouse_officer")
+        self.assertTrue(created["token"])
+        self.assertTrue(created["accept_path"].startswith("/?invite="))
+
+        with self.assertRaises(HTTPError) as denied:
+            post_json(
+                "/api/personnel/invites",
+                {"project_id": project_id, "role": "warehouse_officer"},
+                self.manager_token,
+            )
+        self.assertEqual(denied.exception.code, 403)
+        with self.assertRaises(HTTPError) as missing_project:
+            post_json(
+                "/api/personnel/invites",
+                {"project_id": f"missing-{suffix}", "role": "warehouse_officer"},
+                project_manager["token"],
+            )
+        self.assertEqual(missing_project.exception.code, 404)
+
+        accepted = post_json(
+            "/api/invite/accept",
+            {"token": created["token"], "username": f"warehouse-{suffix}", "password": "local-pass"},
+        )
+        self.assertEqual(accepted["project_id"], project_id)
+        self.assertEqual(accepted["user"]["role"], "warehouse_officer")
+        self.assertTrue(accepted["token"])
+
+        reset = post_json(
+            "/api/personnel/password-reset",
+            {"project_id": project_id, "user_id": accepted["user"]["id"]},
+            project_manager["token"],
+        )
+        with self.assertRaises(HTTPError) as revoked_session:
+            urlopen(self.auth_request("/api/auth/me", accepted["token"]), timeout=2)
+        self.assertEqual(revoked_session.exception.code, 401)
+        temporary = reset["temporary_credentials"]
+        self.assertEqual(temporary["username"], f"warehouse-{suffix}")
+        self.assertTrue(temporary["password"].startswith("BC-"))
+        self.assertNotIn("password", reset["users"][0])
+        with self.assertRaises(HTTPError):
+            post_json(
+                "/api/auth/login",
+                {"username": temporary["username"], "password": "local-pass"},
+            )
+        reset_login = post_json(
+            "/api/auth/login",
+            {"username": temporary["username"], "password": temporary["password"]},
+        )
+        self.assertEqual(reset_login["user"]["id"], accepted["user"]["id"])
+
+        with urlopen(self.auth_request(f"/api/personnel?project_id={project_id}", project_manager["token"]), timeout=2) as response:
+            roster = json.load(response)
+        self.assertTrue(any(user["username"] == f"warehouse-{suffix}" for user in roster["users"]))
+
+        with self.assertRaises(HTTPError) as reused:
+            post_json(
+                "/api/invite/accept",
+                {"token": created["token"], "username": f"warehouse-reuse-{suffix}", "password": "local-pass"},
+            )
+        self.assertEqual(reused.exception.code, 422)
+
+        with urlopen(self.auth_request(f"/api/personnel/invites?project_id={project_id}", project_manager["token"]), timeout=2) as response:
+            listed = json.load(response)
+        self.assertEqual(listed["invites"][0]["status"], "ACCEPTED")
+        self.assertNotIn("token", listed["invites"][0])
+
+        second = post_json(
+            "/api/personnel/invites",
+            {"project_id": project_id, "role": "procurement_officer", "expires_hours": 24},
+            project_manager["token"],
+        )
+        revoked = post_json(
+            "/api/personnel/invites/revoke",
+            {"project_id": project_id, "invite_id": second["invite_id"]},
+            project_manager["token"],
+        )
+        self.assertEqual(revoked["invite"]["status"], "REVOKED")
+        with urlopen(self.auth_request(f"/api/personnel?project_id={project_id}", project_manager["token"]), timeout=2) as response:
+            final_roster = json.load(response)
+        actions = [event["action"] for event in final_roster["audit_log"]]
+        self.assertIn("personnel.invite_created", actions)
+        self.assertIn("personnel.invite_accepted", actions)
+        self.assertIn("personnel.invite_revoked", actions)
 
     def test_personnel_rosters_are_isolated_by_project(self):
         suffix = uuid4().hex[:10]
@@ -1101,16 +1240,24 @@ class WebUiTests(unittest.TestCase):
                 return json.load(response)
 
         estimator = post_json("/api/auth/register", {"username": f"event-est-{suffix}", "password": "local-pass", "role": "cost_estimator"}, self.manager_token)
+        manager = post_json("/api/auth/register", {"username": f"event-manager-{suffix}", "password": "local-pass", "role": "cost_manager"}, self.manager_token)
         pm = post_json("/api/auth/register", {"username": f"event-pm-{suffix}", "password": "local-pass", "role": "project_manager"}, self.manager_token)
         project_id = f"event-roles-{suffix}"
         post_json("/api/project", {"project_id": project_id, "name": "事件角色项目"}, estimator["token"])
+        with self.assertRaises(HTTPError) as denied:
+            post_json(
+                "/api/event-kernel/events",
+                {"project_id": project_id, "title": "不应由造价员发起", "summary": "权限验证"},
+                estimator["token"],
+            )
+        self.assertEqual(denied.exception.code, 403)
         created = post_json(
             "/api/event-kernel/events",
             {"project_id": project_id, "title": "成本事件", "summary": "成本测算", "commercial_track": {"expected_profit": 987654, "evaluations": [{"incremental_cost": 123456}]}, "settlement": {"final_certified": 999999}, "source_refs": ["S-1"]},
-            estimator["token"],
+            manager["token"],
         )
         serialized = json.dumps(created, ensure_ascii=False)
-        self.assertNotIn("987654", serialized)
+        self.assertIn("987654", serialized)
         with urlopen(self.auth_request(f"/api/event-kernel?project_id={project_id}", estimator["token"]), timeout=2) as response:
             estimator_kernel = json.load(response)
         self.assertIsNone(estimator_kernel["events"][0]["commercial_track"]["expected_profit"])
@@ -1219,17 +1366,23 @@ class WebUiTests(unittest.TestCase):
                     "check_status": "CHECKED",
                 },
                 "handoff_to": "production_manager",
-                "event_id": "EV-2026-0001",
                 "evidence_refs": "IMG-01",
             },
             warehouse["token"],
         )
         self.assertEqual(created["record"]["product_type"], "inventory_movement")
         self.assertEqual(created["record"]["collaboration"]["handoff_to"], ["production_manager"])
+        self.assertEqual(created["record"]["event_link_state"], "UNLINKED")
         with urlopen(self.auth_request(f"/api/role-work-products?project_id={project_id}", warehouse["token"]), timeout=2) as response:
             warehouse_view = json.load(response)
         self.assertEqual(warehouse_view["contracts"]["warehouse_officer"]["product_type"], "inventory_movement")
         self.assertEqual(len(warehouse_view["records"]), 1)
+        self.assertEqual(warehouse_view["intelligence"]["contracts"]["warehouse_officer"]["head_role"], "production_manager")
+        self.assertTrue(warehouse_view["intelligence"]["single_source_of_truth"])
+        with urlopen(self.auth_request(f"/api/role-intelligence?project_id={project_id}", warehouse["token"]), timeout=2) as response:
+            intelligence_view = json.load(response)
+        self.assertEqual(intelligence_view["matching_policy"], "deterministic_keyed_match")
+        self.assertTrue(intelligence_view["human_confirmation_required"])
         with urlopen(self.auth_request(f"/api/role-work-products?project_id={project_id}", production["token"]), timeout=2) as response:
             production_view = json.load(response)
         self.assertEqual(production_view["incoming_count"], 1)
@@ -1241,6 +1394,62 @@ class WebUiTests(unittest.TestCase):
                 site["token"],
             )
         self.assertEqual(denied.exception.code, 403)
+
+    def test_event_intake_is_cost_manager_confirmed_and_role_cannot_pick_event(self):
+        suffix = uuid4().hex[:10]
+
+        def post_json(path, payload, token):
+            request = Request(
+                f"{self.base_url}{path}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=self.auth_headers("application/json", token),
+                method="POST",
+            )
+            with urlopen(request, timeout=2) as response:
+                return json.load(response)
+
+        site = post_json("/api/auth/register", {"username": f"intake-site-{suffix}", "password": "local-pass", "role": "site_engineer"}, self.manager_token)
+        project_id = f"event-intake-{suffix}"
+        post_json("/api/project", {"project_id": project_id, "name": "事件归类测试项目"}, self.manager_token)
+        event = post_json("/api/event-kernel/events", {"project_id": project_id, "title": "地下管线冲突", "summary": "K12+300 现场发现地下管线冲突", "event_type": "SITE_CONDITION", "location": {"zone": "K12+300"}, "source_refs": ["LOG-001"]}, self.manager_token)["event"]
+        fields = {"log_date": "2026-08-24", "daily_log_ref": "LOG-001", "wbs": "WBS-01", "location": "K12+300", "work_activity": "沟槽开挖", "progress_qty": 10, "condition": "发现地下管线冲突", "photo_refs": "PHOTO-01"}
+        with self.assertRaises(HTTPError) as rejected:
+            post_json("/api/role-work-products", {"project_id": project_id, "role": "site_engineer", "fields": fields, "event_id": event["event_id"], "handoff_to": "production_manager"}, site["token"])
+        self.assertEqual(rejected.exception.code, 422)
+        created = post_json("/api/role-work-products", {"project_id": project_id, "role": "site_engineer", "fields": fields, "handoff_to": "surveyor", "source_refs": "LOG-001", "evidence_refs": "PHOTO-01"}, site["token"])
+        product_id = created["record"]["product_id"]
+        intake = created["role_work_products"]["event_intake"]["intake"]
+        queued = next(item for item in intake if item["product_id"] == product_id)
+        self.assertEqual(queued["status"], "SUGGESTED")
+        self.assertTrue(queued["requires_cost_manager"])
+        with self.assertRaises(HTTPError) as denied:
+            post_json("/api/event-intake/confirm", {"project_id": project_id, "product_id": product_id, "action": "LINK", "event_id": event["event_id"]}, site["token"])
+        self.assertEqual(denied.exception.code, 403)
+        confirmed = post_json("/api/event-intake/confirm", {"project_id": project_id, "product_id": product_id, "action": "LINK", "event_id": event["event_id"]}, self.manager_token)
+        self.assertEqual(confirmed["record"]["event_link_state"], "CONFIRMED")
+        self.assertEqual(confirmed["record"]["event_review_state"], "CONFIRMED")
+        self.assertEqual(confirmed["record"]["links"]["event_id"], event["event_id"])
+        with self.assertRaises(HTTPError) as return_denied:
+            post_json("/api/event-intake/return", {"project_id": project_id, "product_id": product_id, "event_id": event["event_id"], "reason": "证据不足"}, site["token"])
+        self.assertEqual(return_denied.exception.code, 403)
+        returned = post_json(
+            "/api/event-intake/return",
+            {
+                "project_id": project_id,
+                "product_id": product_id,
+                "event_id": event["event_id"],
+                "reason": "照片不能证明隐蔽工程完成",
+                "required_items": ["隐蔽验收照片", "测量记录"],
+            },
+            self.manager_token,
+        )
+        self.assertEqual(returned["record"]["event_review_state"], "RETURNED")
+        self.assertEqual(returned["record"]["event_feedback"]["reason"], "照片不能证明隐蔽工程完成")
+        with urlopen(self.auth_request(f"/api/role-work-products?project_id={project_id}", site["token"]), timeout=2) as response:
+            site_view = json.load(response)
+        requirement = next(item for item in site_view["event_intake"]["requirements"] if item["event_id"] == event["event_id"] and item["role"] == "site_engineer")
+        self.assertEqual(requirement["status"], "RETURNED")
+        self.assertEqual(requirement["feedback"]["required_items"], ["隐蔽验收照片", "测量记录"])
 
 
 if __name__ == "__main__":

@@ -333,11 +333,14 @@ ROLE_WORKBENCH_CONTRACTS: dict[str, dict[str, Any]] = {
         "label": "施工员/测量员",
         "product_type": "site_fact",
         "input_fields": (
+            _work_field("log_date", "施工日志日期", "date", True),
+            _work_field("daily_log_ref", "施工日志编号", "text", True),
             _work_field("wbs", "WBS/清单位置", "text", True),
             _work_field("location", "现场位置", "text", True),
             _work_field("work_activity", "施工活动", "text", True),
             _work_field("progress_qty", "完成量申报", "number", True),
             _work_field("condition", "现场条件/异常", "textarea", True),
+            _work_field("photo_refs", "现场照片编号", "text", False, "照片编号，用逗号分隔"),
         ),
         "outputs": ("现场事实", "日完成量申报", "施工事件", "现场证据"),
         "collaboration": {

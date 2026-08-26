@@ -336,3 +336,23 @@ class LocalProjectWorkspace:
             products.append(dict(product))
             state["role_work_products"] = products[-1000:]
             return self._save_unlocked(state)
+
+    def update_role_work_product(self, project_id: str, product_id: str, updates: Mapping[str, Any]) -> dict[str, Any]:
+        """Append an auditable update to one role projection without replacing facts."""
+        with self._project_lock(project_id):
+            state = self.load(project_id)
+            if state is None:
+                raise FileNotFoundError("项目尚未建立")
+            products = [dict(item) for item in list(state.get("role_work_products") or [])]
+            target = next((item for item in products if str(item.get("product_id")) == str(product_id)), None)
+            if target is None:
+                raise FileNotFoundError("岗位成果不存在")
+            for key, value in updates.items():
+                if isinstance(value, Mapping) and isinstance(target.get(key), Mapping):
+                    merged = dict(target.get(key) or {})
+                    merged.update(dict(value))
+                    target[key] = merged
+                else:
+                    target[key] = value
+            state["role_work_products"] = products[-1000:]
+            return self._save_unlocked(state)

@@ -6,9 +6,10 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from threading import RLock
+from typing import Any, Mapping
 from uuid import uuid4
 
 
@@ -205,6 +206,8 @@ class LocalAuthStore:
         self.project_memberships_path = self.root / "project_memberships.json"
         self.project_personnel_audit_path = self.root / "project_personnel_audit.json"
         self.basic_personnel_ids_path = self.root / "basic_personnel_ids.json"
+        self.project_invites_path = self.root / "project_invites.json"
+        self._mutation_lock = RLock()
 
     def _load(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -278,6 +281,23 @@ class LocalAuthStore:
         temporary.write_text(json.dumps(audits, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self.project_personnel_audit_path)
 
+    def _load_project_invites(self) -> dict[str, list[dict[str, Any]]]:
+        if not self.project_invites_path.exists():
+            return {}
+        payload = json.loads(self.project_invites_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            str(project_id): [dict(item) for item in invites if isinstance(item, dict)][-500:]
+            for project_id, invites in payload.items()
+            if isinstance(invites, list)
+        }
+
+    def _save_project_invites(self, invites: dict[str, list[dict[str, Any]]]) -> None:
+        temporary = self.project_invites_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(invites, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(self.project_invites_path)
+
     def _load_basic_personnel_ids(self) -> set[str]:
         if not self.basic_personnel_ids_path.exists():
             return set()
@@ -336,6 +356,163 @@ class LocalAuthStore:
     def _project_has_user(self, project_id: str, user_id: str) -> bool:
         return str(user_id) in set(self.ensure_project_membership(project_id))
 
+    @staticmethod
+    def _invite_status(invite: Mapping[str, Any], now: datetime | None = None) -> str:
+        status = str(invite.get("status", "ACTIVE")).upper()
+        if status == "ACTIVE":
+            try:
+                expires_at = datetime.fromisoformat(str(invite.get("expires_at", "")).replace("Z", "+00:00"))
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at <= (now or datetime.now(timezone.utc)):
+                    return "EXPIRED"
+            except ValueError:
+                return "EXPIRED"
+        return status
+
+    def _invite_public(self, invite: Mapping[str, Any]) -> dict[str, Any]:
+        role = _normalize_role(str(invite.get("role", "")))
+        return {
+            "invite_id": str(invite.get("invite_id", "")),
+            "project_id": str(invite.get("project_id", "")),
+            "role": role,
+            "role_label": ROLE_LABELS[role],
+            "created_by": dict(invite.get("created_by") or {}),
+            "created_at": str(invite.get("created_at", "")),
+            "expires_at": str(invite.get("expires_at", "")),
+            "status": self._invite_status(invite),
+            "accepted_by": dict(invite.get("accepted_by") or {}) if invite.get("accepted_by") else None,
+            "accepted_at": str(invite.get("accepted_at", "")),
+            "revoked_at": str(invite.get("revoked_at", "")),
+        }
+
+    def _require_invite_manager(self, actor: dict[str, Any], project_id: str) -> None:
+        if "manage_personnel" not in set(actor.get("permissions", [])):
+            raise PersonnelPolicyError("当前角色没有生成岗位邀请的权限")
+        if not self._project_has_user(project_id, str(actor.get("id", ""))):
+            raise PersonnelPolicyError("当前账号不是该项目成员，不能生成项目岗位邀请")
+
+    def create_project_invite(
+        self,
+        actor: dict[str, Any],
+        project_id: str,
+        role: str,
+        expires_hours: int = 72,
+    ) -> dict[str, Any]:
+        project_id = str(project_id or "").strip()
+        if not project_id:
+            raise ValueError("项目标识不能为空")
+        self._require_invite_manager(actor, project_id)
+        role = _normalize_role(role)
+        try:
+            expires_hours = int(expires_hours)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("邀请有效期必须是整数小时") from exc
+        if not 1 <= expires_hours <= 720:
+            raise ValueError("邀请有效期应为 1 到 720 小时")
+        with self._mutation_lock:
+            created_at = _now()
+            expires_at = (datetime.now(timezone.utc) + timedelta(hours=expires_hours)).isoformat()
+            raw_token = secrets.token_urlsafe(32)
+            invite = {
+                "invite_id": f"INV-{uuid4().hex[:12].upper()}",
+                "project_id": project_id,
+                "role": role,
+                "token_hash": hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+                "created_by": {key: actor.get(key, "") for key in ("id", "username", "role", "role_label")},
+                "created_at": created_at,
+                "expires_at": expires_at,
+                "status": "ACTIVE",
+                "accepted_by": None,
+                "accepted_at": "",
+                "revoked_at": "",
+            }
+            invites = self._load_project_invites()
+            invites.setdefault(project_id, []).append(invite)
+            invites[project_id] = invites[project_id][-500:]
+            self._save_project_invites(invites)
+            self.record_personnel_audit(
+                dict(actor),
+                "personnel.invite_created",
+                invite["invite_id"],
+                {"project_id": project_id, "role": role, "expires_at": expires_at},
+                project_id=project_id,
+            )
+            result = self._invite_public(invite)
+            result["token"] = raw_token
+            result["accept_path"] = f"/?invite={raw_token}"
+            return result
+
+    def list_project_invites(self, actor: dict[str, Any], project_id: str) -> dict[str, Any]:
+        project_id = str(project_id or "").strip()
+        if not project_id:
+            raise ValueError("项目标识不能为空")
+        self._require_invite_manager(actor, project_id)
+        invites = self._load_project_invites().get(project_id, [])
+        return {"project_id": project_id, "invites": [self._invite_public(item) for item in reversed(invites)]}
+
+    def revoke_project_invite(self, actor: dict[str, Any], project_id: str, invite_id: str) -> dict[str, Any]:
+        project_id = str(project_id or "").strip()
+        invite_id = str(invite_id or "").strip()
+        if not project_id or not invite_id:
+            raise ValueError("项目和邀请编号不能为空")
+        self._require_invite_manager(actor, project_id)
+        with self._mutation_lock:
+            invites = self._load_project_invites()
+            target = next((item for item in invites.get(project_id, []) if str(item.get("invite_id")) == invite_id), None)
+            if target is None:
+                raise ValueError("岗位邀请不存在")
+            if self._invite_status(target) != "ACTIVE":
+                raise ValueError("只有有效中的岗位邀请可以撤销")
+            target["status"] = "REVOKED"
+            target["revoked_at"] = _now()
+            self._save_project_invites(invites)
+            self.record_personnel_audit(dict(actor), "personnel.invite_revoked", invite_id, {"project_id": project_id}, project_id=project_id)
+            return {"project_id": project_id, "invite": self._invite_public(target), "invites": [self._invite_public(item) for item in reversed(invites[project_id])]}
+
+    def accept_project_invite(self, token: str, username: str, password: str) -> dict[str, Any]:
+        token = str(token or "").strip()
+        username = str(username or "").strip()
+        password = str(password or "")
+        if not token or not username:
+            raise ValueError("邀请链接、姓名/登录名不能为空")
+        if not password:
+            raise ValueError("请设置登录密码")
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with self._mutation_lock:
+            invites = self._load_project_invites()
+            target = next((item for values in invites.values() for item in values if hmac.compare_digest(str(item.get("token_hash", "")), token_hash)), None)
+            if target is None:
+                raise ValueError("岗位邀请不存在或链接无效")
+            if self._invite_status(target) != "ACTIVE":
+                raise ValueError("岗位邀请已过期、撤销或使用过")
+            users = self._load()
+            existing = next((item for item in users if str(item.get("username", "")).casefold() == username.casefold()), None)
+            if existing is not None:
+                if not self._verify_password(password, existing.get("password", {})):
+                    raise ValueError("该姓名/登录名已存在，请使用原账号密码接受邀请")
+                invited_role = _normalize_role(str(target.get("role", "")))
+                existing_roles = _normalize_roles(existing.get("roles"), str(existing.get("role", "")))
+                if invited_role not in existing_roles:
+                    raise ValueError("该账号当前岗位与邀请岗位不一致，请由项目经理先调整岗位后再接受邀请")
+                user = self._public_user(existing)
+            else:
+                user = self.register(username, password, str(target.get("role", "")))
+            project_id = str(target.get("project_id", ""))
+            self.add_user_to_project(project_id, str(user["id"]))
+            target["status"] = "ACCEPTED"
+            target["accepted_by"] = {"id": user["id"], "username": user["username"], "role": user["role"]}
+            target["accepted_at"] = _now()
+            self._save_project_invites(invites)
+            self.record_personnel_audit(
+                {"id": user["id"], "username": user["username"], "role": user["role"], "role_label": user["role_label"]},
+                "personnel.invite_accepted",
+                str(target.get("invite_id", "")),
+                {"project_id": project_id, "user_id": user["id"], "role": target.get("role", "")},
+                project_id=project_id,
+            )
+            return {"user": user, "project_id": project_id, "role": target.get("role", ""), "invite": self._invite_public(target)}
+
     def _public_user(self, user: dict[str, Any]) -> dict[str, Any]:
         role = _normalize_role(str(user.get("role", "")))
         assigned_roles = _normalize_roles(user.get("roles"), role)
@@ -358,6 +535,7 @@ class LocalAuthStore:
         "permissions": sorted(permissions),
         "can_manage_personnel": "manage_personnel" in permissions,
         "personnel_admin_authorized": authorized,
+        "must_change_password": bool(user.get("must_change_password", False)),
         "name_history": list(user.get("name_history") or []),
         "created_at": user.get("created_at", ""),
         }
@@ -386,27 +564,34 @@ class LocalAuthStore:
         password: str,
         role: str,
         roles: list[str] | tuple[str, ...] | None = None,
+        must_change_password: bool = False,
     ) -> dict[str, Any]:
-        username = username.strip()
-        if len(username) < 1 or len(username) > 64:
-            raise ValueError("用户名需要是 1 到 64 个字符")
-        role = _normalize_role(role)
-        assigned_roles = _normalize_roles(roles, role)
-        users = self._load()
-        if any(user.get("username", "").lower() == username.lower() for user in users):
-            raise ValueError("该用户名已经注册")
-        user = {
-            "id": str(uuid4()),
-            "username": username,
-            "display_name": username,
-            "role": role,
-            "roles": assigned_roles,
-            "password": self._password_record(password),
-            "created_at": _now(),
-        }
-        users.append(user)
-        self._save(users)
-        return self._public_user(user)
+        # Invite acceptance and the public registration endpoint share this
+        # mutation.  The re-entrant lock makes a token one-time even when two
+        # browser requests arrive at the same moment.
+        with self._mutation_lock:
+            username = username.strip()
+            if len(username) < 1 or len(username) > 64:
+                raise ValueError("用户名需要是 1 到 64 个字符")
+            role = _normalize_role(role)
+            assigned_roles = _normalize_roles(roles, role)
+            users = self._load()
+            if any(user.get("username", "").lower() == username.lower() for user in users):
+                raise ValueError("该用户名已经注册")
+            user = {
+                "id": str(uuid4()),
+                "username": username,
+                "display_name": username,
+                "role": role,
+                "roles": assigned_roles,
+                "password": self._password_record(password),
+                "created_at": _now(),
+            }
+            if must_change_password:
+                user["must_change_password"] = True
+            users.append(user)
+            self._save(users)
+            return self._public_user(user)
 
     def authenticate(self, username: str, password: str) -> dict[str, Any]:
         username = username.strip()
@@ -414,6 +599,91 @@ class LocalAuthStore:
         if user is None or not self._verify_password(password, user.get("password", {})):
             raise ValueError("用户名或密码不正确")
         return self._public_user(user)
+
+    def change_user_password(
+        self,
+        actor: dict[str, Any],
+        current_password: str,
+        new_password: str,
+    ) -> dict[str, Any]:
+        """Allow a signed-in person to replace their own password."""
+        user_id = str(actor.get("id", "")).strip()
+        current_password = str(current_password or "")
+        new_password = str(new_password or "")
+        if not user_id:
+            raise PermissionError("当前登录账号无效")
+        if not current_password or not new_password:
+            raise ValueError("当前密码和新密码不能为空")
+        if len(new_password) < 6:
+            raise ValueError("新密码至少需要 6 位")
+        if current_password == new_password:
+            raise ValueError("新密码不能与当前密码相同")
+        with self._mutation_lock:
+            users = self._load()
+            target = next((user for user in users if str(user.get("id")) == user_id), None)
+            if target is None:
+                raise PermissionError("当前登录账号不存在")
+            if not self._verify_password(current_password, target.get("password", {})):
+                raise ValueError("当前密码不正确")
+            target["password"] = self._password_record(new_password)
+            target["password_changed_at"] = _now()
+            target.pop("must_change_password", None)
+            self._save(users)
+            public_user = self._public_user(target)
+            self.record_personnel_audit(
+                public_user,
+                "personnel.password_changed",
+                user_id,
+                {"username": target.get("username", ""), "self_service": True},
+            )
+            return public_user
+
+    def reset_user_password(
+        self,
+        actor: dict[str, Any],
+        user_id: str,
+        project_id: str,
+    ) -> dict[str, Any]:
+        """Issue a one-time temporary password without exposing password hashes.
+
+        Passwords remain write-only: the existing password can never be read
+        back.  A project manager or authorized administrative officer may
+        reset a member account and hand the returned temporary credential to
+        the person.  The temporary value is returned only in this response
+        and is never written to an audit record.
+        """
+        project_id = str(project_id or "").strip()
+        user_id = str(user_id or "").strip()
+        if not project_id or not user_id:
+            raise ValueError("项目和目标人员不能为空")
+        self._require_invite_manager(actor, project_id)
+        with self._mutation_lock:
+            users = self._load()
+            target = next((user for user in users if str(user.get("id")) == user_id), None)
+            if target is None:
+                raise ValueError("目标人员不存在")
+            if not self._project_has_user(project_id, user_id):
+                raise ValueError("目标人员不在当前项目名册")
+            temporary_password = f"BC-{secrets.token_urlsafe(9)}"
+            target["password"] = self._password_record(temporary_password)
+            target["password_reset_at"] = _now()
+            self._save(users)
+            self.record_personnel_audit(
+                dict(actor),
+                "personnel.password_reset",
+                user_id,
+                {"username": target.get("username", ""), "project_id": project_id},
+                project_id=project_id,
+            )
+            snapshot = self.personnel_snapshot(project_id)
+            snapshot["temporary_credentials"] = {
+                "username": target.get("username", ""),
+                "password": temporary_password,
+                "role": target.get("role", ""),
+                "role_label": ROLE_LABELS.get(str(target.get("role", "")), str(target.get("role", ""))),
+                "notice": "请将此临时密码安全交给本人；刷新或离开人员管理后不再显示。遗失时请再次重置。",
+            }
+            return snapshot
 
     def list_public_users(self) -> list[dict[str, Any]]:
         """Return personnel records without password material."""
