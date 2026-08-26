@@ -2780,7 +2780,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 10)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "v0.8.0-rc8：项目级岗位邀请进入中央 WebUI；岗位只读边界、证据自动投影和人员项目隔离继续生效",
+        "release_highlights": "v0.8.0-rc9：固定初始密码 123456，首次登录可自助改密；岗位只读边界、证据自动投影和事件退回闭环继续生效",
     }
 
 
