@@ -73,6 +73,7 @@ from core import (
     distill_local_data,
     distill_text,
     evaluate_event_rules,
+    evaluate_audit_gates,
     ensure_outcome_track,
     fuse_distillations,
     new_event,
@@ -365,6 +366,14 @@ def _can(actor: Mapping[str, Any] | None, permission: str) -> bool:
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _text(value: object) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _list(value: object) -> list[Any]:
+    return list(value) if isinstance(value, (list, tuple)) else []
 
 
 def _redact_sensitive(value: Any, actor: Mapping[str, Any] | None) -> Any:
@@ -1403,6 +1412,7 @@ def _event_public(event: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[st
     """Expose business-readable event data while keeping role boundaries."""
     vector = build_state_vector(event)
     alerts = evaluate_event_rules(event)
+    audit_gates = evaluate_audit_gates(event)
     if (actor or {}).get("role") == ROLE_PROJECT_MANAGER:
         identity = event.get("identity") if isinstance(event.get("identity"), Mapping) else {}
         classification = event.get("classification") if isinstance(event.get("classification"), Mapping) else {}
@@ -1415,11 +1425,13 @@ def _event_public(event: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[st
             "severity": classification.get("severity", ""),
             "state_vector": vector,
             "alerts": alerts,
+            "audit_gates": audit_gates,
             "status_history_count": len((_mapping(event.get("governance")).get("status_history") or [])),
         }
     visible = _redact_sensitive(dict(event), actor)
     visible["state_vector"] = vector
     visible["alerts"] = alerts
+    visible["audit_gates"] = audit_gates
     return visible
 
 
@@ -1746,6 +1758,59 @@ def _dashboard_period(snapshots: list[dict[str, Any]], days: int, now: datetime)
 
 def _dashboard_event_status(event: Mapping[str, Any]) -> str:
     return str(event.get("status") or _mapping(event.get("governance")).get("status") or "DISCOVERED")
+
+
+def _preconstruction_controls(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Project-level opening controls distilled from P01-P05 facts."""
+    contract = _mapping(_mapping(state.get("contract")).get("result"))
+    boq = _mapping(_mapping(state.get("boq")).get("result"))
+    drawings = _mapping(_mapping(state.get("drawings")).get("result"))
+    baseline = _mapping(_mapping(state.get("baseline")).get("result"))
+    plan = _mapping(_mapping(state.get("cost_plan")).get("result"))
+    resources = _mapping(plan.get("resource_summary"))
+    comparison = _mapping(plan.get("cost_control"))
+    checks = [
+        ("PC0", "招标与中标资料清标", bool(contract) and int(_mapping(contract.get("summary")).get("missing_field_count", 1) or 0) == 0, "合同与招采资料完整并已确认", "补齐招标、中标、合同资料及范围差异"),
+        ("PC1", "中标清单结构化", bool(_list(boq.get("items"))), "中标清单已形成五要素", "导入并核对中标清单编码、特征、单位和工程量"),
+        ("PC2", "施工图与工程量依据", bool(drawings) and int(_mapping(drawings.get("summary")).get("unreviewed_count", 1) or 0) == 0, "施工图版本已登记并审阅", "登记施工图版本并完成需造价计算工程量的图纸审阅"),
+        ("PC3", "0#台账", bool(_list(baseline.get("entries"))), "0#台账已建立", "按合同、施工图和清标差异建立0#台账"),
+        ("PC4", "中标价与市场价成本策划", bool(_list(comparison.get("items"))) and comparison.get("comparability") != "conflicted", "市场价与中标价已按同口径比较", "补齐市场价并确认税制、取价期和价格类型口径"),
+        ("PC5", "人材机汇总", bool(resources.get("complete")), "人工、材料、机械均已汇总", "录入人工、材料、机械消耗量及中标价/市场价"),
+    ]
+    items = [{"code": code, "label": label, "status": "PASS" if passed else "MISSING", "evidence": evidence if passed else "", "next_action": "已通过" if passed else action} for code, label, passed, evidence, action in checks]
+    passed = sum(item["status"] == "PASS" for item in items)
+    return {"checks": items, "passed": passed, "blocked": len(items) - passed, "readiness": round(passed / len(items) * 100, 1), "status": "READY" if passed == len(items) else "BLOCKED", "resource_summary": resources}
+
+
+def _material_evidence_controls(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Match material/physical targets to inspection, hidden and test evidence."""
+    evidence = _mapping(_mapping(state.get("evidence")).get("result"))
+    links = [item for item in _list(evidence.get("links")) if isinstance(item, Mapping)]
+    aliases = {
+        "material": "material", "raw_material": "material", "材料": "material", "原材料": "material",
+        "physical_item": "physical", "entity": "physical", "实体": "physical",
+        "inspection_lot": "inspection", "inspection": "inspection", "检验批": "inspection",
+        "hidden_work": "hidden", "concealed": "hidden", "隐蔽": "hidden",
+        "test_report": "test", "laboratory_report": "test", "检测报告": "test", "试验报告": "test",
+    }
+    targets: dict[str, dict[str, Any]] = {}
+    for link in links:
+        target_id = _text(link.get("target_id"))
+        kind = aliases.get(_text(link.get("target_type")).lower())
+        if not target_id or not kind:
+            continue
+        item = targets.setdefault(target_id, {"target_id": target_id, "types": set(), "sources": [], "verified": True})
+        item["types"].add(kind)
+        item["sources"].append(_text(link.get("source_id")))
+        item["verified"] = item["verified"] and bool(link.get("verified"))
+    rows = []
+    for item in targets.values():
+        if not item["types"].intersection({"material", "physical"}):
+            continue
+        missing = [kind for kind in ("physical", "inspection", "hidden", "test") if kind not in item["types"]]
+        rows.append({"target_id": item["target_id"], "status": "PASS" if not missing and item["verified"] else "AUDIT_REDUCTION_RISK", "matched_types": sorted(item["types"]), "missing_types": missing, "source_refs": list(dict.fromkeys(item["sources"])), "verified": item["verified"], "next_action": "证据链已匹配" if not missing and item["verified"] else "补齐实体、检验批、隐蔽验收、检测报告并完成核验"})
+    risk_count = sum(item["status"] != "PASS" for item in rows)
+    return {"items": rows, "matched_count": len(rows) - risk_count, "risk_count": risk_count, "status": "PASS" if rows and not risk_count else "RISK" if rows else "NO_DATA", "required_chain": ["material", "physical", "inspection", "hidden", "test"]}
 
 
 def _p09_result(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -2203,6 +2268,8 @@ def _confirm_line_adapter(payload: object, actor: Mapping[str, Any]) -> dict[str
 
 def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
+    preconstruction = _preconstruction_controls(state)
+    material_evidence = _material_evidence_controls(state)
     contract = (state.get("contract") or {}).get("result") or {}
     boq = (state.get("boq") or {}).get("result") or {}
     drawings = (state.get("drawings") or {}).get("result") or {}
@@ -2337,6 +2404,10 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
     evidence_summary = evidence.get("summary") or {}
     if evidence_summary.get("unverified_count", 0):
         add_alert("info", "DASH-P07-01", "存在待核验证据关联", f"有 {evidence_summary.get('unverified_count')} 条证据关联尚未核验。", "evidence")
+    if preconstruction["status"] != "READY":
+        add_alert("warn", "DASH-PRECON-01", "开工前造价策划尚未闭合", f"6 项开工前控制已有 {preconstruction['passed']} 项通过；请处理清标、0#台账、人材机或量价依据缺口。", "dashboard")
+    if material_evidence["risk_count"]:
+        add_alert("block", "DASH-MATERIAL-EVIDENCE-01", "材料与质量证据存在审减风险", f"有 {material_evidence['risk_count']} 个实体/材料对象未匹配检验批、隐蔽资料或检测报告。", "evidence")
 
     events = [item for item in state.get("events") or [] if isinstance(item, Mapping)]
     event_alerts = []
@@ -2401,6 +2472,7 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
                 "days_open": days_open,
                 "time_stage": outcome_status if outcome_status != "NOT_FORMED" else _dashboard_event_status(event),
                 "priority": len(event_alerts_for_queue) * 10 + int(leaks.get("total", 0) or 0),
+                "audit_gates": evaluate_audit_gates(event),
             })
     funnel: list[dict[str, Any]] = []
     previous_amount: Decimal | None = None
@@ -2466,6 +2538,8 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
             "zero_ledger_total": _dashboard_number(ledger_baseline_total),
             "pending_item_count": pending_count,
         },
+        "preconstruction": preconstruction,
+        "material_evidence": material_evidence,
         "capabilities": {
             "P01": contract.get("summary") or {},
             "P02": boq.get("summary") or {"item_count": boq.get("item_count", 0)},
@@ -2493,6 +2567,11 @@ def _build_dashboard(state: dict[str, Any], actor: Mapping[str, Any] | None = No
                 {"event_id": event.get("event_id", ""), "title": _mapping(event.get("identity")).get("title", ""), "state_vector": build_state_vector(event)}
                 for event in events[:12]
             ],
+            "settlement_readiness": {
+                "ready": sum(evaluate_audit_gates(event)["status"] == "READY" for event in events),
+                "blocked": sum(evaluate_audit_gates(event)["status"] != "READY" for event in events),
+                "average": round(sum(evaluate_audit_gates(event)["readiness"] for event in events) / len(events), 1) if events else 0.0,
+            },
         },
         "outcome_management": outcome_management,
         "alerts": alerts[:12],
@@ -2739,7 +2818,7 @@ def _health() -> dict[str, Any]:
         "business_capabilities": [f"P{i:02d}" for i in range(1, 10)],
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "v0.8.0-rc8：项目级岗位邀请进入中央 WebUI；岗位只读边界、证据自动投影和人员项目隔离继续生效",
+        "release_highlights": "v0.8.0-rc9：造价七道审计闸门、开工前清标与成本策划、人材机汇总和材料质量证据匹配",
     }
 
 

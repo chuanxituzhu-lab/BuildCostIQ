@@ -103,6 +103,16 @@ VALUE_LEAK_STAGES = (
     ("CASH_LEAK", "settled", "paid", "已结算", "已回款"),
 )
 
+AUDIT_GATE_LABELS = {
+    "G0": "合同依据",
+    "G1": "技术边界",
+    "G2": "实物与质量",
+    "G3": "工程量复算",
+    "G4": "价格依据",
+    "G5": "授权确认",
+    "G6": "结算与支付",
+}
+
 ALLOWED_TRANSITIONS = {
     "DISCOVERED": {"ASSESSED"},
     "ASSESSED": {"PLANNING"},
@@ -650,6 +660,7 @@ def build_state_vector(event: Mapping[str, Any]) -> dict[str, Any]:
     settlement = _mapping(event.get("settlement"))
     audit_cash = _mapping(event.get("audit_cash"))
     outcome_vector = build_outcome_vector(event)
+    audit_gates = evaluate_audit_gates(event)
     return {
         "event": _status(event),
         "production": round(float(_number(production.get("progress")) or 0), 1),
@@ -658,7 +669,10 @@ def build_state_vector(event: Mapping[str, Any]) -> dict[str, Any]:
         "evidence": round(float(_number(three.get("completeness")) or 0), 1),
         "external_approval": _text(_mapping(governance.get("external_approval")).get("status")) or "NOT_REQUIRED",
         "measurement": _text(settlement.get("measurement_status")) or "NOT_STARTED",
-        "audit_readiness": round(float(_number(audit_cash.get("audit_readiness")) or 0), 1),
+        "audit_readiness": audit_gates["readiness"],
+        "audit_gate_passed": audit_gates["passed"],
+        "audit_gate_blocked": audit_gates["blocked"],
+        "audit_next_gate": audit_gates["next_gate"],
         "cash": _text(audit_cash.get("cash_status")) or "N/A",
         "risk": _text(_mapping(event.get("classification")).get("severity")) or "MEDIUM",
         "three_evidence": _text(three.get("status")) or "NOT_STARTED",
@@ -667,6 +681,87 @@ def build_state_vector(event: Mapping[str, Any]) -> dict[str, Any]:
         "outcome_pending_stage": outcome_vector["pending_stage"],
         "value_leak_count": outcome_vector["value_leak_count"],
         "value_leak_status": outcome_vector["value_leak_status"],
+    }
+
+
+def evaluate_audit_gates(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive the seven settlement audit gates from existing event facts.
+
+    The result is an explainable projection.  It never stores a parallel
+    approval or amount and therefore remains migration-safe for old events.
+    """
+    baseline = _mapping(event.get("baseline_impact"))
+    contract = _mapping(baseline.get("contract"))
+    price = _mapping(baseline.get("price"))
+    quantity = _mapping(baseline.get("quantity"))
+    technical = _mapping(event.get("technical_track"))
+    production = _mapping(event.get("production_track"))
+    actual = _mapping(production.get("actual"))
+    commercial = _mapping(event.get("commercial_track"))
+    decision = _mapping(event.get("decision"))
+    governance = _mapping(event.get("governance"))
+    external = _mapping(governance.get("external_approval"))
+    evidence = _mapping(event.get("evidence"))
+    three = _mapping(evidence.get("three_evidence"))
+    settlement = _mapping(event.get("settlement"))
+    audit_cash = _mapping(event.get("audit_cash"))
+
+    gates: list[dict[str, Any]] = []
+
+    def add(code: str, passed: bool, evidence_refs: list[str], missing: list[str], owner: str, next_action: str, failed: bool = False) -> None:
+        status = "PASS" if passed else "FAIL" if failed else "EVIDENCE_MISSING"
+        gates.append({
+            "code": code,
+            "label": AUDIT_GATE_LABELS[code],
+            "status": status,
+            "evidence": list(dict.fromkeys(item for item in evidence_refs if item)),
+            "missing": missing,
+            "owner": owner,
+            "next_action": "已通过，无需动作" if passed else next_action,
+        })
+
+    contract_refs = [*_list(contract.get("clause_refs")), _text(contract.get("baseline_id")), _text(governance.get("formal_basis"))]
+    add("G0", bool([item for item in contract_refs if item]), [_text(item) for item in contract_refs], ["合同条款或合同清单基准"] if not any(contract_refs) else [], "造价经理", "补充合同条款、范围边界或基准清单引用")
+
+    drawing_refs = [_text(_mapping(item).get("drawing_no") or _mapping(item).get("ref")) for item in _list(technical.get("drawing_refs"))]
+    technical_ok = _text(technical.get("status")) in {"APPROVED", "FEASIBLE", "COMPLETED"} and bool(drawing_refs or _text(technical.get("assessment")))
+    add("G1", technical_ok, drawing_refs, ["有效图纸/方案及技术确认"] if not technical_ok else [], "技术负责人", "确认适用图纸版本、技术边界和批准状态")
+
+    progress = float(_number(production.get("progress")) or 0)
+    physical_ok = progress >= 100 and _text(three.get("production")) == "PASS" and _text(three.get("technical")) == "PASS"
+    add("G2", physical_ok, [_text(item.get("evidence_id") or item.get("source_id") or item.get("ref")) for item in _list(evidence.get("items")) if isinstance(item, Mapping)], ["完成量、质量验收或现场证据"] if not physical_ok else [], "生产/质量负责人", "补齐完成记录、质量验收并完成技术证和生产证确认")
+
+    measured = _number(actual.get("quantity"))
+    quantity_ok = measured is not None and bool(_text(quantity.get("unit"))) and bool(_list(production.get("records")) or _list(event.get("origin", {}).get("source_refs")))
+    add("G3", quantity_ok, [_text(quantity.get("baseline_id")), *[_text(item) for item in _list(price.get("boq_refs"))]], ["数量、单位、来源或复核底稿"] if not quantity_ok else [], "造价员", "关联算量底稿，补齐单位、来源、计算规则和复核记录")
+
+    evaluations = _list(commercial.get("evaluations"))
+    price_ok = bool(_text(price.get("baseline_id")) or _list(price.get("boq_refs")) or evaluations)
+    add("G4", price_ok, [_text(price.get("baseline_id")), *[_text(item) for item in _list(price.get("boq_refs"))]], ["合同单价、清单引用或新组价依据"] if not price_ok else [], "造价员/造价经理", "确认合同单价适用性或补充新组价及价格依据")
+
+    approvals = _list(decision.get("approvals"))
+    approval_ok = bool(approvals) and (_text(external.get("status")) in {"APPROVED", "NOT_REQUIRED"} or bool(_text(governance.get("formal_basis"))))
+    approval_failed = _text(external.get("status")) in {"REJECTED", "DENIED"}
+    add("G5", approval_ok, [_text(_mapping(item).get("ref") or _mapping(item).get("at")) for item in approvals], ["具名内部审批和必要的外部签认"] if not approval_ok else [], "项目经理/造价经理", "取得有权人员确认；已实施未批准事项保持阻断", approval_failed)
+
+    final_amount = _number(settlement.get("final_certified"))
+    paid = _number(audit_cash.get("cash_collected"))
+    cash_status = _text(audit_cash.get("cash_status"))
+    reconciled = final_amount is not None and (cash_status in {"COLLECTED", "CLOSED", "N/A"} or paid is not None)
+    add("G6", reconciled, [_text(settlement.get("settlement_ref")), _text(audit_cash.get("payment_ref"))], ["最终审定金额及支付/回款核对"] if not reconciled else [], "造价经理", "核对申报、审定、扣款、开票和到账记录")
+
+    passed = sum(item["status"] == "PASS" for item in gates)
+    blocked = sum(item["status"] != "PASS" for item in gates)
+    next_item = next((item for item in gates if item["status"] != "PASS"), None)
+    return {
+        "gates": gates,
+        "passed": passed,
+        "blocked": blocked,
+        "readiness": round(passed / len(gates) * 100, 1),
+        "status": "READY" if passed == len(gates) else "BLOCKED",
+        "next_gate": next_item["code"] if next_item else "",
+        "next_action": next_item["next_action"] if next_item else "结算证据链已闭合",
+        "local_only": True,
     }
 
 

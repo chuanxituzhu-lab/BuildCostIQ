@@ -9,6 +9,7 @@ from core import (
     distill_local_data,
     distill_text,
     evaluate_event_rules,
+    evaluate_audit_gates,
     fuse_distillations,
     new_event,
     record_outcome_snapshot,
@@ -59,6 +60,18 @@ class EventKernelTests(unittest.TestCase):
         alerts = evaluate_event_rules(event)
         self.assertEqual(vector["production"], 80.0)
         self.assertTrue(any(item["rule_id"] == "EVENT-EVIDENCE-01" for item in alerts))
+
+    def test_seven_audit_gates_derive_readiness_and_next_action(self):
+        event = new_event("p-1", title="变更事项", discovered_by="施工员", location={"zone": "A"}, source_refs=["S-1"])
+        initial = evaluate_audit_gates(event)
+        self.assertEqual([item["code"] for item in initial["gates"]], ["G0", "G1", "G2", "G3", "G4", "G5", "G6"])
+        self.assertEqual(initial["status"], "BLOCKED")
+        self.assertEqual(initial["next_gate"], "G0")
+        event["baseline_impact"]["contract"]["clause_refs"] = ["专用条款 12.3"]
+        progressed = evaluate_audit_gates(event)
+        self.assertEqual(progressed["gates"][0]["status"], "PASS")
+        self.assertEqual(progressed["next_gate"], "G1")
+        self.assertEqual(build_state_vector(event)["audit_gate_passed"], 1)
 
     def test_cross_check_detects_location_and_quantity_conflict(self):
         event = new_event("p-1", event_id="EV-2026-0003", title="数量变化", summary="数量不一致", discovered_by="现场员", location={"zone": "A"}, source_refs=["S-03"], dimensions={"quantity": True})

@@ -1431,6 +1431,7 @@ function renderDashboard() {
     renderRoleFlowSummary() +
     '<section class="dashboard-alert-panel"><div class="surface-title"><div><span class="panel-label">AUTOMATED ALERTS</span><h3>需要优先处理</h3></div><span class="surface-caption">红色立即处理 · 黄色安排核对 · 蓝色关注趋势</span></div><div id="dashboardAlerts" class="dashboard-alert-list"></div></section>' +
     '<div id="dashboardMetrics" class="dashboard-metrics"></div>' +
+    '<div class="dashboard-grid"><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">PRECONSTRUCTION CONTROL</span><h3>开工前清标与成本策划</h3></div><span class="surface-caption">招标 → 中标 → 施工图 → 0#台账 → 市场价 → 人材机</span></div><div id="dashboardPreconstruction" class="dashboard-issue-list"></div></section><section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">AUDIT EVIDENCE MATCH</span><h3>材料与实体质量证据</h3></div><span class="surface-caption">材料/实体 → 检验批 → 隐蔽 → 检测报告</span></div><div id="dashboardMaterialEvidence" class="dashboard-issue-list"></div></section></div>' +
     '<section class="dashboard-panel outcome-management-panel"><div class="surface-title"><div><span class="panel-label">OUTCOME / VALUE LEAK</span><h3>成果转化漏斗与价值泄漏</h3></div><span class="surface-caption">实体只录一次；后续状态和差额由现有造价事实派生</span></div><div id="dashboardOutcomeFunnel" class="outcome-funnel"></div><div id="dashboardValueLeaks" class="dashboard-issue-list"></div><div id="dashboardDailyQueue" class="dashboard-issue-list"></div></section>' +
     '<div class="dashboard-grid">' +
       '<section class="dashboard-panel"><div class="surface-title"><div><span class="panel-label">BASELINE / COMPARISON</span><h3>成本基线与造价资料比对</h3></div>' + planAction + '</div><div id="dashboardComparisonSummary" class="dashboard-comparison-summary"></div><div id="dashboardComparisonTable" class="dashboard-table"></div></section>' +
@@ -1475,6 +1476,22 @@ function renderDashboard() {
     small.textContent = note;
     item.append(title, strong, small);
     return item;
+  }));
+
+  const preconstruction = dashboard.preconstruction || {};
+  const preTarget = $("dashboardPreconstruction");
+  preTarget.replaceChildren(...(preconstruction.checks || []).map((check) => {
+    const item = document.createElement("article"); item.className = `dashboard-issue ${check.status === "PASS" ? "risk-blue" : "risk-yellow"}`;
+    const badge = document.createElement("span"); badge.textContent = check.code;
+    const body = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `${check.label} · ${check.status === "PASS" ? "通过" : "待完善"}`; const note = document.createElement("small"); note.textContent = check.evidence || check.next_action; body.append(title, note); item.append(badge, body); return item;
+  }));
+  const materialEvidence = dashboard.material_evidence || {};
+  const materialTarget = $("dashboardMaterialEvidence");
+  if (!(materialEvidence.items || []).length) materialTarget.textContent = "尚未形成匹配数据。请在证据关联中使用同一实体/材料编号，分别关联 material、physical_item、inspection_lot、hidden_work、test_report。";
+  else materialTarget.replaceChildren(...materialEvidence.items.map((entry) => {
+    const item = document.createElement("article"); item.className = `dashboard-issue ${entry.status === "PASS" ? "risk-blue" : "risk-red"}`;
+    const badge = document.createElement("span"); badge.textContent = entry.target_id;
+    const body = document.createElement("div"); const title = document.createElement("strong"); title.textContent = entry.status === "PASS" ? "证据链匹配" : "潜在审减风险"; const note = document.createElement("small"); note.textContent = entry.status === "PASS" ? entry.next_action : `缺少：${(entry.missing_types || []).join("、")}；${entry.next_action}`; body.append(title, note); item.append(badge, body); return item;
   }));
 
   const outcomeManagement = dashboard.outcome_management || {};
@@ -4080,6 +4097,7 @@ function renderEventList() {
     const vector = event.state_vector || {};
     const outcome = event.outcome_track || {};
     const outcomeValues = outcome.values || {};
+    const auditGates = event.audit_gates || { gates: [], readiness: vector.audit_readiness || 0, passed: vector.audit_gate_passed || 0 };
     const item = document.createElement("article");
     item.className = `event-card ${eventRiskClass(event.severity)}`;
     const eventOrigin = event.origin || {};
@@ -4099,6 +4117,7 @@ function renderEventList() {
         ["Evidence", `${vector.evidence ?? 0}%`], ["Outcome", outcomeStatusLabel(vector.outcome)], ["Leak", vector.value_leak_count ? `${vector.value_leak_count} 个` : "无"], ["Approval", vector.external_approval], ["Measurement", vector.measurement], ["Audit", `${vector.audit_readiness ?? 0}%`], ["Cash", vector.cash], ["Risk", vector.risk],
       ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value || "—")}</strong></div>`).join("")}</div>
       <div class="event-outcome-summary"><span>成果链</span><strong>${escapeHtml((outcome.types || vector.outcome_types || []).map(outcomeTypeLabel).join(" · ") || "待定义")}</strong><small>${escapeHtml(vector.outcome_pending_stage ? `当前卡在：${vector.outcome_pending_stage}` : "实体 → 证据 → 申报 → 确认 → 结算 → 回款")}</small></div>
+      <div class="event-audit-gates"><div class="event-audit-gates-head"><span>结算审计闸门</span><strong>${escapeHtml(`${auditGates.readiness ?? 0}% · ${auditGates.passed ?? 0}/7 通过`)}</strong></div><div class="event-audit-gate-grid">${(auditGates.gates || []).map((gate) => `<div class="event-audit-gate gate-${String(gate.status || "").toLowerCase()}"><span>${escapeHtml(gate.code)}</span><strong>${escapeHtml(gate.label)}</strong><small>${escapeHtml(gate.status === "PASS" ? "通过" : gate.status === "FAIL" ? "不通过" : "证据不足")}</small><em>${escapeHtml(gate.status === "PASS" ? "证据链已具备" : `${gate.owner || "待分配"}：${gate.next_action || "补齐资料"}`)}</em></div>`).join("")}</div></div>
       <div class="event-card-alerts">${(event.alerts || []).length ? event.alerts.slice(0, 4).map((alert) => `<div class="event-alert ${eventRiskClass(alert.severity)}"><strong>${escapeHtml(alert.title || "自动提醒")}</strong><span>${escapeHtml(alert.message || "")}</span></div>`).join("") : "<span class=\"event-no-alert\">本地规则暂未发现自动预警</span>"}</div>
       ${policy.canOutcome ? `<details class="event-outcome-editor"><summary>记录 Outcome 快照（仅造价经理）</summary><div class="event-outcome-fields"><label>成果类型<input id="outcomeTypes-${escapeHtml(event.event_id)}" value="${escapeHtml((outcome.types || []).join(","))}" placeholder="PHYSICAL,COMMERCIAL" /></label><label>实体<input id="outcomePhysical-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.physical ?? ""}" /></label><label>证据完整<input id="outcomeEvidence-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.evidence_ready ?? ""}" /></label><label>已申报<input id="outcomeSubmitted-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.submitted ?? ""}" /></label><label>已确认<input id="outcomeConfirmed-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.confirmed ?? ""}" /></label><label>收入成立<input id="outcomeRevenue-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.revenue ?? ""}" /></label><label>已结算<input id="outcomeSettled-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.settled ?? ""}" /></label><label>已回款<input id="outcomePaid-${escapeHtml(event.event_id)}" type="number" step="0.01" value="${outcomeValues.paid ?? ""}" /></label></div><div class="event-card-actions"><button class="button button-primary event-outcome-save" data-event-id="${escapeHtml(event.event_id)}" type="button">保存成果快照</button>${(OUTCOME_NEXT_STATUS[vector.outcome] || []).length ? `<select id="outcomeTransition-${escapeHtml(event.event_id)}">${OUTCOME_NEXT_STATUS[vector.outcome].map((status) => `<option value="${status}">${outcomeStatusLabel(status)}</option>`).join("")}</select><button class="button button-quiet event-outcome-transition" data-event-id="${escapeHtml(event.event_id)}" type="button">推进成果状态</button>` : ""}</div></details>` : ""}
       <div class="event-card-actions">${policy.canCrossCheck ? `<button class="button button-quiet event-cross-check" data-event-id="${escapeHtml(event.event_id)}" type="button">三证互证 / 一致性检查</button>` : ""}${policy.canTransition ? transitions : ""}</div>
@@ -4378,11 +4397,14 @@ function renderPlan() {
     ${basisReferencePanel("P05")}
     <div class="data-entry-heading"><div><span class="panel-label">PRICE BOOK</span><h3>补充单价</h3></div><span class="input-note">没有合同单价的项目会保留为待组价。</span></div>
     <div id="planEditor" class="editable-table"></div>
+    <section class="dashboard-panel"><div class="data-entry-heading"><div><span class="panel-label">LABOR / MATERIAL / MACHINERY</span><h3>造价人材机汇总</h3></div><span class="input-note">独立于清单金额，支持中标价与市场价成本策划。</span></div><label>每行：类型,编码,名称,单位,消耗量,中标单价,市场价<textarea id="resourceItems" class="event-text-input" placeholder="material,CL-001,商品混凝土,m3,1200,420,395\nlabor,RG-001,普工,工日,800,180,210\nmachinery,JX-001,挖掘机,台班,60,1250,1180"></textarea></label></section>
     <div class="action-row"><button id="runPlan" class="button button-primary" type="button">生成成本计划</button><span class="request-status">${planNote}</span></div>
     <div id="planOutput" class="inline-output"></div>`;
   bindStageSourcePanel("plan", "成本计划资料");
   bindBasisReferencePanel("P05");
   renderPlanEditor();
+  $("resourceItems").value = state.resourceDraft || "";
+  $("resourceItems").addEventListener("input", (event) => { state.resourceDraft = event.target.value; });
   $("runPlan").addEventListener("click", runCostPlan);
   if (state.planResult) renderPlanOutput(state.planResult);
 }
@@ -4423,6 +4445,14 @@ function priceBook(key) {
   return Object.fromEntries(state.planDraft.filter((item) => item[key] !== "" && item[key] !== null).map((item) => [item.code, item[key]]));
 }
 
+function resourceItemsFromDraft() {
+  return String(state.resourceDraft || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, index) => {
+    const cells = line.split(",").map((item) => item.trim());
+    if (cells.length < 7) throw new Error(`人材机第 ${index + 1} 行需要 7 列`);
+    return { resource_type: cells[0], code: cells[1], name: cells[2], unit: cells[3], quantity: cells[4], bid_unit_price: cells[5], market_unit_price: cells[6] };
+  });
+}
+
 async function runCostPlan() {
   setError("");
   try {
@@ -4439,6 +4469,7 @@ async function runCostPlan() {
         market_prices: priceBook("marketPrice"),
         contract_basis: basis.contract_basis,
         market_basis: basis.market_basis,
+        resource_items: resourceItemsFromDraft(),
       }),
     });
     state.planResult = result;
@@ -4464,7 +4495,8 @@ function renderPlanOutput(result) {
     : '<span class="request-status">结算初审由造价经理查看和执行</span>';
   output.innerHTML = `
     <div class="metric-row"><div><strong>${protectedMoney}</strong><span>合同计划小计</span></div><div><strong>${summary.contract_item_count}</strong><span>已定价项目</span></div><div><strong>${summary.pending_item_count}</strong><span>待组价项目</span></div></div>
-    <div class="result-strip ${summary.pending_item_count ? "result-warn" : "result-ok"}"><strong>${summary.pending_item_count ? `有 ${summary.pending_item_count} 项需要补充合同单价` : "成本计划已完整生成"}</strong><span>${result.cost_control ? "市场参考价已单独保留为内部成本控制信息。" : "未提供市场参考价。"}</span>${reviewEntry}</div>`;
+    <div class="result-strip ${summary.pending_item_count ? "result-warn" : "result-ok"}"><strong>${summary.pending_item_count ? `有 ${summary.pending_item_count} 项需要补充合同单价` : "成本计划已完整生成"}</strong><span>${result.cost_control ? "市场参考价已单独保留为内部成本控制信息。" : "未提供市场参考价。"}</span>${reviewEntry}</div>
+    <div class="table-scroll"><table><thead><tr><th>类别</th><th>条目</th><th>中标金额</th><th>市场金额</th><th>价差</th></tr></thead><tbody>${(result.resource_summary?.groups || []).map((group) => `<tr><td>${escapeHtml(group.label)}</td><td>${group.item_count}</td><td>${canViewCostDetail() ? dashboardMoney(group.bid_amount) : "受权限保护"}</td><td>${canViewCostDetail() ? dashboardMoney(group.market_amount) : "受权限保护"}</td><td>${canViewCostDetail() ? dashboardMoney(group.variance) : "受权限保护"}</td></tr>`).join("")}</tbody></table></div>`;
   if ($("toReview")) $("toReview").addEventListener("click", () => setView("review"));
 }
 

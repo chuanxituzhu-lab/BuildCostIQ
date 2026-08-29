@@ -7,6 +7,7 @@ from plugins.costplan import (
     STATUS_PENDING,
     CostPlanError,
     plan_costs,
+    summarize_resources,
 )
 
 
@@ -17,6 +18,20 @@ BOQ_ITEMS = [
 ]
 CONTRACT = {"010502001001": 620.50, "010402001001": 310.00}
 MARKET = {"010502001001": 580.00, "010402001001": 295.00}
+
+
+class ResourceSummaryTests(unittest.TestCase):
+    def test_labor_material_machinery_stay_separate_and_compare_bid_market(self):
+        result = summarize_resources([
+            {"resource_type": "labor", "name": "普工", "quantity": 10, "bid_unit_price": 180, "market_unit_price": 200},
+            {"resource_type": "material", "name": "混凝土", "quantity": 20, "bid_unit_price": 420, "market_unit_price": 390},
+            {"resource_type": "machinery", "name": "挖掘机", "quantity": 2, "bid_unit_price": 1200, "market_unit_price": 1100},
+        ])
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["item_count"], 3)
+        self.assertEqual({item["resource_type"] for item in result["groups"]}, {"labor", "material", "machinery"})
+        material = next(item for item in result["groups"] if item["resource_type"] == "material")
+        self.assertEqual(material["variance"], 600.0)
 
 
 class ContractPricingTests(unittest.TestCase):

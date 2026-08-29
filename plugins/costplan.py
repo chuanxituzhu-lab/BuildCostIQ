@@ -196,6 +196,42 @@ def _build_cost_control(
     }
 
 
+def summarize_resources(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize labour/material/machinery without mixing it into BOQ totals."""
+    labels = {"labor": "人工", "material": "材料", "machinery": "机械"}
+    groups = {key: {"resource_type": key, "label": label, "item_count": 0, "quantity": 0.0, "bid_amount": 0.0, "market_amount": 0.0, "variance": 0.0} for key, label in labels.items()}
+    items: list[dict[str, Any]] = []
+    for index, raw in enumerate(rows, start=1):
+        resource_type = str(raw.get("resource_type") or "").strip().lower()
+        if resource_type not in groups:
+            raise ValueError(f"resource {index} type must be labor, material, or machinery")
+        quantity = _to_decimal(raw.get("quantity", 0), f"resource {index} quantity")
+        bid_price = _to_decimal(raw.get("bid_unit_price", 0), f"resource {index} bid_unit_price")
+        market_price = _to_decimal(raw.get("market_unit_price", 0), f"resource {index} market_unit_price")
+        bid_amount = quantity * bid_price
+        market_amount = quantity * market_price
+        item = {
+            "resource_type": resource_type,
+            "code": str(raw.get("code") or "").strip(),
+            "name": str(raw.get("name") or "").strip() or f"资源-{index}",
+            "unit": str(raw.get("unit") or "").strip(),
+            "quantity": float(quantity),
+            "bid_unit_price": _money(bid_price),
+            "market_unit_price": _money(market_price),
+            "bid_amount": _money(bid_amount),
+            "market_amount": _money(market_amount),
+            "variance": _money(bid_amount - market_amount),
+        }
+        items.append(item)
+        group = groups[resource_type]
+        group["item_count"] += 1
+        group["quantity"] += float(quantity)
+        group["bid_amount"] = round(group["bid_amount"] + float(bid_amount), 2)
+        group["market_amount"] = round(group["market_amount"] + float(market_amount), 2)
+        group["variance"] = round(group["bid_amount"] - group["market_amount"], 2)
+    return {"items": items, "groups": list(groups.values()), "item_count": len(items), "complete": all(groups[key]["item_count"] > 0 for key in groups)}
+
+
 class CostPlanCapability:
     """P05 — Cost planning.
 
@@ -243,4 +279,5 @@ class CostPlanCapability:
             "items": plan["items"],
             "summary": plan["summary"],
             "cost_control": plan["cost_control"],
+            "resource_summary": summarize_resources(context.get("resource_items") or []),
         }

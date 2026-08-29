@@ -10,10 +10,25 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 from zipfile import ZipFile
 
-from gui.server import create_server
+from gui.server import _material_evidence_controls, _preconstruction_controls, create_server
 
 
 class WebUiTests(unittest.TestCase):
+    def test_material_evidence_matrix_flags_missing_hidden_and_test_records(self):
+        state = {"evidence": {"result": {"links": [
+            {"source_id": "MAT-1", "target_type": "material", "target_id": "K1-CONC", "verified": True},
+            {"source_id": "PHY-1", "target_type": "physical_item", "target_id": "K1-CONC", "verified": True},
+            {"source_id": "INS-1", "target_type": "inspection_lot", "target_id": "K1-CONC", "verified": True},
+        ]}}}
+        packet = _material_evidence_controls(state)
+        self.assertEqual(packet["risk_count"], 1)
+        self.assertEqual(packet["items"][0]["missing_types"], ["hidden", "test"])
+
+    def test_preconstruction_controls_keep_resource_summary_as_required_gate(self):
+        packet = _preconstruction_controls({})
+        self.assertEqual(packet["status"], "BLOCKED")
+        self.assertEqual(packet["checks"][-1]["label"], "人材机汇总")
+
     def setUp(self) -> None:
         self.server = create_server("127.0.0.1", 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -60,8 +75,11 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('id="languageSelect"', body)
         self.assertIn('option value="en">English', body)
         self.assertIn('id="personnelTab"', body)
+        self.assertIn("登录造价闭环 Agent", body)
         self.assertIn("项目经理工作台", body)
-        self.assertIn("施工员/测量员", body)
+        self.assertIn("造价经理（造价闭环总审）", body)
+        self.assertIn("造价员（量价与证据操作）", body)
+        self.assertNotIn('<option value="technical_lead">', body)
         self.assertIn("经营看板", body)
 
         with urlopen(f"{self.base_url}/api/health", timeout=2) as response:
