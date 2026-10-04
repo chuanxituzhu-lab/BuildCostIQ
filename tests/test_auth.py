@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from adapters.auth import LocalAuthStore
+from adapters.auth import LocalAuthStore, PERMISSION_LABELS, ROLE_PERMISSIONS
 
 
 class LocalAuthTests(unittest.TestCase):
@@ -55,9 +55,18 @@ class LocalAuthTests(unittest.TestCase):
             self.assertEqual(len(snapshot["roles"]), 14)
             self.assertEqual(snapshot["policy"]["delegated_manager_role"], "administrative_officer")
             self.assertEqual(snapshot["assignment_catalog"]["merged"]["roles"], ["surveyor", "site_engineer"])
+            self.assertEqual(set().union(*ROLE_PERMISSIONS.values()), set(PERMISSION_LABELS))
+            for role_entry in snapshot["roles"]:
+                expected_permissions = ROLE_PERMISSIONS[role_entry["role"]]
+                self.assertEqual(expected_permissions, {item["key"] for item in role_entry["permissions"]})
+                self.assertTrue(all(item["label"] for item in role_entry["permissions"]))
+            self.assertEqual(
+                "lab_testing_officer",
+                store.register("试验岗位别名", "secret12", "实验员")["role"],
+            )
 
             public_users = store.list_public_users()
-            self.assertEqual(len(public_users), 4)
+            self.assertEqual(len(public_users), 5)
             self.assertTrue(all("password" not in user for user in public_users))
 
     def test_personnel_handover_preserves_account_identity_and_supports_merged_field_roles(self):

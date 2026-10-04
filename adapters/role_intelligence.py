@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 import hashlib
+import unicodedata
 from typing import Any, Mapping, Sequence
 
 
@@ -53,6 +54,76 @@ ROLE_DATA_STREAMS: dict[str, dict[str, Any]] = {
     "warehouse_officer": {"inputs": ("material_baseline", "procurement_order", "warehouse_receipt", "site_issue", "lab_test"), "checks": ("quantity_over_redline", "inventory_negative", "surplus_over_redline", "test_batch_unmatched", "exception_pending")},
     "administrative_officer": {"inputs": ("personnel_registry", "authorization", "handover"), "checks": ("authorization_missing", "role_assignment_gap")},
 }
+
+
+# Local Sayelf Agent Ops role suggestions.  These rules classify only the
+# explicit job title and responsibility text supplied by a personnel manager;
+# they never read a person's name or persist the source text.
+_PERSONNEL_ROLE_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
+    "lab_testing_officer": {
+        "title": ("试验检测员", "试验员", "实验员"),
+        "responsibility": ("试验检测", "试验报告", "材料送检", "取样送检", "试件制作", "检测报告"),
+    },
+    "site_engineer": {
+        "title": ("施工员/测量员", "施工员/现场工程师", "现场施工员", "施工员", "现场工程师"),
+        "responsibility": ("现场施工", "施工记录", "现场记录", "工序施工", "班组施工", "现场实测"),
+    },
+    "production_manager": {
+        "title": ("生产经理", "生产负责人"),
+        "responsibility": ("生产计划", "进度计划", "生产调度", "施工进度", "进度协调", "资源协调", "现场生产", "生产组织"),
+    },
+    "technical_lead": {
+        "title": ("项目技术负责人", "技术负责人", "技术主管"),
+        "responsibility": ("技术方案", "图纸会审", "技术交底", "施工方案", "技术审核", "技术复核", "技术管理"),
+    },
+}
+
+
+def recommend_personnel_roles(job_title: Any, responsibilities: Any) -> dict[str, Any]:
+    """Suggest a fixed project role from local Chinese title/duty keywords."""
+    title = unicodedata.normalize("NFKC", str(job_title or "")).casefold().strip()
+    duties = unicodedata.normalize("NFKC", str(responsibilities or "")).casefold().strip()
+    if len(title) > 100:
+        raise ValueError("岗位名称最多填写 100 个字符")
+    if len(duties) > 500:
+        raise ValueError("岗位职责最多填写 500 个字符")
+    title = "".join(title.split())
+    duties = "".join(duties.split())
+
+    evidence: list[dict[str, str]] = []
+    candidates: set[str] = set()
+    for role, sources in _PERSONNEL_ROLE_TERMS.items():
+        for source, terms in sources.items():
+            text = title if source == "title" else duties
+            for term in terms:
+                if term in text:
+                    candidates.add(role)
+                    evidence.append({"role": role, "source": source, "term": term})
+
+    ordered_candidates = [role for role in _PERSONNEL_ROLE_TERMS if role in candidates]
+    if len(ordered_candidates) == 1:
+        return {
+            "status": "MATCHED",
+            "recommended_role": ordered_candidates[0],
+            "candidates": ordered_candidates,
+            "evidence": evidence,
+            "reason": "岗位名称或职责命中一个明确岗位；需由管理员确认后才会应用固定权限。",
+        }
+    if ordered_candidates:
+        return {
+            "status": "NEEDS_REVIEW",
+            "recommended_role": "",
+            "candidates": ordered_candidates,
+            "evidence": evidence,
+            "reason": "岗位名称和职责涉及多个岗位，请管理员核对后手动选择。",
+        }
+    return {
+        "status": "NO_MATCH",
+        "recommended_role": "",
+        "candidates": [],
+        "evidence": [],
+        "reason": "没有命中已配置岗位词项，请管理员手动选择岗位。",
+    }
 
 
 REDLINE_RULES = {

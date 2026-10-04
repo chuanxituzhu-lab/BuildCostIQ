@@ -2,10 +2,45 @@ from __future__ import annotations
 
 import unittest
 
-from adapters.role_intelligence import ROLE_DEPARTMENT_HEADS, derive_role_alerts, role_intelligence_snapshot
+from adapters.role_intelligence import ROLE_DEPARTMENT_HEADS, derive_role_alerts, recommend_personnel_roles, role_intelligence_snapshot
 
 
 class RoleIntelligenceTests(unittest.TestCase):
+    def test_personnel_role_suggestions_cover_four_roles_and_common_titles(self):
+        cases = {
+            "实验员": "lab_testing_officer",
+            "试验检测员": "lab_testing_officer",
+            "施工员": "site_engineer",
+            "生产经理": "production_manager",
+            "项目技术负责人": "technical_lead",
+        }
+        for title, role in cases.items():
+            with self.subTest(title=title):
+                result = recommend_personnel_roles(title, "")
+                self.assertEqual("MATCHED", result["status"])
+                self.assertEqual(role, result["recommended_role"])
+
+        duty_result = recommend_personnel_roles("", "负责混凝土试件取样送检和试验报告")
+        self.assertEqual("lab_testing_officer", duty_result["recommended_role"])
+        self.assertEqual("responsibility", duty_result["evidence"][0]["source"])
+
+    def test_personnel_role_suggestions_require_review_for_conflict_and_unknown(self):
+        conflict = recommend_personnel_roles("施工员", "同时负责技术方案审核")
+        self.assertEqual("NEEDS_REVIEW", conflict["status"])
+        self.assertEqual("", conflict["recommended_role"])
+        self.assertEqual({"site_engineer", "technical_lead"}, set(conflict["candidates"]))
+
+        unknown = recommend_personnel_roles("项目助理", "负责会议安排和一般事务")
+        self.assertEqual("NO_MATCH", unknown["status"])
+        self.assertEqual([], unknown["candidates"])
+        self.assertNotIn("任意输入", str(unknown))
+
+    def test_personnel_role_suggestion_input_is_bounded(self):
+        with self.assertRaisesRegex(ValueError, "100"):
+            recommend_personnel_roles("岗" * 101, "")
+        with self.assertRaisesRegex(ValueError, "500"):
+            recommend_personnel_roles("", "职" * 501)
+
     def test_every_role_has_independent_owner_and_fixed_streams(self):
         snapshot = role_intelligence_snapshot({"role_work_products": []})
         self.assertEqual(set(snapshot["contracts"]), set(ROLE_DEPARTMENT_HEADS))

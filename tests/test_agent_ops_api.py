@@ -127,6 +127,51 @@ class AgentOpsApiTests(unittest.TestCase):
         self.assertEqual(403, status)
         self.assertEqual(0, server_module.PROJECT_WORKSPACE.verify_execution_ledger(self.project_id)["event_count"])
 
+    def test_agent_ops_role_suggestion_is_local_project_scoped_and_never_grants_access(self) -> None:
+        project_manager = self._register("role-project-manager", "project_manager")
+        server_module.AUTH_STORE.add_user_to_project(self.project_id, project_manager["user"]["id"])
+        payload = {
+            "project_id": self.project_id,
+            "job_title": "实验员",
+            "responsibilities": "负责混凝土试件取样送检和试验报告",
+        }
+        users_before = server_module.AUTH_STORE.list_public_users()
+        status, result = self._post("/api/agent-ops/role-assignment", payload, project_manager["token"])
+        self.assertEqual(200, status)
+        self.assertEqual("sayelf-agent-ops-local", result["source"])
+        self.assertTrue(result["human_confirmation_required"])
+        self.assertFalse(result["input_persisted"])
+        self.assertEqual("MATCHED", result["recommendation"]["status"])
+        self.assertEqual("lab_testing_officer", result["recommendation"]["recommended_role"])
+        self.assertNotIn("responsibilities", result)
+        self.assertNotIn("负责混凝土试件取样送检和试验报告", json.dumps(result, ensure_ascii=False))
+        lab_role = next(item for item in result["role_options"] if item["role"] == "lab_testing_officer")
+        catalog_lab_role = next(item for item in server_module.AUTH_STORE.personnel_role_catalog() if item["role"] == "lab_testing_officer")
+        self.assertEqual(
+            {item["key"] for item in catalog_lab_role["permissions"]},
+            {item["key"] for item in lab_role["permissions"]},
+        )
+        self.assertEqual(len(users_before), len(server_module.AUTH_STORE.list_public_users()))
+
+        conflict_payload = {**payload, "job_title": "施工员", "responsibilities": "负责技术方案审核"}
+        status, conflict = self._post("/api/agent-ops/role-assignment", conflict_payload, project_manager["token"])
+        self.assertEqual(200, status)
+        self.assertEqual("NEEDS_REVIEW", conflict["recommendation"]["status"])
+        self.assertEqual("", conflict["recommendation"]["recommended_role"])
+
+        status, _ = self._post("/api/agent-ops/role-assignment", payload, self.manager_token)
+        self.assertEqual(403, status)
+        non_member = self._register("role-non-member", "project_manager")
+        status, _ = self._post("/api/agent-ops/role-assignment", payload, non_member["token"])
+        self.assertEqual(403, status)
+
+        status, _ = self._post(
+            "/api/agent-ops/role-assignment",
+            {**payload, "username": "must-not-be-accepted"},
+            project_manager["token"],
+        )
+        self.assertEqual(422, status)
+
     def test_plan_api_rejects_unresolved_evidence_without_persisting_it(self) -> None:
         digest = "e" * 64
         server_module.PROJECT_WORKSPACE.add_source(

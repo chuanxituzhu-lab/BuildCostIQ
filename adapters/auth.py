@@ -152,6 +152,27 @@ ROLE_PERMISSIONS = {
     ROLE_ADMINISTRATIVE_OFFICER: {"view_workspace"},
 }
 
+PERMISSION_LABELS = {
+    "view_workspace": "查看项目工作台",
+    "view_dashboard": "查看项目看板",
+    "view_kpi": "查看项目指标",
+    "manage_personnel": "管理项目人员",
+    "authorize_personnel_admin": "授权行政人员管理人员",
+    "view_cost_detail": "查看成本明细",
+    "view_source": "查看项目资料",
+    "view_basis": "查看造价依据",
+    "upload_source": "上传项目资料",
+    "upload_basis": "上传造价依据",
+    "recognize_source": "识别项目资料",
+    "modify_source": "修改资料",
+    "delete_source": "删除资料",
+    "edit_business_data": "填报和编辑业务数据",
+    "view_audit": "查看审计记录",
+    "manage_project": "管理项目信息",
+    "export_cost": "导出成本数据",
+    "reference_basis": "引用造价依据",
+}
+
 ROLE_ALIASES = {
     "estimator": ROLE_COST_ESTIMATOR,
     "construction_worker": ROLE_SITE_ENGINEER,
@@ -160,6 +181,9 @@ ROLE_ALIASES = {
     "现场工程师": ROLE_SITE_ENGINEER,
     "施工员/测量员": ROLE_SITE_ENGINEER,
     "施工员/现场工程师": ROLE_SITE_ENGINEER,
+    "实验员": ROLE_LAB_TESTING_OFFICER,
+    "试验员": ROLE_LAB_TESTING_OFFICER,
+    "试验检测员": ROLE_LAB_TESTING_OFFICER,
 }
 
 MERGEABLE_FIELD_ROLES = (ROLE_SURVEYOR, ROLE_SITE_ENGINEER)
@@ -615,6 +639,10 @@ class LocalAuthStore:
                 "label": ROLE_LABELS[role],
                 "level": ROLE_LEVELS[role],
                 "description": ROLE_DESCRIPTIONS[role],
+                "permissions": [
+                    {"key": permission, "label": PERMISSION_LABELS[permission]}
+                    for permission in sorted(ROLE_PERMISSIONS[role])
+                ],
             }
             for role in PERSONNEL_ROLE_ORDER
         ]

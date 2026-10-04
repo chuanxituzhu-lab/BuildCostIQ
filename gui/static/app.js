@@ -2653,6 +2653,94 @@ function mergePersonnelSnapshot(response, keepCredentials = null) {
   };
 }
 
+function renderPersonnelPermissionSummary(roleId, targetId) {
+  const target = $(targetId);
+  if (!target) return;
+  const role = (state.personnel.roles || []).find((item) => item.role === roleId);
+  target.replaceChildren();
+  if (!role) {
+    target.textContent = "当前角色权限摘要不可用";
+    return;
+  }
+  const heading = document.createElement("strong");
+  heading.textContent = role.label + "：" + (role.description || "");
+  const list = document.createElement("ul");
+  (role.permissions || []).forEach((permission) => {
+    const item = document.createElement("li");
+    item.textContent = permission.label || permission.key;
+    list.append(item);
+  });
+  target.append(heading, list);
+}
+
+function applySuggestedPersonnelRole(roleId) {
+  const inviteRole = $("personnelInviteRole");
+  const directRole = $("personnelRole");
+  if (!roleId || !inviteRole || !directRole) return;
+  inviteRole.value = roleId;
+  directRole.value = roleId;
+  renderPersonnelPermissionSummary(inviteRole.value, "personnelInvitePermissionSummary");
+  renderPersonnelPermissionSummary(directRole.value, "personnelPermissionSummary");
+  setStatus("岗位建议已填入表单；须由管理员确认并提交后才会应用权限");
+}
+
+async function analyzePersonnelRole(event) {
+  event.preventDefault();
+  setError("");
+  const status = $("personnelRoleSuggestionStatus");
+  const resultTarget = $("personnelRoleSuggestionResult");
+  status.textContent = "正在本机分析…";
+  resultTarget.replaceChildren();
+  try {
+    const response = await apiJson("/api/agent-ops/role-assignment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: state.projectId,
+        job_title: $("personnelJobTitle").value,
+        responsibilities: $("personnelResponsibilities").value,
+      }),
+    });
+    const recommendation = response.recommendation || {};
+    const stateLabels = { MATCHED: "明确建议", NEEDS_REVIEW: "需要核对", NO_MATCH: "没有匹配" };
+    const heading = document.createElement("strong");
+    heading.textContent = "Sayelf Agent Ops 本地识岗 · " + (stateLabels[recommendation.status] || recommendation.status || "完成");
+    const reason = document.createElement("p");
+    reason.textContent = recommendation.reason || "请核对岗位建议。";
+    resultTarget.append(heading, reason);
+    if (recommendation.evidence && recommendation.evidence.length) {
+      const evidence = document.createElement("p");
+      evidence.textContent = "命中依据：" + recommendation.evidence.map((item) => (item.source === "title" ? "岗位名称" : "岗位职责") + "“" + item.term + "”").join("、");
+      resultTarget.append(evidence);
+    }
+    (response.role_options || []).forEach((role) => {
+      const section = document.createElement("div");
+      section.className = "role-suggestion-option";
+      const title = document.createElement("strong");
+      title.textContent = role.label + " · L" + role.level;
+      const description = document.createElement("p");
+      description.textContent = role.description || "";
+      const permissions = document.createElement("small");
+      permissions.textContent = "权限预览：" + ((role.permissions || []).map((item) => item.label || item.key).join("、") || "无");
+      section.append(title, description, permissions);
+      if (recommendation.status !== "MATCHED") {
+        const choose = document.createElement("button");
+        choose.className = "button button-quiet";
+        choose.type = "button";
+        choose.textContent = "管理员选择此岗位";
+        choose.addEventListener("click", () => applySuggestedPersonnelRole(role.role));
+        section.append(choose);
+      }
+      resultTarget.append(section);
+    });
+    if (recommendation.status === "MATCHED") applySuggestedPersonnelRole(recommendation.recommended_role);
+    status.textContent = response.input_persisted === false ? "分析完成；输入未保存" : "分析完成";
+  } catch (error) {
+    status.textContent = "分析失败";
+    setError(error.message);
+  }
+}
+
 function renderPersonnel() {
   if (!canManagePersonnel()) {
     setView(isKpiOnly() ? "dashboard" : "overview");
@@ -2675,23 +2763,29 @@ function renderPersonnel() {
     ? `<div class="notice-line credential-notice"><strong>请交给本人登录</strong><span>姓名/登录名：${escapeHtml(temporaryCredentials.username)} · 岗位：${escapeHtml(temporaryCredentials.role_label || temporaryCredentials.role)} · 初始密码：<code>${escapeHtml(temporaryCredentials.password)}</code>。${escapeHtml(temporaryCredentials.notice || "刷新后不再显示此密码。")}</span></div>`
     : "";
   $("workspaceContent").innerHTML =
-    `<div class="surface-title"><div><span class="panel-label">PERSONNEL MANAGEMENT</span><h3>人员管理</h3></div><span class="surface-caption">当前项目：${escapeHtml(state.projectName || state.projectId || "未命名项目")} · 项目经理直管；行政人员授权后协同</span></div>` +
+    `<div class="surface-title"><div><span class="panel-label">人员管理</span><h3>人员管理</h3></div><span class="surface-caption">当前项目：${escapeHtml(state.projectName || state.projectId || "未命名项目")} · 项目经理直管；行政人员授权后协同</span></div>` +
     `<div class="notice-line"><strong>人员治理规则</strong><span>${escapeHtml(policyText)} ${escapeHtml(handoverText)} ${escapeHtml(projectScopeText)}</span></div>` +
     credentialNotice +
-    '<section class="control-panel personnel-invite-panel"><div class="surface-title"><div><span class="panel-label">ROLE INVITE</span><h3>推送岗位工作台链接</h3></div><span class="surface-caption">只绑定当前项目；无需每台电脑安装 BuildCostIQ</span></div><p class="permission-note">生成邀请后通过项目群或私聊发送。对方接受并设置密码后，使用浏览器链接进入自己的岗位界面；数据仍保存在中心项目底座，人员更换不会丢失成果。</p><form id="personnelInviteForm" class="work-form"><div class="field-grid personnel-field-grid"><label>岗位角色<select id="personnelInviteRole">' + roleOptions + '</select></label><label>有效期（小时）<input id="personnelInviteExpires" type="number" min="1" max="720" value="72" required /></label></div><div class="action-row"><button class="button button-primary" type="submit">生成邀请链接</button><span id="personnelInviteStatus" class="request-status"></span></div></form><div id="personnelInviteList" class="invite-list-wrap"></div></section>' +
+    '<section class="control-panel role-agent-ops-panel"><div class="surface-title"><div><span class="panel-label">SAYELF AGENT OPS · 本地岗位建议</span><h3>智能识别岗位与权限</h3></div><span class="surface-caption">仅处理岗位名称和职责，不读取姓名</span></div><p class="permission-note">本地规则只提供岗位建议和权限预览，不创建账号、不发邀请、不授予权限。项目管理员核对后，点击“保存人员”或“生成邀请链接”才会应用所选岗位权限。</p><form id="personnelRoleSuggestionForm" class="work-form"><div class="field-grid"><label>岗位名称<input id="personnelJobTitle" maxlength="100" placeholder="例如：试验员、施工员、生产经理、技术负责人" /></label><label class="field-span-2">岗位职责<textarea id="personnelResponsibilities" maxlength="500" rows="3" placeholder="填写主要工作内容，最多 500 字；内容只在本机临时分析"></textarea></label></div><div class="action-row"><button class="button button-primary" type="submit">本地分析岗位</button><span id="personnelRoleSuggestionStatus" class="request-status"></span></div></form><div id="personnelRoleSuggestionResult" class="role-suggestion-result" aria-live="polite"></div></section>' +
+    '<section class="control-panel personnel-invite-panel"><div class="surface-title"><div><span class="panel-label">岗位邀请</span><h3>推送岗位工作台链接</h3></div><span class="surface-caption">只绑定当前项目；无需每台电脑安装 BuildCostIQ</span></div><p class="permission-note">生成邀请后通过项目群或私聊发送。对方接受并设置密码后，使用浏览器链接进入自己的岗位界面；数据仍保存在中心项目底座，人员更换不会丢失成果。</p><form id="personnelInviteForm" class="work-form"><div class="field-grid personnel-field-grid"><label>岗位角色<select id="personnelInviteRole">' + roleOptions + '</select></label><label>有效期（小时）<input id="personnelInviteExpires" type="number" min="1" max="720" value="72" required /></label></div><div id="personnelInvitePermissionSummary" class="role-permission-summary"></div><div class="action-row"><button class="button button-primary" type="submit">生成邀请链接</button><span id="personnelInviteStatus" class="request-status"></span></div></form><div id="personnelInviteList" class="invite-list-wrap"></div></section>' +
     '<div class="control-grid personnel-grid">' +
-    '<section class="control-panel"><span class="panel-label">NEW PERSONNEL</span><h3>录入人员</h3>' +
-    '<form id="personnelForm" class="work-form"><div class="field-grid personnel-field-grid"><label>姓名/登录名<input id="personnelUsername" autocomplete="off" required minlength="1" maxlength="64" /></label><label>岗位角色<select id="personnelRole">' + roleOptions + '</select></label></div>' +
+    '<section class="control-panel"><span class="panel-label">新增人员</span><h3>录入人员</h3>' +
+    '<form id="personnelForm" class="work-form"><div class="field-grid personnel-field-grid"><label>姓名/登录名<input id="personnelUsername" autocomplete="off" required minlength="1" maxlength="64" /></label><label>岗位角色<select id="personnelRole">' + roleOptions + '</select></label></div><div id="personnelPermissionSummary" class="role-permission-summary"></div>' +
     '<div class="permission-note">只需录入姓名和岗位。系统自动生成初始登录密码，仅在保存成功后返回并显示一次，由项目经理或已授权行政人员安全交给本人；人员以后用“姓名/登录名 + 初始密码”登录。</div>' +
     '<div class="action-row"><button class="button button-primary" type="submit">保存人员</button><span id="personnelStatus" class="request-status"></span></div></form></section>' +
-    '<section class="control-panel"><div class="surface-title"><div><span class="panel-label">LOCAL USERS</span><h3>已登记人员</h3></div><span class="surface-caption">共 <strong id="personnelCount">0</strong> 人</span></div><div id="personnelTable" class="table-wrap"></div></section></div>' +
-    '<section class="control-panel audit-panel"><div class="surface-title"><div><span class="panel-label">PERSONNEL AUDIT TRAIL</span><h3>人员管理留痕</h3></div><span class="surface-caption">新增账号会记录操作人、角色、时间和目标</span></div><div id="personnelAudit" class="audit-list"></div></section>';
+    '<section class="control-panel"><div class="surface-title"><div><span class="panel-label">已登记人员</span><h3>人员名册</h3></div><span class="surface-caption">共 <strong id="personnelCount">0</strong> 人</span></div><div id="personnelTable" class="table-wrap"></div></section></div>' +
+    '<section class="control-panel audit-panel"><div class="surface-title"><div><span class="panel-label">人员操作记录</span><h3>人员管理留痕</h3></div><span class="surface-caption">新增账号会记录操作人、角色、时间和目标</span></div><div id="personnelAudit" class="audit-list"></div></section>';
   $("personnelCount").textContent = String((state.personnel.users || []).length);
   renderPersonnelInvites($("personnelInviteList"));
   renderPersonnelTable($("personnelTable"));
   renderPersonnelAudit($("personnelAudit"));
   $("personnelForm").addEventListener("submit", savePersonnel);
   $("personnelInviteForm").addEventListener("submit", createPersonnelInvite);
+  $("personnelRoleSuggestionForm").addEventListener("submit", analyzePersonnelRole);
+  $("personnelRole").addEventListener("change", () => renderPersonnelPermissionSummary($("personnelRole").value, "personnelPermissionSummary"));
+  $("personnelInviteRole").addEventListener("change", () => renderPersonnelPermissionSummary($("personnelInviteRole").value, "personnelInvitePermissionSummary"));
+  renderPersonnelPermissionSummary($("personnelRole").value, "personnelPermissionSummary");
+  renderPersonnelPermissionSummary($("personnelInviteRole").value, "personnelInvitePermissionSummary");
 }
 
 function syncCurrentPersonnelUser() {

@@ -53,7 +53,7 @@ from adapters import (
 )
 from adapters.connectors import build_project_bundle, connector_catalog
 from adapters.recognition import RecognitionError, recognition_catalog, recognize_source
-from adapters.role_intelligence import ROLE_DEPARTMENT_HEADS, role_intelligence_snapshot
+from adapters.role_intelligence import ROLE_DEPARTMENT_HEADS, recommend_personnel_roles, role_intelligence_snapshot
 from adapters.event_intake import event_intake_snapshot
 from adapters.evidence_intake import evidence_intake_snapshot
 from adapters.search import build_evidence_answer, search_local_evidence
@@ -1066,6 +1066,31 @@ def _personnel_create(payload: object, actor: Mapping[str, Any]) -> dict[str, An
             "notice": "请将此初始密码安全交给本人；刷新人员管理后不再显示。",
         }
     return snapshot
+
+
+def _agent_ops_role_assignment(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("岗位识别请求必须是 JSON 对象")
+    unexpected = set(payload) - {"project_id", "job_title", "responsibilities"}
+    if unexpected:
+        raise ValueError("岗位识别只接受项目编号、岗位名称和岗位职责")
+    project_id = str(payload.get("project_id", "")).strip()
+    if not project_id:
+        raise ValueError("缺少项目编号")
+    _require_project_member(actor, project_id)
+    if PROJECT_WORKSPACE.load(project_id) is None:
+        raise FileNotFoundError("项目尚未建立")
+    recommendation = recommend_personnel_roles(payload.get("job_title", ""), payload.get("responsibilities", ""))
+    selected = set(recommendation["candidates"])
+    catalog = [item for item in AUTH_STORE.personnel_role_catalog() if item["role"] in selected]
+    return {
+        "project_id": project_id,
+        "source": "sayelf-agent-ops-local",
+        "human_confirmation_required": True,
+        "recommendation": recommendation,
+        "role_options": catalog,
+        "input_persisted": False,
+    }
 
 
 def _personnel_authorize(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -3264,6 +3289,17 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             try:
                 actor = _require_actor(self.headers, "edit_business_data")
                 self._write_json(_agent_ops_plan_record(self._read_json(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/agent-ops/role-assignment":
+            try:
+                actor = _require_actor(self.headers, "manage_personnel")
+                self._write_json(_agent_ops_role_assignment(self._read_json(), actor))
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 403)
             except FileNotFoundError as exc:

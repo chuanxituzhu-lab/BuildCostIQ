@@ -4,6 +4,9 @@
 
 ## 本次列为 Public 的文件
 
+- adapters/role_intelligence.py
+- tests/test_role_intelligence.py
+
 - `.gitignore`
 - `ARCHITECTURE.md`
 - `README.md`

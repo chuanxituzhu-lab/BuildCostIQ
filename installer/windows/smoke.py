@@ -216,6 +216,37 @@ with tempfile.TemporaryDirectory(prefix='buildcostiq-smoke-') as scratch:
                         data=json.dumps({'username':agent_username,'password':'Smoke-Agent-123'}).encode(),
                         headers={'Content-Type':'application/json'})
             with urlopen(req,timeout=5) as response: agent_login=json.load(response)
+            role_request={'project_id':c['project_code'],'job_title':'实验员',
+                          'responsibilities':'负责混凝土试件取样送检和试验报告'}
+            req=Request(f'http://127.0.0.1:{port}/api/agent-ops/role-assignment',
+                        data=json.dumps(role_request,ensure_ascii=False).encode(),
+                        headers={'Content-Type':'application/json','Authorization':'Bearer '+login['token']})
+            with urlopen(req,timeout=5) as response: role_result=json.load(response)
+            assert role_result['source']=='sayelf-agent-ops-local'
+            assert role_result['human_confirmation_required'] and role_result['input_persisted'] is False
+            assert role_result['recommendation']['status']=='MATCHED'
+            assert role_result['recommendation']['recommended_role']=='lab_testing_officer'
+            lab_role=next(item for item in role_result['role_options'] if item['role']=='lab_testing_officer')
+            personnel_request=Request('http://127.0.0.1:%s/api/personnel?project_id=%s' % (port,c['project_code']),
+                                      headers={'Authorization':'Bearer '+login['token']})
+            with urlopen(personnel_request,timeout=5) as response: role_catalog=json.load(response)['roles']
+            catalog_lab=next(item for item in role_catalog if item['role']=='lab_testing_officer')
+            assert {item['key'] for item in lab_role['permissions']}=={item['key'] for item in catalog_lab['permissions']}
+            req=Request(f'http://127.0.0.1:{port}/api/agent-ops/role-assignment',
+                        data=json.dumps(role_request,ensure_ascii=False).encode(),
+                        headers={'Content-Type':'application/json','Authorization':'Bearer '+agent_login['token']})
+            try:
+                urlopen(req,timeout=5)
+                raise AssertionError('Non-manager can request personnel role assignment')
+            except HTTPError as e:
+                assert e.code==403
+            conflict=dict(role_request,job_title='施工员',responsibilities='负责技术方案审核')
+            req=Request(f'http://127.0.0.1:{port}/api/agent-ops/role-assignment',
+                        data=json.dumps(conflict,ensure_ascii=False).encode(),
+                        headers={'Content-Type':'application/json','Authorization':'Bearer '+login['token']})
+            with urlopen(req,timeout=5) as response: conflict_result=json.load(response)['recommendation']
+            assert conflict_result['status']=='NEEDS_REVIEW' and not conflict_result['recommended_role']
+            checks.append('local role routing, exact RBAC permission preview, conflict review, and manager-only access')
             plan={'project_id':c['project_code'],'run_id':'smoke-agentops-run','workflow_id':'WF02',
                   'module_id':'02','target_type':'workflow_plan','target_id':'smoke-bid-plan',
                   'payload_summary':'Synthetic plan is ready','idempotency_key':'smoke-agentops-v1',
