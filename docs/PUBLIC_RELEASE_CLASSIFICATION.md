@@ -4,13 +4,43 @@
 
 ## 本次列为 Public 的文件
 
-- 根目录：`.gitignore`、`ARCHITECTURE.md`、`README.md`、`pyproject.toml`
-- 适配器与业务：`adapters/auth.py`、`adapters/workspace.py`、`core/execution_ledger.py`、`domains/business_workflows.py`
-- 用户文档：`docs/NEW_01_09.md`、`installer/README.md`、`installer/windows/INSTALL.md`
-- WebUI：`gui/server.py`、`gui/static/app.js`、`gui/static/index.html`、`gui/static/styles.css`、`gui/static/sayelf-logo.png`、`gui/static/sayelf-logo.ico`
-- Windows 构建与配置：`installer/windows/build.ps1`、`configure.ps1`、`delivery_check.py`、`initialize.py`、`launch.py`、`package-delivery.py`、`project-server.iss`、`smoke.py`、`test_delivery_check.py`、`test-installed.ps1`
-- 安装器语言资源：`installer/windows/languages/ChineseSimplified.isl`、`ChineseSimplified-MIT-LICENSE.txt`
-- 合成测试：`tests/test_auth.py`、`tests/test_role_ui_boundaries.py`、`tests/test_web.py`、`tests/test_agent_ops_api.py`、`tests/test_business_workflows.py`、`tests/test_business_workflows_api.py`、`tests/test_execution_ledger.py`
+- `.gitignore`
+- `ARCHITECTURE.md`
+- `README.md`
+- `pyproject.toml`
+- `adapters/auth.py`
+- `adapters/workspace.py`
+- `core/execution_ledger.py`
+- `domains/business_workflows.py`
+- `docs/NEW_01_09.md`
+- `docs/PUBLIC_RELEASE_CLASSIFICATION.md`
+- `gui/server.py`
+- `gui/static/app.js`
+- `gui/static/index.html`
+- `gui/static/styles.css`
+- `gui/static/sayelf-logo.png`
+- `gui/static/sayelf-logo.ico`
+- `installer/README.md`
+- `installer/windows/INSTALL.md`
+- `installer/windows/build.ps1`
+- `installer/windows/configure.ps1`
+- `installer/windows/delivery_check.py`
+- `installer/windows/initialize.py`
+- `installer/windows/launch.py`
+- `installer/windows/package-delivery.py`
+- `installer/windows/project-server.iss`
+- `installer/windows/smoke.py`
+- `installer/windows/test_delivery_check.py`
+- `installer/windows/test-installed.ps1`
+- `installer/windows/languages/ChineseSimplified.isl`
+- `installer/windows/languages/ChineseSimplified-MIT-LICENSE.txt`
+- `tests/test_auth.py`
+- `tests/test_role_ui_boundaries.py`
+- `tests/test_web.py`
+- `tests/test_agent_ops_api.py`
+- `tests/test_business_workflows.py`
+- `tests/test_business_workflows_api.py`
+- `tests/test_execution_ledger.py`
 
 ## 不公开的内容
 
