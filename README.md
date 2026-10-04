@@ -1,5 +1,27 @@
 # BuildCostIQ
 
+## 最新版本：v0.8.0-rc9｜新版 01–09｜单个施工项目部
+
+当前产品只面向**单个施工项目部**。最新版涵盖：01 造价依据（政府行业文件）、02 投标工作流、03 中标工作流、04 施工中造价工作流、05 竣工结算工作流、06 共享造价能力底座、07 工程量计算复核、08 PDF/CAD/BIM 提量工具、09 施工项目试验报告系统。安装器说明见[Windows 安装指南](installer/windows/INSTALL.md)，范围与操作边界见[新版 01–09 流程说明](docs/NEW_01_09.md)。
+
+06 是横向共享底座，其他八项都依赖它。当前工作树已接入八项新版人工受控流程：逐项录入、关联本项目归档证据、按岗位顺序复核、审批与专业验收，支持退回补正、版本留痕和指定岗位签收；S06 以追加式本地事件账本保存决定，并在流程页读取时校验账本、重建当前节点。不同人员审批隔离、证据引用校验和单次交接由服务端执行。Sayelf Agent Ops 只生成最小计划，`READY` 仅表示计划就绪，不代表执行或验收。
+
+**业务边界：**这些流程负责字段、责任、证据、人工审批和状态闭环，不替代专业判断。造价公式、项目适用的政府依据来源、PDF/CAD/BIM 几何提量和试验结论仍由已接入的本地工具与专业人员确认；没有工具证据的值只能作为候选，不能自动转正式结论。当前岗位与检查清单是依据仓库已有岗位目录整理的首版流程契约，法规阈值、计量规则和项目审批授权仍须项目专业人员复核。旧 P01–P09 继续作为兼容资产，不能按编号当作新版能力。
+
+**发布状态：**本次源码更新发布在 GitHub 默认分支，版本号仍为 `v0.8.0-rc9`。Windows Project Server 安装包已生成并通过构建机冒烟检查；管理员实际安装、Windows 服务启动/重启、升级及卸载保留数据仍未在隔离 Windows 环境验证。请勿把已有旧服务健康状态当作新版安装验证。
+
+The current scope is one construction project department. The confirmed modules are: 01 Government and Industry Cost Basis; 02 Tender Workflow; 03 Award Workflow; 04 Construction Cost Workflow; 05 Final Settlement Workflow; 06 Shared Cost Foundation; 07 Quantity Calculation and Review; 08 PDF/CAD/BIM Quantity Takeoff; and 09 Project Testing Reports. Module 06 is the horizontal foundation used by the other eight modules.
+
+The current public source branch is based on `v0.8.0-rc9` and provides eight role-gated human workflows with evidence links, separate reviewers, professional checklists, return-for-correction, version history, conditional handoffs, and state replay from the verified local ledger. Sayelf Agent Ops contributes planning only; `READY` means the plan is ready, not that work ran or passed. These workflows do not claim automated estimating formulas, government-source collection, general CAD/DWG/IFC geometry takeoff, or automatic lab-result approval. Role maps and checklists are first-pass contracts derived from existing role definitions and still need review against project rules. Legacy P01–P09 remain compatibility assets, not automatic equivalents of the new modules. Windows installation and service lifecycle remain unverified on an isolated administrator-controlled machine.
+
+普通用户按“打开 → 输入 → 执行 → 结果”完成工作；业务阈值、造价规则、审批权限和专业验收由项目人员确认。以下旧版使用说明对应兼容工作台。
+
+---
+
+## 既有版本说明
+
+# BuildCostIQ
+
 BuildCostIQ is a lightweight, local-first construction cost-loop agent for three primary users: the project manager, cost manager, and cost estimator. It connects contract basis, quantities, prices, changes, measurement, settlement, evidence, and cash outcomes through one Engineering Event chain. CAD quantity takeoff, role-work-product management, and future specialist tools integrate through adapters; they do not expand Core or create a second amount ledger. See [docs/COST_LOOP_CORE.md](docs/COST_LOOP_CORE.md) for the product boundary and [docs/COST_DELIVERABLE_AUDIT_WORKFLOW.md](docs/COST_DELIVERABLE_AUDIT_WORKFLOW.md) for the deliverable and audit workflow.
 
 ## P09 当前能力边界

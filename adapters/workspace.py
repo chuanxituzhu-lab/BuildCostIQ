@@ -7,12 +7,23 @@ resumable without making Core depend on a filesystem layout or a UI concern.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from datetime import datetime, timezone
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
+
+from core.execution_ledger import (
+    GENESIS_HASH,
+    ExecutionLedgerError,
+    create_execution_event,
+    derive_agent_ops_plan_states,
+    idempotency_fingerprint,
+    validate_execution_transition,
+    verify_execution_chain,
+)
 
 from .deployment import DeploymentStorageAdapter
 
@@ -85,6 +96,7 @@ class LocalProjectWorkspace:
                 # linked to Core/Event/Evidence but never replace those facts.
                 "role_work_products": [],
                 "audit_log": [],
+                "execution_ledger": [],
             }
         return self._save_unlocked(state)
 
@@ -247,6 +259,221 @@ class LocalProjectWorkspace:
             }
             state["audit_log"] = [*(state.get("audit_log") or []), event]
             return self._save_unlocked(state)
+
+    def append_execution_event(self, project_id: str, event_fields: Mapping[str, Any]) -> dict[str, Any]:
+        """Append one hash-linked S06 execution event to the existing project file.
+
+        This is a passive evidence/status record. It does not authorize an
+        action, run a module, approve a result, or promote a Canonical fact.
+        """
+        with self._project_lock(project_id):
+            state = self.load(project_id)
+            if state is None:
+                raise FileNotFoundError("项目尚未建立，不能写入运行记录")
+            if str((state.get("project") or {}).get("id", "")) != project_id:
+                raise ExecutionLedgerError("项目存储路径与项目编号不一致")
+            ledger = [dict(item) for item in list(state.get("execution_ledger") or [])]
+            previous_hash = verify_execution_chain(ledger, project_id=project_id)
+            fields = dict(event_fields)
+            supplied_project_id = fields.pop("project_id", project_id)
+            if supplied_project_id != project_id:
+                raise ExecutionLedgerError("运行记录项目范围与当前工作区不一致")
+            allowed_fields = {
+                "run_id",
+                "workflow_id",
+                "module_id",
+                "event_type",
+                "actor_type",
+                "actor_id",
+                "target_type",
+                "target_id",
+                "payload_summary",
+                "evidence_refs",
+                "result_version_refs",
+                "checkpoint_ref",
+                "idempotency_key",
+                "data_classification",
+                "agent_ops_state",
+            }
+            unexpected_fields = set(fields) - allowed_fields
+            if unexpected_fields:
+                raise ExecutionLedgerError(f"运行记录包含未授权字段：{', '.join(sorted(unexpected_fields))}")
+            event = create_execution_event(
+                **fields,
+                project_id=project_id,
+                previous_event_hash=previous_hash or GENESIS_HASH,
+            )
+            for existing in ledger:
+                if existing.get("run_id") == event["run_id"] and existing.get("idempotency_key") == event["idempotency_key"]:
+                    if idempotency_fingerprint(existing) == idempotency_fingerprint(event):
+                        return existing
+                    raise ExecutionLedgerError("相同幂等键对应了不同运行事件，已拒绝重试")
+            self._validate_execution_references(state, ledger, event)
+            validate_execution_transition(ledger, event)
+            ledger.append(event)
+            state["execution_ledger"] = ledger
+            audit_actor = {"id": event["actor_id"], "type": event["actor_type"]}
+            audit_record = {
+                "id": str(uuid4()),
+                "timestamp": event["occurred_at"],
+                "action": "execution_ledger.appended",
+                "actor": audit_actor,
+                "target": event["run_id"],
+                "details": {
+                    "event_id": event["event_id"],
+                    "event_type": event["event_type"],
+                    "event_hash": event["event_hash"],
+                },
+            }
+            state["audit_log"] = [*(state.get("audit_log") or []), audit_record]
+            self._save_unlocked(state)
+            return event
+
+    def append_workflow_batch(
+        self,
+        project_id: str,
+        event_fields: list[Mapping[str, Any]],
+        record_blobs: Mapping[str, Mapping[str, Any]],
+        *,
+        expected_last_event_hash: str,
+    ) -> list[dict[str, Any]]:
+        """Atomically append workflow evidence and its content-addressed records.
+
+        The caller supplies the last hash it reviewed. A competing write makes
+        the action stale instead of allowing two approvals against one state.
+        """
+        if not event_fields:
+            raise ExecutionLedgerError("工作流操作没有可记录事件")
+        with self._project_lock(project_id):
+            state = self.load(project_id)
+            if state is None:
+                raise FileNotFoundError("项目尚未建立，不能写入工作流记录")
+            if str((state.get("project") or {}).get("id", "")) != project_id:
+                raise ExecutionLedgerError("项目存储路径与项目编号不一致")
+            ledger = [dict(item) for item in list(state.get("execution_ledger") or [])]
+            previous_hash = verify_execution_chain(ledger, project_id=project_id)
+            if str(expected_last_event_hash or GENESIS_HASH) != str(previous_hash or GENESIS_HASH):
+                raise ExecutionLedgerError("流程状态已被其他人员更新，请刷新后重新操作")
+
+            stored_blobs = dict(state.get("business_workflow_blobs") or {})
+            clean_blobs: dict[str, dict[str, Any]] = {}
+            for digest, value in record_blobs.items():
+                blob = dict(value)
+                packed = json.dumps(blob, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                actual = hashlib.sha256(packed).hexdigest()
+                if actual != str(digest):
+                    raise ExecutionLedgerError("工作流成果内容哈希不匹配")
+                existing = stored_blobs.get(digest)
+                if existing is not None and existing != blob:
+                    raise ExecutionLedgerError("内容寻址工作流成果出现哈希冲突")
+                clean_blobs[str(digest)] = blob
+
+            allowed_fields = {
+                "run_id", "workflow_id", "module_id", "event_type", "actor_type", "actor_id",
+                "target_type", "target_id", "payload_summary", "evidence_refs", "result_version_refs",
+                "checkpoint_ref", "idempotency_key", "data_classification", "agent_ops_state",
+            }
+            appended: list[dict[str, Any]] = []
+            for supplied in event_fields:
+                fields = dict(supplied)
+                supplied_project_id = fields.pop("project_id", project_id)
+                if supplied_project_id != project_id:
+                    raise ExecutionLedgerError("工作流事件项目范围与当前工作区不一致")
+                unexpected_fields = set(fields) - allowed_fields
+                if unexpected_fields:
+                    raise ExecutionLedgerError(f"工作流事件包含未授权字段：{', '.join(sorted(unexpected_fields))}")
+                event = create_execution_event(
+                    **fields,
+                    project_id=project_id,
+                    previous_event_hash=previous_hash or GENESIS_HASH,
+                )
+                for existing_event in ledger:
+                    if existing_event.get("run_id") == event["run_id"] and existing_event.get("idempotency_key") == event["idempotency_key"]:
+                        if idempotency_fingerprint(existing_event) == idempotency_fingerprint(event):
+                            raise ExecutionLedgerError("该操作已登记，请刷新查看最新流程状态")
+                        raise ExecutionLedgerError("相同幂等键对应了不同工作流事件，已拒绝重试")
+                self._validate_execution_references(state, ledger, event)
+                validate_execution_transition(ledger, event)
+                ledger.append(event)
+                appended.append(event)
+                previous_hash = event["event_hash"]
+
+            state["execution_ledger"] = ledger
+            stored_blobs.update(clean_blobs)
+            state["business_workflow_blobs"] = stored_blobs
+            for event in appended:
+                state["audit_log"] = [*(state.get("audit_log") or []), {
+                    "id": str(uuid4()), "timestamp": event["occurred_at"],
+                    "action": "business_workflow.event_recorded",
+                    "actor": {"id": event["actor_id"], "type": event["actor_type"]},
+                    "target": event["run_id"],
+                    "details": {"event_id": event["event_id"], "event_type": event["event_type"], "event_hash": event["event_hash"]},
+                }]
+            self._save_unlocked(state)
+            return appended
+
+    @staticmethod
+    def _validate_execution_references(
+        state: Mapping[str, Any],
+        prior_events: list[dict[str, Any]],
+        event: Mapping[str, Any],
+    ) -> None:
+        """Resolve new S06 references against this project's current records."""
+        active_hashes: set[str] = set()
+        for source in state.get("sources") or []:
+            if not isinstance(source, Mapping) or source.get("status") == "deleted":
+                continue
+            recognition = source.get("recognition")
+            artifact = recognition.get("artifact") if isinstance(recognition, Mapping) else None
+            for content_hash in (
+                source.get("content_hash"),
+                artifact.get("content_hash") if isinstance(artifact, Mapping) else None,
+            ):
+                digest = str(content_hash or "").strip().lower()
+                if re.fullmatch(r"[a-f0-9]{64}", digest):
+                    active_hashes.add(digest)
+
+        for reference in event.get("evidence_refs") or []:
+            value = str(reference)
+            prefix = "sha256:"
+            digest = value[len(prefix):] if value.startswith(prefix) else ""
+            if not re.fullmatch(r"[a-f0-9]{64}", digest) or digest not in active_hashes:
+                raise ExecutionLedgerError("证据引用必须指向本项目当前有效来源的 SHA-256 内容哈希")
+
+        prior_versions = {
+            str(item.get("target_id", ""))
+            for item in prior_events
+            if item.get("event_type") == "RESULT_VERSIONED" and item.get("target_type") == "result_version"
+        }
+        for reference in event.get("result_version_refs") or []:
+            value = str(reference)
+            prefix = "result-version:"
+            version_id = value[len(prefix):] if value.startswith(prefix) else ""
+            if not version_id or version_id not in prior_versions:
+                raise ExecutionLedgerError("结果版本引用必须指向本项目账本中更早登记的结果版本")
+
+    def verify_execution_ledger(self, project_id: str) -> dict[str, Any]:
+        """Verify one project's chain without changing project data."""
+        snapshot = self.execution_ledger_snapshot(project_id)
+        return {key: snapshot[key] for key in ("valid", "event_count", "last_event_hash")}
+
+    def execution_ledger_snapshot(self, project_id: str) -> dict[str, Any]:
+        """Read and verify one project's ledger under the project write lock."""
+        with self._project_lock(project_id):
+            state = self.load(project_id)
+            if state is None:
+                raise FileNotFoundError("项目尚未建立，不能校验运行记录")
+            if str((state.get("project") or {}).get("id", "")) != project_id:
+                raise ExecutionLedgerError("项目存储路径与项目编号不一致")
+            ledger = [dict(item) for item in list(state.get("execution_ledger") or [])]
+            last_hash = verify_execution_chain(ledger, project_id=project_id)
+            return {
+                "valid": True,
+                "event_count": len(ledger),
+                "last_event_hash": last_hash,
+                "events": ledger,
+                "agent_ops_plan_states": derive_agent_ops_plan_states(ledger),
+            }
 
     def modify_source(
         self,

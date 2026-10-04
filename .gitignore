@@ -13,4 +13,6 @@ logs/
 cache/
 secret*
 release/*.zip
+/work/
+installer/windows/work/
 

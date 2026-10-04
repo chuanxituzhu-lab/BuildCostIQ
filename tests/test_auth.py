@@ -8,33 +8,41 @@ from adapters.auth import LocalAuthStore
 
 
 class LocalAuthTests(unittest.TestCase):
+    def test_password_minimum_is_eight_characters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = LocalAuthStore(Path(directory))
+            with self.assertRaisesRegex(ValueError, "至少需要 8 位"):
+                store.register("short-password", "short77", "project_manager")
+            user = store.register("eight-character", "Smoke@12", "project_manager")
+            self.assertEqual(store.authenticate("eight-character", "Smoke@12")["id"], user["id"])
+
     def test_passwords_are_stored_as_hashes_and_roles_have_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             store = LocalAuthStore(Path(directory))
-            user = store.register("manager", "secret1", "cost_manager")
+            user = store.register("manager", "secret12", "cost_manager")
             self.assertEqual(user["role"], "cost_manager")
             self.assertIn("delete_source", user["permissions"])
             self.assertTrue(user["can_view_cost_detail"])
             self.assertNotIn("manage_personnel", user["permissions"])
             raw = (Path(directory) / "users.json").read_text(encoding="utf-8")
-            self.assertNotIn("secret1", raw)
-            self.assertEqual(store.authenticate("manager", "secret1")["id"], user["id"])
+            self.assertNotIn("secret12", raw)
+            self.assertEqual(store.authenticate("manager", "secret12")["id"], user["id"])
             with self.assertRaises(ValueError):
                 store.authenticate("manager", "wrong-pass")
 
-            project_manager = store.register("project-manager", "secret1", "project_manager")
+            project_manager = store.register("project-manager", "secret12", "project_manager")
             self.assertEqual(project_manager["role_level"], 1)
             self.assertNotIn("delete_source", project_manager["permissions"])
             self.assertIn("manage_personnel", project_manager["permissions"])
             self.assertFalse(project_manager["can_view_cost_detail"])
 
-            estimator = store.register("estimator", "secret1", "cost_estimator")
+            estimator = store.register("estimator", "secret12", "cost_estimator")
             self.assertEqual(estimator["role_level"], 2)
             self.assertIn("edit_business_data", estimator["permissions"])
             self.assertNotIn("view_cost_detail", estimator["permissions"])
             self.assertNotIn("manage_personnel", estimator["permissions"])
 
-            administrative = store.register("administrative", "secret1", "administrative_officer")
+            administrative = store.register("administrative", "secret12", "administrative_officer")
             self.assertNotIn("manage_personnel", administrative["permissions"])
             self.assertFalse(administrative["personnel_admin_authorized"])
             with self.assertRaises(PermissionError):
@@ -55,8 +63,8 @@ class LocalAuthTests(unittest.TestCase):
     def test_personnel_handover_preserves_account_identity_and_supports_merged_field_roles(self):
         with tempfile.TemporaryDirectory() as directory:
             store = LocalAuthStore(Path(directory))
-            manager = store.register("manager", "secret1", "project_manager")
-            surveyor = store.register("甲", "secret1", "surveyor")
+            manager = store.register("manager", "secret12", "project_manager")
+            surveyor = store.register("甲", "secret12", "surveyor")
             original_id = surveyor["id"]
             original_created_at = surveyor["created_at"]
 
@@ -66,12 +74,12 @@ class LocalAuthTests(unittest.TestCase):
             self.assertEqual(set(merged["roles"]), {"surveyor", "site_engineer"})
 
             store.rename_user(manager, original_id, "乙")
-            handed_over = store.authenticate("乙", "secret1")
+            handed_over = store.authenticate("乙", "secret12")
             self.assertEqual(handed_over["id"], original_id)
             self.assertEqual(handed_over["created_at"], original_created_at)
             self.assertEqual(handed_over["role_assignment"], "merged")
             with self.assertRaises(ValueError):
-                store.authenticate("甲", "secret1")
+                store.authenticate("甲", "secret12")
             history = handed_over.get("name_history", [])
             self.assertEqual(history[0]["username"], "甲")
             audit_actions = [item["action"] for item in store.personnel_snapshot()["audit_log"]]

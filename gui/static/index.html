@@ -4,23 +4,23 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BuildCostIQ · 造价资料工作台</title>
+    <link rel="icon" type="image/png" href="/sayelf-logo.png" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="topbar user-topbar">
       <div class="brandblock">
-        <p class="eyebrow">BUILDCOSTIQ / COST WORKSPACE</p>
+        <p class="eyebrow">BuildCostIQ / 造价工作台</p>
         <div class="title-row">
-          <span class="brand-mark">BC</span>
+          <img class="brand-logo" src="/sayelf-logo.png" alt="SAYELF 山野精灵" width="64" height="64" />
           <div>
             <h1>造价资料工作台</h1>
             <p class="subtitle">把清单资料、成本计划和结算初审集中在一个工作面完成。</p>
-            <p id="releaseHighlights" class="release-highlights">版本信息读取中：v0.8.0-rc9 已接入造价审计闸门、开工前策划和材料质量证据匹配。</p>
+            <p id="releaseHighlights" class="release-highlights">版本信息读取中：v0.8.0-rc9 已接入新版 01–09 单项目人工流程、S06 共享审批底座和可验证状态恢复。</p>
           </div>
         </div>
       </div>
       <div class="runtime-meta">
-        <label class="language-switcher" for="languageSelect"><span>语言</span><select id="languageSelect" aria-label="界面语言"><option value="zh">中文</option><option value="en">English</option></select></label>
         <form id="globalSearchForm" class="global-search" hidden>
           <label class="visually-hidden" for="globalSearchInput">搜索资料或问题</label>
           <input id="globalSearchInput" type="search" placeholder="查资料或问问题" autocomplete="off" />
@@ -35,26 +35,26 @@
 
     <main>
       <section id="authShell" class="auth-shell">
-        <div class="auth-intro"><span class="panel-label">LOCAL COST LOOP · v0.8.0-rc9</span><h2>登录造价闭环 Agent</h2><p>项目经理看经营结果、异常与决策；造价经理守合同、成本、变更、计量和结算闸门；造价员形成可核验的量价与证据。CAD 算量、岗位成果和其他专业工具通过本地适配器接入，不在这里重复建设。</p></div>
+        <div class="auth-intro"><span class="panel-label">施工项目部造价工作台 · v0.8.0-rc9</span><h2>登录造价闭环工作台</h2><p>项目经理查看经营结果、异常与决策；造价经理复核合同、成本、变更、计量和结算；各专业岗位按职责录入、审核并验收带证据的成果。</p><div class="new-version-note"><strong>新版施工流程（01–09）</strong><p>01 造价依据（政府行业文件） · 02 投标工作流 · 03 中标工作流 · 04 施工中造价工作流 · 05 竣工结算工作流 · 06 共享造价能力底座 · 07 工程量计算复核 · 08 PDF/CAD/BIM 提量工具 · 09 施工项目试验报告系统</p><p>新版流程入口已接入：岗位审批、专业验收清单、资料证据留痕、退回补正与账本重放。专用计量/提量算法、政府依据采集和行业判定仍按现有工具及人工复核边界提供；Agent Ops 的 READY 仅表示计划就绪。</p></div></div>
         <div class="auth-grid">
           <form id="loginForm" class="auth-card">
-            <span class="panel-label">SIGN IN</span><h3>人员登录</h3><p class="permission-note">已登记人员直接使用项目经理/行政人员提供的姓名（登录名）和初始密码进入对应岗位工作台。</p>
+            <span class="panel-label">人员登录</span><h3>人员登录</h3><p class="permission-note">已登记人员直接使用项目经理/行政人员提供的姓名（登录名）和初始密码进入对应岗位工作台。</p>
             <label>用户名<input id="loginUsername" autocomplete="username" required /></label>
             <label>密码<input id="loginPassword" type="password" autocomplete="current-password" required /></label>
             <button class="button button-primary" type="submit">登录</button>
           </form>
           <form id="registerForm" class="auth-card">
-            <span class="panel-label">REGISTER</span><h3>初始化账号</h3><p class="permission-note">首次使用或本机初始化时注册管理账号；日常岗位人员由项目经理或已授权行政人员在人员管理中登记。</p>
+            <span class="panel-label">注册</span><h3>初始化账号</h3><p class="permission-note">首次使用或本机初始化时注册管理账号；日常岗位人员由项目经理或已授权行政人员在人员管理中登记。</p>
             <label>用户名<input id="registerUsername" autocomplete="username" required /></label>
-            <label>密码（至少 6 位）<input id="registerPassword" type="password" autocomplete="new-password" required /></label>
+            <label>密码（至少 8 位）<input id="registerPassword" type="password" autocomplete="new-password" minlength="8" required /></label>
             <label>核心角色<select id="registerRole"><option value="project_manager">项目经理工作台（经营看板与决策）</option><option value="cost_manager">造价经理（造价闭环总审）</option><option value="cost_estimator">造价员（量价与证据操作）</option></select></label>
             <button class="button button-quiet" type="submit">注册并进入</button>
           </form>
           <form id="inviteForm" class="auth-card" hidden>
-            <span class="panel-label">PROJECT INVITE</span><h3>接受岗位邀请</h3>
+            <span class="panel-label">项目邀请</span><h3>接受岗位邀请</h3>
             <p id="inviteProjectNotice" class="permission-note">项目经理或授权行政人员已为你分配岗位；接受后只进入该项目的岗位工作台。</p>
             <label>姓名/登录名<input id="inviteUsername" autocomplete="username" required maxlength="64" /></label>
-            <label>设置登录密码（至少 6 位）<input id="invitePassword" type="password" autocomplete="new-password" minlength="6" required /></label>
+            <label>设置登录密码（至少 8 位）<input id="invitePassword" type="password" autocomplete="new-password" minlength="8" required /></label>
             <button class="button button-primary" type="submit">接受邀请并进入</button>
           </form>
         </div>
@@ -84,6 +84,7 @@
           <button class="workspace-tab" data-view="plan" type="button"><span>05</span>成本计划</button>
           <button class="workspace-tab" data-view="changes" type="button"><span>E</span>变更与索赔</button>
           <button class="workspace-tab" data-view="events" type="button"><span>核心</span>事件与七道闸门</button>
+          <button class="workspace-tab" data-view="business-workflows" type="button"><span>01–09</span>新版业务流程</button>
           <button class="workspace-tab" data-view="evidence" type="button"><span>07</span>证据关联</button>
           <button class="workspace-tab" data-view="review" type="button"><span>H</span>结算与审计</button>
           <button class="workspace-tab" data-view="p09" type="button"><span>09</span>成果经营</button>

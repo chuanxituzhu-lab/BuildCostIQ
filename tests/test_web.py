@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import threading
+import tempfile
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
@@ -10,6 +11,8 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 from zipfile import ZipFile
 
+from adapters.deployment import DeploymentConfig, StorageRoots
+from gui import server as server_module
 from gui.server import _material_evidence_controls, _preconstruction_controls, create_server
 
 
@@ -30,6 +33,12 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(packet["checks"][-1]["label"], "人材机汇总")
 
     def setUp(self) -> None:
+        self.previous_config = server_module.DEPLOYMENT_CONFIG
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="buildcostiq-web-test-")
+        roots = StorageRoots.from_environment({"BUILDCOSTIQ_DATA_ROOT": str(Path(self.temp_dir.name) / "data")})
+        server_module._configure_deployment(
+            DeploymentConfig(mode="single-node", node_id="web-test", host="127.0.0.1", port=0, roots=roots)
+        )
         self.server = create_server("127.0.0.1", 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -57,6 +66,8 @@ class WebUiTests(unittest.TestCase):
         self.server.shutdown()
         self.thread.join(timeout=2)
         self.server.server_close()
+        server_module._configure_deployment(self.previous_config)
+        self.temp_dir.cleanup()
 
     def test_serves_workbench_and_health(self):
         with urlopen(f"{self.base_url}/", timeout=2) as response:
@@ -72,10 +83,12 @@ class WebUiTests(unittest.TestCase):
         self.assertIn(".pdf", body)
         self.assertIn('id="loginForm"', body)
         self.assertIn('id="deploymentStatus"', body)
-        self.assertIn('id="languageSelect"', body)
-        self.assertIn('option value="en">English', body)
+        self.assertNotIn('id="languageSelect"', body)
         self.assertIn('id="personnelTab"', body)
-        self.assertIn("登录造价闭环 Agent", body)
+        self.assertIn("登录造价闭环工作台", body)
+        self.assertIn("新版施工流程（01–09）", body)
+        self.assertIn("06 共享造价能力底座", body)
+        self.assertIn("岗位审批、专业验收清单、资料证据留痕、退回补正与账本重放", body)
         self.assertIn("项目经理工作台", body)
         self.assertIn("造价经理（造价闭环总审）", body)
         self.assertIn("造价员（量价与证据操作）", body)
@@ -105,6 +118,36 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(contracts["role_workbench"]["version"], "1.0")
         self.assertEqual(contracts["role_workbench"]["roles"]["warehouse_officer"]["product_type"], "inventory_movement")
         self.assertEqual(contracts["role_workbench"]["roles"]["surveyor"]["product_type"], "survey_result")
+
+    def test_serves_sayelf_product_logo_as_image_and_favicon(self):
+        with urlopen(f"{self.base_url}/", timeout=2) as response:
+            page = response.read().decode("utf-8")
+        self.assertIn('href="/sayelf-logo.png"', page)
+        self.assertIn('src="/sayelf-logo.png"', page)
+        with urlopen(f"{self.base_url}/sayelf-logo.png", timeout=2) as response:
+            self.assertEqual(response.headers.get_content_type(), "image/png")
+            self.assertEqual(response.read(8), b"\x89PNG\r\n\x1a\n")
+
+    def test_new_password_requires_eight_characters(self):
+        short = Request(
+            f"{self.base_url}/api/auth/register",
+            data=json.dumps({"username": f"short-{uuid4().hex[:8]}", "password": "short77", "role": "project_manager"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as error:
+            urlopen(short, timeout=2)
+        self.assertEqual(error.exception.code, 422)
+
+        valid = Request(
+            f"{self.base_url}/api/auth/register",
+            data=json.dumps({"username": f"eight-{uuid4().hex[:8]}", "password": "Abc@1234", "role": "project_manager"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(valid, timeout=2) as response:
+            self.assertEqual(response.status, 200)
+            self.assertTrue(json.load(response)["token"])
 
     def test_local_roles_control_source_lifecycle_and_audit(self):
         suffix = uuid4().hex[:10]

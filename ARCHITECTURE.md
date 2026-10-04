@@ -1,3 +1,25 @@
+# Phase 10C M0 Frozen Architecture
+
+Scope: one construction project department, one Project Server product, Skills 01–09 only.
+
+Five layers: Experience (apps/webui role workspace); Coordination (platform/coordinator + workflow); Professional (domains + skills 01–09); Integration (connectors); Shared truth services (the existing local project JSON/workspace, content-addressed sources, audit and the new hash-linked execution ledger). The single-project scope retains the current file-based storage; PostgreSQL is not planned or required.
+
+No sixth layer. Server owns permission decisions. UI does not calculate quantities or amounts. All formal results follow Candidate -> Review -> Human Gate -> Confirmed -> Canonical. Agents, connectors and file imports cannot directly promote. A latest record never becomes Canonical automatically.
+
+M0 is declarative and disabled. Database migration is a comment-only marker; there is no new API, worker, scheduler, installer or UI. YAML/JSON/MCP/CLI remain developer implementation details; ordinary user flow is Open -> Input -> Execute -> Result.
+
+## Compatibility and reuse
+
+Existing core/, plugins/, adapters/, gui/, migrations/, runtime/, examples/, docker/ and packaging are preserved, excluded from new-directory creation freeze. They are legacy reuse candidates, not proof of Phase 10 conformity. Original architecture below describes that legacy implementation. In particular old P09 outcome projection is NOT new Skill 09 quality evidence. M1 must audit ownership, eight-role mapping and single-project isolation before wiring.
+
+## Contracts and ownership
+
+contracts/ describes project-scoped events, immutable evidence metadata, candidate-only connector responses, denied-by-default permissions, disabled capability/product registries and workflows. workflows/templates and skills contain exactly nine disabled descriptors. Every executable handler remains null. Provisional IDs and incomplete original freeze evidence block production wiring; see docs/m0/M1_ENTRY.md.
+
+---
+
+## Legacy architecture retained for migration review
+
 # Architecture
 
 ## P09 outcome projection

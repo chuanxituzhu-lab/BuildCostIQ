@@ -3,12 +3,15 @@ from __future__ import annotations
 import ast
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from adapters.deployment import DeploymentConfig, StorageRoots
+from gui import server as server_module
 from gui.server import _ROLE_WORKSPACE_VIEWS, create_server
 
 
@@ -16,6 +19,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoleUiBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_config = server_module.DEPLOYMENT_CONFIG
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="buildcostiq-role-boundary-test-")
+        roots = StorageRoots.from_environment({"BUILDCOSTIQ_DATA_ROOT": str(Path(self.temp_dir.name) / "data")})
+        server_module._configure_deployment(
+            DeploymentConfig(mode="single-node", node_id="role-boundary-test", host="127.0.0.1", port=0, roots=roots)
+        )
+
+    def tearDown(self):
+        server_module._configure_deployment(self.previous_config)
+        self.temp_dir.cleanup()
+
     def test_frontend_role_catalog_matches_server_and_has_no_stale_baseline(self):
         app_text = (ROOT / "gui" / "static" / "app.js").read_text(encoding="utf-8")
         match = re.search(r"const ROLE_VIEW_ACCESS = \{(?P<body>.*?)\n\};", app_text, re.DOTALL)

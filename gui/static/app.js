@@ -6,17 +6,20 @@ const $ = (id) => document.getElementById(id);
 // in their original language; only the presentation follows this selector.
 const LANGUAGE_STORAGE_KEY = "buildcostiq_language";
 const UI_TRANSLATIONS = {
+  "新版施工范围（01–09）": "New delivery scope (01–09)",
+  "01 造价依据（政府行业文件） · 02 投标工作流 · 03 中标工作流 · 04 施工中造价工作流 · 05 竣工结算工作流 · 06 共享造价能力底座 · 07 工程量计算复核 · 08 PDF/CAD/BIM 提量工具 · 09 施工项目试验报告系统": "01 Government and industry cost basis · 02 Tender workflow · 03 Award workflow · 04 Construction cost workflow · 05 Final settlement workflow · 06 Shared cost foundation · 07 Quantity calculation and review · 08 PDF/CAD/BIM quantity takeoff · 09 Project testing reports",
+  "01–05、07–09 已接入单项目人工流程；06 提供共享审批、证据、版本和恢复底座。": "Modules 01–05 and 07–09 now run human-controlled single-project workflows; Module 06 provides shared approval, evidence, versioning, and recovery services.",
   "语言": "Language", "界面语言": "Interface language", "中文": "Chinese", "English": "English",
   "造价资料工作台": "Cost Workspace", "把清单资料、成本计划和结算初审集中在一个工作面完成。": "Manage BOQ data, cost planning, and settlement pre-review in one workspace.",
   "版本信息读取中": "Loading release information", "查资料或问问题": "Search data or ask a question", "检索": "Search",
   "P09 仍只由 P01–P08 事实派生": "P09 is derived only from P01–P08 facts", "人员名册按项目独立维护": "Personnel rosters are maintained per project", "首页按岗位提供输入→操作→成果→复核手册": "The home page provides a role-based input → action → output → review manual", "项目经理或授权行政人员可在当前项目新增人员": "Project managers or authorized administrative officers can add personnel to the current project",
-  "资料服务连接中": "Connecting to data service", "资料服务就绪": "Data service ready", "资料服务不可用": "Data service unavailable",
+  "资料服务连接中": "Connecting to data service", "资料服务就绪": "Data service ready", "资料服务不可用": "Data service unavailable", "岗位操作手册": "Role Operation Manual", "岗位成果": "Role Product", "BuildCostIQ / 造价工作台": "BuildCostIQ / Cost Workspace", "注册": "Register", "项目邀请": "Project Invite",
   "当前版本": "Current version", "退出登录": "Sign out", "登录本地工作台": "Sign in to local workspace",
   "登录后首页就是你的岗位操作手册：先看本岗位输入，再按步骤保存成果，最后提交责任线复核。项目经理负责经营指标和人员治理；造价经理负责造价业务；生产、技术、现场、物资和资料岗位只处理各自工作面。": "After signing in, the home page becomes your role manual: review inputs, save outputs step by step, and submit them for responsibility-line review. Project managers handle KPIs and personnel governance; cost managers handle commercial work; production, technical, field, material, and document roles stay within their own work surfaces.",
-  "人员登录": "Personnel sign-in", "初始化账号": "Initialize account", "用户名": "Username", "密码": "Password", "登录": "Sign in", "注册并进入": "Register and enter", "接受岗位邀请": "Accept role invitation", "接受邀请并进入": "Accept invitation and enter", "设置登录密码（至少 6 位）": "Set login password (at least 6 characters)", "岗位邀请已准备好。接受后会创建或接管一个账号，并只绑定到邀请对应的项目。": "A role invitation is ready. Accept it to create or take over an account bound only to the invited project.",
+  "人员登录": "Personnel sign-in", "初始化账号": "Initialize account", "用户名": "Username", "密码": "Password", "登录": "Sign in", "注册并进入": "Register and enter", "接受岗位邀请": "Accept role invitation", "接受邀请并进入": "Accept invitation and enter", "设置登录密码（至少 8 位）": "Set login password (at least 8 characters)", "岗位邀请已准备好。接受后会创建或接管一个账号，并只绑定到邀请对应的项目。": "A role invitation is ready. Accept it to create or take over an account bound only to the invited project.",
   "已登记人员直接使用项目经理/行政人员提供的姓名（登录名）和初始密码进入对应岗位工作台。": "Registered personnel use the name (login) and initial password provided by the project manager or administrative officer.",
   "首次使用或本机初始化时注册管理账号；日常岗位人员由项目经理或已授权行政人员在人员管理中登记。": "Register a management account for first use or local initialization; daily personnel are registered by the project manager or an authorized administrative officer.",
-  "密码（至少 6 位）": "Password (at least 6 characters)", "工作台角色": "Workspace role",
+  "密码（至少 8 位）": "Password (at least 8 characters)", "工作台角色": "Workspace role",
   "造价经理（造价业务）": "Cost Manager (commercial)", "项目经理工作台（指标与人员治理）": "Project Manager (KPIs & personnel)", "造价员（造价操作）": "Cost Estimator (cost operations)",
   "技术负责人": "Technical Lead", "生产经理": "Production Manager", "施工员/测量员": "Site Engineer / Surveyor", "测量员": "Surveyor", "质量负责人": "Quality Officer", "试验检测员": "Lab Testing Officer", "资料员": "Document Controller", "安全员": "Safety Officer", "采购员": "Procurement Officer", "仓管员": "Warehouse Officer", "行政人员（需授权后管理人员）": "Administrative Officer (authorization required)",
   "项目资料与工作协助": "Project data and work assistance", "当前项目": "Current project", "当前资料": "Current data", "整体状态": "Overall status", "等待接入": "Waiting for data", "准备开始": "Ready to start",
@@ -139,11 +142,52 @@ const UI_PHRASE_TRANSLATIONS = {
   "确认清单、依据、计价口径和金额快照": "confirms BOQ, basis, pricing basis, and amount snapshot",
 };
 
+// Some legacy page sections were authored with English eyebrow labels. Keep
+// their source strings for the optional English UI, but render these labels in
+// Chinese for the default Chinese interface.
+const UI_CHINESE_LABELS = {
+  "PROJECT WORKSPACE": "项目工作区",
+  "ADAPTER AUDIT": "适配器审计", "AUDIT EVIDENCE MATCH": "审计证据匹配", "AUDIT TRAIL": "审计记录",
+  "AUTHORIZED WORK SURFACES": "已授权工作面", "AUTOMATED ALERTS": "自动预警", "BASELINE / COMPARISON": "基线与对比",
+  "BASELINE ENTRIES": "基线记录", "BASIS INTAKE": "依据录入", "BASIS REFERENCE": "依据引用", "BOQ ITEMS": "清单项",
+  "BOUNDARY": "范围边界", "CHANGE REGISTER": "变更台账", "COLLABORATION / RELATION GRAPH": "协同与关系图",
+  "CONTRACT FILE INTAKE": "合同资料录入", "CONTRACTS": "合同", "COORDINATION WORKFLOW": "协同流程",
+  "CORE / ENGINEERING EVENT KERNEL": "共享核心 / 工程事件内核", "COST PLANNING": "成本计划", "DAILY QUEUE": "今日待办",
+  "只使用现有 Event → Evidence → Verification → Outcome": "只使用现有工程事件 → 证据 → 核验 → 成果",
+  "DATA SUMMARY": "资料概览", "DECISION LOG": "决策记录", "DISTILLATION PIPELINE": "事实提炼流程",
+  "DOCUMENT INTAKE": "资料收件", "DRAWING REGISTER": "图纸台账", "EVENT INTAKE": "工程事件收件",
+  "EVENT STATE VECTOR": "工程事件状态", "EVENT-DRIVEN WORK QUEUE": "工程事件待办", "EVIDENCE AUTO-LINK": "证据自动关联",
+  "EVIDENCE LINKS": "证据关联", "EVIDENCE POLICY": "证据规则", "EVIDENCE-GROUNDED ANSWER": "有据可查的答复",
+  "EXPORT NOTE": "导出说明", "EXPORT SETTINGS": "导出设置", "EXTERNAL BASIS LIBRARY": "外部依据库",
+  "FIXED HANDOFF CONTRACT": "固定交接规则", "INBOX / HISTORY": "收件箱 / 历史", "ISSUE QUEUE": "问题待办",
+  "LABOR / MATERIAL / MACHINERY": "人工 / 材料 / 机械", "LINE ADAPTERS": "专业线适配器", "LOCAL BASIS CATALOG": "本地依据目录",
+  "LOCAL COST LOOP · v0.8.0-rc9": "本地造价闭环 · v0.8.0-rc9", "LOCAL EVIDENCE SEARCH": "本地证据检索",
+  "LOCAL EXPORT CENTER": "本地导出中心", "LOCAL USERS": "本地人员", "NEW PERSONNEL": "新增人员",
+  "OBLIGATIONS": "责任事项", "OUTCOME / VALUE LEAK": "成果 / 价值流失", "OUTCOME FUNNEL": "成果转化漏斗",
+  "P01 — P09 COVERAGE": "旧版 P01–P09 能力覆盖", "P01 — P09 WORKBENCH": "旧版 P01–P09 工作台",
+  "P01 CONTRACT / PROCUREMENT BASIS": "P01 合同与招采依据", "P03 DRAWINGS INTAKE": "P03 图纸资料录入",
+  "P04 BASELINE LEDGER": "P04 基线台账", "P06 CHANGE MANAGEMENT": "P06 变更管理",
+  "P07 EVIDENCE LINKAGE": "P07 证据关联", "P09 OUTCOME MANAGEMENT": "P09 成果经营管理",
+  "PERMISSION POLICY": "权限规则", "PERSONNEL AUDIT TRAIL": "人员审计记录", "PERSONNEL MANAGEMENT": "人员管理",
+  "PRECONSTRUCTION CONTROL": "开工前控制", "PRICE BOOK": "价格库", "PROJECT CONTROL": "项目控制",
+  "PROJECT FILES": "项目资料", "PROJECT INTELLIGENCE": "项目经营分析", "PROJECT INVITE": "项目邀请",
+  "PROJECT SETUP": "项目配置", "RECENT DATA": "最近资料", "RECOGNITION": "资料识别", "REGISTER": "注册",
+  "RISK COLORS": "风险颜色", "ROLE CONTROL": "岗位权限", "ROLE DATA INTELLIGENCE": "岗位数据洞察",
+  "ROLE EXECUTION LOOP": "岗位执行流程", "ROLE HANDOFF": "岗位交接", "ROLE INVITE": "岗位邀请",
+  "ROLE OPERATION MANUAL · v0.8.0-rc9": "岗位操作手册", "ROLE RESPONSIBILITY CHAIN": "岗位责任链",
+  "ROLE WORKBENCH": "岗位工作台", "ROLE-OWNED WORK PRODUCTS": "岗位成果", "SETTLEMENT REVIEW": "结算初审",
+  "SHARED FOUNDATION": "共享底座", "SIGN IN": "人员登录", "TARGET FOLDER": "目标目录", "TASK QUEUE": "工作待办",
+  "TODAY'S WORK": "今日工作", "TOOL ENTRY": "工具入口", "TRACEABLE RESULTS": "可追溯成果",
+  "VALUE LEAK": "价值流失", "WEEKLY / MONTHLY": "周度 / 月度", "WORK ASSIST": "工作协助",
+};
+
 // Backend contracts keep stable enum codes; the visible label follows the
 // selected UI language. This is separate from UI_TRANSLATIONS because a code
 // such as RECEIPT has no Chinese source text for the generic text translator
 // to recover when the page starts in Chinese.
 const UI_OPTION_LABELS = {
+  zh: { zh: "中文", en: "Chinese" },
+  en: { zh: "英文", en: "English" },
   GO: { zh: "通过", en: "Go" },
   OPTIMIZE: { zh: "优化", en: "Optimize" },
   HOLD: { zh: "暂缓", en: "Hold" },
@@ -184,20 +228,28 @@ const i18nAttributeSources = new WeakMap();
 let i18nApplying = false;
 
 function selectedLanguage() {
-  const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-  if (stored === "zh" || stored === "en") return stored;
-  // Chinese is the safe first-run default. A deliberate user selection is
-  // persisted, so English remains available without making a fresh project
-  // unexpectedly switch language because of the browser locale.
+  localStorage.removeItem(LANGUAGE_STORAGE_KEY);
   return "zh";
 }
 
 function translateUiText(value) {
   const source = String(value ?? "");
-  if (state.language !== "en" || !source.trim()) return source;
+  if (!source.trim()) return source;
   const leading = source.match(/^\s*/)?.[0] || "";
   const trailing = source.match(/\s*$/)?.[0] || "";
   const core = source.trim();
+  if (state.language !== "en") {
+    if (UI_CHINESE_LABELS[core]) return `${leading}${UI_CHINESE_LABELS[core]}${trailing}`;
+    const fileIntake = core.match(/^([A-Z]+) FILE INTAKE$/);
+    if (fileIntake) {
+      const stageNames = { drawings: "图纸", baseline: "零号台账", changes: "变更", evidence: "证据", plan: "成本计划", review: "结算" };
+      const stage = stageNames[fileIntake[1].toLowerCase()];
+      if (stage) return `${leading}${stage}资料录入${trailing}`;
+    }
+    const subcontract = core.match(/^SUBCONTRACT WORKFLOW · (.+)$/);
+    if (subcontract) return `${leading}分包协同流程 · ${subcontract[1]}${trailing}`;
+    return source;
+  }
   if (UI_PHRASE_TRANSLATIONS[core]) return `${leading}${UI_PHRASE_TRANSLATIONS[core]}${trailing}`;
   if (UI_TRANSLATIONS[core]) return `${leading}${UI_TRANSLATIONS[core]}${trailing}`;
   let translated = core;
@@ -240,8 +292,6 @@ function applyLanguage(root = document) {
       element.setAttribute(attribute, translateUiText(sources[attribute]));
     });
   });
-  const selector = $("languageSelect");
-  if (selector) selector.value = state.language;
   i18nApplying = false;
 }
 
@@ -290,6 +340,7 @@ const state = {
   deployment: null,
   coordination: null,
   lineContracts: null,
+  businessWorkflows: { modules: [], runs: [], handoffs: [], evidence_sources: [], recovery: null, ledger: null },
   roleWorkProducts: { contracts: {}, records: [], incoming_count: 0, policy: null, intelligence: { contracts: {}, alerts: [], alert_counts: {} } },
   linePreview: null,
   sources: [],
@@ -444,19 +495,19 @@ function currentRole() {
 // the server-side permissions: it controls what a role can discover, while
 // every write/read API still enforces its own permission at the boundary.
 const ROLE_VIEW_ACCESS = {
-  project_manager: ["overview", "dashboard", "search", "events", "p09", "coordination", "personnel"],
-  cost_manager: ["overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "evidence", "review", "p09", "coordination", "basis", "dashboard", "control"],
-  cost_estimator: ["overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "evidence", "coordination", "basis"],
-  technical_lead: ["overview", "drawings", "changes", "events", "evidence", "coordination"],
-  production_manager: ["overview", "drawings", "changes", "events", "evidence", "coordination", "dashboard"],
-  site_engineer: ["overview", "drawings", "events", "evidence", "coordination"],
-  surveyor: ["overview", "drawings", "events", "evidence", "coordination"],
-  quality_officer: ["overview", "drawings", "events", "evidence", "coordination"],
-  lab_testing_officer: ["overview", "drawings", "events", "evidence", "coordination"],
-  document_controller: ["overview", "search", "contract", "drawings", "evidence", "coordination"],
-  safety_officer: ["overview", "drawings", "changes", "events", "evidence", "coordination"],
-  procurement_officer: ["overview", "contract", "events", "evidence", "coordination"],
-  warehouse_officer: ["overview", "events", "evidence", "coordination"],
+  project_manager: ["overview", "dashboard", "search", "events", "business-workflows", "p09", "coordination", "personnel"],
+  cost_manager: ["overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "business-workflows", "evidence", "review", "p09", "coordination", "basis", "dashboard", "control"],
+  cost_estimator: ["overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "business-workflows", "evidence", "coordination", "basis"],
+  technical_lead: ["overview", "drawings", "changes", "events", "business-workflows", "evidence", "coordination"],
+  production_manager: ["overview", "drawings", "changes", "events", "business-workflows", "evidence", "coordination", "dashboard"],
+  site_engineer: ["overview", "drawings", "events", "business-workflows", "evidence", "coordination"],
+  surveyor: ["overview", "drawings", "events", "business-workflows", "evidence", "coordination"],
+  quality_officer: ["overview", "drawings", "events", "business-workflows", "evidence", "coordination"],
+  lab_testing_officer: ["overview", "drawings", "events", "business-workflows", "evidence", "coordination"],
+  document_controller: ["overview", "search", "contract", "drawings", "business-workflows", "evidence", "coordination"],
+  safety_officer: ["overview", "drawings", "changes", "events", "business-workflows", "evidence", "coordination"],
+  procurement_officer: ["overview", "contract", "events", "business-workflows", "evidence", "coordination"],
+  warehouse_officer: ["overview", "events", "business-workflows", "evidence", "coordination"],
   administrative_officer: ["overview", "coordination", "personnel"],
 };
 
@@ -1420,7 +1471,7 @@ function renderDashboard() {
       ? "查看全部成本明细、基线比对、变更、证据链和审查结果。"
       : spec.focus;
   const manual = ROLE_OPERATION_MANUALS[currentRole()] || ROLE_OPERATION_MANUALS.project_manager;
-  const manualPanel = '<section class="dashboard-panel role-manual-panel"><div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc7</span><h3>' + (isProjectManager() ? "项目经理操作手册" : "本岗位操作手册") + '</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div><div class="overview-cards role-manual-cards"><div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>' + escapeHtml(manual.start) + '</small></div><div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>' + escapeHtml(manual.save) + '</small></div><div class="overview-card"><span class="card-label">交付成果</span><strong>协同</strong><small>' + escapeHtml(manual.handoff) + '</small></div><div class="overview-card"><span class="card-label">完成前复述</span><strong>检查</strong><small>' + escapeHtml(manual.check) + '</small></div></div></section>';
+  const manualPanel = '<section class="dashboard-panel role-manual-panel"><div class="surface-title"><div><span class="panel-label">岗位操作手册</span><h3>' + (isProjectManager() ? "项目经理操作手册" : "本岗位操作手册") + '</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div><div class="overview-cards role-manual-cards"><div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>' + escapeHtml(manual.start) + '</small></div><div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>' + escapeHtml(manual.save) + '</small></div><div class="overview-card"><span class="card-label">交付成果</span><strong>协同</strong><small>' + escapeHtml(manual.handoff) + '</small></div><div class="overview-card"><span class="card-label">完成前复述</span><strong>检查</strong><small>' + escapeHtml(manual.check) + '</small></div></div></section>';
   const planAction = isProjectManager() || !canAccessView("plan") ? "" : '<button class="button button-quiet" data-view="plan" type="button">查看成本计划</button>';
   const reviewAction = isCostManager() ? '<button class="button button-quiet" data-view="review" type="button">查看结算初审</button>' : "";
   $("workspaceContent").innerHTML =
@@ -1866,7 +1917,7 @@ function renderRoleWorkProductPanel() {
     const fixedHandoffValue = fixedHandoffs.join(",");
     const fields = (contract.input_fields || []).map((field) => roleProductFieldMarkup(role, field)).join("");
     return `<article class="role-product-card">
-      <div class="surface-title"><div><span class="panel-label">${escapeHtml(contract.product_type || "ROLE PRODUCT")}</span><h3>${escapeHtml(contract.label || role)}</h3></div><span class="surface-caption">独立成果 · 可追溯交接</span></div>
+      <div class="surface-title"><div><span class="panel-label">${escapeHtml(contract.product_type || "岗位成果")}</span><h3>${escapeHtml(contract.label || role)}</h3></div><span class="surface-caption">独立成果 · 可追溯交接</span></div>
       <p class="business-note"><strong>本岗位只录入：</strong>${escapeHtml(contract.save_policy || "只保存本岗位事实和成果。")}</p>
       <div class="role-product-output-strip"><span>形成成果</span><strong>${escapeHtml((contract.outputs || []).join("、"))}</strong></div>
       <div class="role-product-collab-strip"><span>协同对象</span><strong>${escapeHtml((collaboration.objects || []).join("、") || "按责任线交接")}</strong><small>接收：${escapeHtml((collaboration.receives_from || []).map(roleLabels).join("、") || "项目输入")} · 交付：${escapeHtml((collaboration.hands_to || []).map(roleLabels).join("、") || "按需交接")}</small></div>
@@ -1971,7 +2022,7 @@ function renderRoleOverview() {
     ${renderEventAssignmentPanel()}
     ${renderEvidenceAutoPanel()}
     <section class="overview-panel role-manual-panel">
-      <div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc7</span><h3>岗位操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
+      <div class="surface-title"><div><span class="panel-label">岗位操作手册</span><h3>岗位操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
       <div class="overview-cards role-manual-cards">
         <div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>${escapeHtml(manual.start)}</small></div>
         <div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>${escapeHtml(manual.save)}</small></div>
@@ -2028,7 +2079,7 @@ function renderOverview() {
       <button class="overview-card" data-view="review" type="button"><span class="card-label">结算初审</span><strong>${review ? (review.publishable ? "通过" : "需处理") : "—"}</strong><small>${review ? `${review.summary.finding_count} 个审查事项` : "尚未运行"}</small></button>
     </div>
     <section class="overview-panel role-manual-panel">
-      <div class="surface-title"><div><span class="panel-label">ROLE OPERATION MANUAL · v0.8.0-rc7</span><h3>造价经理操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
+      <div class="surface-title"><div><span class="panel-label">岗位操作手册</span><h3>造价经理操作手册</h3></div><span class="surface-caption">费曼四步：说清楚 → 动手做 → 交成果 → 找漏洞</span></div>
       <div class="overview-cards role-manual-cards">
         <div class="overview-card"><span class="card-label">先说清楚</span><strong>输入</strong><small>${escapeHtml(manual.start)}</small></div>
         <div class="overview-card"><span class="card-label">动手保存</span><strong>操作</strong><small>${escapeHtml(manual.save)}</small></div>
@@ -4638,6 +4689,140 @@ function renderBlockedStep(title, message, actionLabel, view) {
   $("blockedAction").addEventListener("click", () => setView(view));
 }
 
+function workflowRequestKey() {
+  return window.crypto?.randomUUID?.() || `wf-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function workflowFieldMarkup(module, values = {}) {
+  return (module.fields || []).map((field) => {
+    const value = escapeHtml(values[field.key] || "");
+    const required = field.required ? "required" : "";
+    const type = field.kind === "date" ? "date" : field.kind === "decimal" ? "number" : "text";
+    const input = ["scope", "formula", "variance", "limitations", "conclusion", "comparison_basis"].includes(field.key)
+      ? `<textarea name="${escapeHtml(field.key)}" maxlength="500" ${required}>${value}</textarea>`
+      : `<input name="${escapeHtml(field.key)}" type="${type}" maxlength="500" ${type === "number" ? 'step="any"' : ""} value="${value}" ${required}>`;
+    return `<label>${escapeHtml(field.label)}${field.required ? " <span class=\"required-mark\">*</span>" : ""}${input}${field.help ? `<small>${escapeHtml(field.help)}</small>` : ""}</label>`;
+  }).join("");
+}
+
+function workflowEvidenceMarkup(name, selected = []) {
+  const sources = state.businessWorkflows?.evidence_sources || [];
+  if (!sources.length) return '<p class="workflow-hint">请先到“项目总览 → 项目资料库”上传并归档原始资料，再回来关联证据。</p>';
+  return `<fieldset class="workflow-evidence"><legend>${name}</legend>${sources.map((source) => {
+    const ref = String(source.reference || "");
+    return `<label><input type="checkbox" name="evidence_refs" value="${escapeHtml(ref)}" ${selected.includes(ref) ? "checked" : ""}><span>${escapeHtml(source.name)}<small>${escapeHtml(ref.slice(0, 20))}…</small></span></label>`;
+  }).join("")}</fieldset>`;
+}
+
+function workflowRunForm(module, run) {
+  return `<form class="workflow-record-form" data-workflow-run="${escapeHtml(run.run_id)}">
+    <div class="workflow-form-grid">${workflowFieldMarkup(module, run.fields || {})}</div>
+    ${workflowEvidenceMarkup("关联原始证据", run.evidence_refs || [])}
+    <div class="button-row"><button class="button button-quiet" type="submit" data-workflow-action="update">保存补正</button><button class="button button-primary" type="submit" data-workflow-action="submit">提交复核</button></div>
+  </form>`;
+}
+
+function workflowReviewForm(run, step) {
+  const roles = new Set(currentRoles());
+  const allowed = (step.roles || []).some((role) => roles.has(role));
+  const separated = run.created_by !== state.auth.user?.id && !(run.step_actors || []).includes(state.auth.user?.id);
+  if (!allowed || !separated) return `<p class="workflow-hint">当前待办：${escapeHtml(step.label)}；系统已按岗位分派，当前账号不能重复签署或越岗审批。</p>`;
+  return `<form class="workflow-decision-form" data-workflow-run="${escapeHtml(run.run_id)}" data-workflow-step="${escapeHtml(step.key)}">
+    <h4>${escapeHtml(step.label)}</h4><p class="workflow-hint">逐项核对清单；通过必须关联至少一份项目原始证据。</p>
+    <div class="workflow-checklist">${step.checks.map((item, index) => `<label><input type="checkbox" name="check_${index}" data-check-key="${escapeHtml(item)}"><span>${escapeHtml(item)}</span></label>`).join("")}</div>
+    ${workflowEvidenceMarkup("本次复核/验收证据", [])}
+    <label class="workflow-note-label">审核意见<textarea name="note" maxlength="400" placeholder="退回或拒绝时必须说明原因"></textarea></label>
+    <div class="button-row"><button class="button button-primary" type="submit" data-decision="approve">确认本步骤</button><button class="button button-quiet" type="submit" data-decision="return">退回补正</button><button class="button button-danger" type="submit" data-decision="reject">拒绝终止</button></div>
+  </form>`;
+}
+
+async function submitBusinessWorkflow(payload) {
+  setError("");
+  try {
+    const response = await apiJson("/api/business-workflows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: state.projectId, idempotency_key: workflowRequestKey(), ...payload }) });
+    state.businessWorkflows = response;
+    setStatus("业务流程已保存，操作已写入共享底座账本");
+    renderBusinessWorkflows();
+  } catch (error) {
+    setError(error.message);
+  }
+}
+
+async function renderBusinessWorkflows() {
+  const target = $("workspaceContent");
+  target.innerHTML = '<div class="empty-state">正在读取本地流程账本…</div>';
+  try {
+    state.businessWorkflows = await apiJson(`/api/business-workflows?project_id=${encodeURIComponent(state.projectId)}`);
+  } catch (error) {
+    setError(error.message);
+    target.innerHTML = `<div class="blocked-step"><h3>流程账本读取失败</h3><p>${escapeHtml(error.message)}</p><button class="button button-quiet" type="button" data-workflow-retry>重新读取</button></div>`;
+    target.querySelector("[data-workflow-retry]")?.addEventListener("click", renderBusinessWorkflows);
+    return;
+  }
+  if (state.view !== "business-workflows") return;
+  const data = state.businessWorkflows;
+  const modules = data.modules || [];
+  const selectedId = $("workflowModuleSelect")?.value || "01";
+  const selected = modules.find((module) => module.module_id === selectedId) || modules[0];
+  const status = data.recovery?.status === "replayed" ? `重启恢复：已从校验通过的本地事件账本重建 ${data.recovery.event_count} 条事件的流程状态` : "共享底座恢复状态待检查";
+  const createPanel = selected ? `<section class="workflow-panel"><div class="surface-title"><div><span class="panel-label">新建流程</span><h3>建立一项新版业务记录</h3></div><span class="surface-caption">资料先留草稿；提交后按岗位复核、审批与专业验收</span></div>
+    <label class="workflow-module-select">选择流程<select id="workflowModuleSelect">${modules.map((module) => `<option value="${escapeHtml(module.module_id)}" ${module.module_id === selected.module_id ? "selected" : ""}>${escapeHtml(module.module_id)} · ${escapeHtml(module.name)}</option>`).join("")}</select></label>
+    <p class="workflow-hint">提交责任岗位：${escapeHtml(selected.submit_roles.join("、"))}。行业标准、金额判断和专业结论由责任人核对原件，系统不会自动批准。</p>
+    <form id="workflowCreateForm"><div class="workflow-form-grid">${workflowFieldMarkup(selected)}</div>${workflowEvidenceMarkup("关联本项目已归档资料（可先保存草稿）", [])}<div class="button-row"><button class="button button-primary" type="submit">保存为草稿</button></div></form></section>` : "";
+  const runCards = (data.runs || []).map((run) => {
+    const module = modules.find((item) => item.module_id === run.module_id);
+    const currentStep = (run.steps || []).find((step) => step.key === run.current_step);
+    const latestEvent = [...(run.history || [])].reverse().find((event) => !["RESULT_VERSIONED", "CHECKPOINT_CREATED"].includes(event.event_type));
+    const timeline = (run.history || []).slice(-8).map((event) => `<li><span>${escapeHtml(new Date(event.occurred_at).toLocaleString("zh-CN"))}</span><strong>${escapeHtml(({ RUN_CREATED: "已建草稿", INPUT_REGISTERED: "资料已更新", INPUT_VALIDATED: "字段校验通过并提交", HUMAN_GATE_OPENED: "人工审核已开启", HUMAN_GATE_RESOLVED: "审核意见已记录", ACCEPTANCE_RECORDED: "专业验收已签署", FAILURE_RECORDED: "流程已退回", HANDOFF_CREATED: "已发起岗位交接", HANDOFF_CONSUMED: "接收岗位已签收" })[event.event_type] || event.event_type)}</strong></li>`).join("");
+    const canEdit = ["draft", "needs_correction"].includes(run.status) && run.created_by === state.auth.user?.id;
+    const review = currentStep ? workflowReviewForm(run, currentStep) : "";
+    const next = (module?.next_modules || []).map((id) => modules.find((item) => item.module_id === id)).filter(Boolean);
+    const canHandoff = run.status === "accepted" && next.length && currentRoles().some((role) => ["cost_manager", "project_manager"].includes(role));
+    const actionForm = canEdit ? workflowRunForm(module, run) : review;
+    return `<article class="workflow-run"><div class="workflow-run-head"><div><span class="workflow-code">${escapeHtml(run.module_id)} / ${escapeHtml(run.run_id)}</span><h3>${escapeHtml(run.workflow_name)}</h3><small>发起人：${escapeHtml(run.created_by_name || run.created_by)} · 版本 ${escapeHtml(run.version)}</small><small>Agent Ops 计划：${escapeHtml(run.agent_ops_plan?.state || "未建立")}（仅为计划状态，不代表执行或验收）</small></div><span class="workflow-status status-${escapeHtml(run.status)}">${escapeHtml(run.status_label)}</span></div>
+      <div class="workflow-record-grid">${(module?.fields || []).filter((field) => run.fields?.[field.key]).map((field) => `<div><span>${escapeHtml(field.label)}</span><strong>${escapeHtml(run.fields[field.key])}</strong></div>`).join("")}</div>
+      ${run.decision_note ? `<p class="workflow-return-note">处理意见：${escapeHtml(run.decision_note)}</p>` : ""}
+      ${run.status === "review" && currentStep ? `<p class="workflow-hint">当前责任步骤：${escapeHtml(currentStep.label)} · 可处理岗位：${escapeHtml(currentStep.roles.join("、"))}</p>${review}` : ""}
+      ${canEdit ? actionForm : ""}
+      ${canHandoff ? `<div class="workflow-handoff-actions"><span>成果可交接到：</span>${next.map((item) => `<button class="button button-quiet" data-handoff-run="${escapeHtml(run.run_id)}" data-handoff-module="${escapeHtml(item.module_id)}">${escapeHtml(item.module_id)} ${escapeHtml(item.name)}</button>`).join("")}</div>` : ""}
+      <details class="workflow-history"><summary>查看流程留痕（${(run.history || []).length} 条）</summary><ol>${timeline}</ol></details></article>`;
+  }).join("");
+  const myRoles = new Set(currentRoles());
+  const handoffCards = (data.handoffs || []).filter((item) => myRoles.has(item.recipient_role)).map((item) => {
+    const module = modules.find((entry) => entry.module_id === item.target_module_id);
+    return `<div class="workflow-handoff-card"><span>来自 ${escapeHtml(item.source_module_id)} · ${escapeHtml(item.source_run_id)}</span><strong>交给 ${escapeHtml(item.recipient_role)} 进入 ${escapeHtml(item.target_module_id)} 流程</strong><button class="button button-quiet" data-consume-handoff="${escapeHtml(item.handoff_id)}" data-handoff-module="${escapeHtml(item.target_module_id)}">签收并重新复核</button></div>`;
+  }).join("");
+  target.innerHTML = `<div class="surface-title"><div><span class="panel-label">新版 01–09</span><h3>单项目部业务流程</h3></div><span class="surface-caption">S06 共享审批、证据、版本与恢复底座 · Agent Ops 只辅助计划</span></div>
+    <section class="workflow-foundation"><strong>共享底座：${data.ledger?.valid ? "账本校验通过" : "账本校验失败"}</strong><span>${escapeHtml(status)} · 所有流程均需责任岗位人工签署。</span></section>
+    ${createPanel}
+    ${handoffCards ? `<section class="workflow-panel"><div class="surface-title"><div><span class="panel-label">岗位交接</span><h3>等待我签收的成果</h3></div></div><div class="workflow-handoff-list">${handoffCards}</div></section>` : ""}
+    <section class="workflow-panel"><div class="surface-title"><div><span class="panel-label">流程台账</span><h3>已建立的流程</h3></div><span class="surface-caption">${(data.runs || []).length} 项</span></div>${runCards || '<p class="empty-state">还没有业务流程记录。</p>'}</section>`;
+  $("workflowModuleSelect")?.addEventListener("change", renderBusinessWorkflows);
+  $("workflowCreateForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = Object.fromEntries([...form.querySelectorAll("[name]")].filter((el) => el.name !== "evidence_refs").map((el) => [el.name, el.value]));
+    const evidence_refs = [...form.querySelectorAll('[name="evidence_refs"]:checked')].map((el) => el.value);
+    submitBusinessWorkflow({ action: "create", module_id: selected.module_id, fields, evidence_refs });
+  });
+  target.querySelectorAll(".workflow-record-form").forEach((form) => form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const button = event.submitter;
+    const fields = Object.fromEntries([...form.querySelectorAll("[name]")].filter((el) => el.name !== "evidence_refs").map((el) => [el.name, el.value]));
+    const evidence_refs = [...form.querySelectorAll('[name="evidence_refs"]:checked')].map((el) => el.value);
+    submitBusinessWorkflow({ action: button?.dataset.workflowAction || "update", run_id: form.dataset.workflowRun, module_id: data.runs.find((item) => item.run_id === form.dataset.workflowRun)?.module_id, fields, evidence_refs });
+  }));
+  target.querySelectorAll(".workflow-decision-form").forEach((form) => form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const button = event.submitter;
+    const checklist = Object.fromEntries([...form.querySelectorAll("[data-check-key]")].map((el) => [el.dataset.checkKey, el.checked]));
+    const evidence_refs = [...form.querySelectorAll('[name="evidence_refs"]:checked')].map((el) => el.value);
+    submitBusinessWorkflow({ action: "decide", run_id: form.dataset.workflowRun, module_id: data.runs.find((item) => item.run_id === form.dataset.workflowRun)?.module_id, step: form.dataset.workflowStep, decision: button?.dataset.decision, checklist, note: form.querySelector('[name="note"]')?.value || "", evidence_refs });
+  }));
+  target.querySelectorAll("[data-handoff-run]").forEach((button) => button.addEventListener("click", () => submitBusinessWorkflow({ action: "handoff", run_id: button.dataset.handoffRun, module_id: data.runs.find((item) => item.run_id === button.dataset.handoffRun)?.module_id, target_module_id: button.dataset.handoffModule })));
+  target.querySelectorAll("[data-consume-handoff]").forEach((button) => button.addEventListener("click", () => submitBusinessWorkflow({ action: "consume_handoff", handoff_id: button.dataset.consumeHandoff, module_id: button.dataset.handoffModule })));
+}
+
 function bindViewButtons() {
   document.querySelectorAll("#workspaceContent [data-view], #assistList [data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 }
@@ -4657,6 +4842,7 @@ function setView(view) {
   if (view === "plan") renderPlan();
   if (view === "changes") renderChanges();
   if (view === "events") renderEvents();
+  if (view === "business-workflows") renderBusinessWorkflows();
   if (view === "evidence") renderEvidence();
   if (view === "review") renderReview();
   if (view === "export") renderExportWorkspace();
@@ -4741,17 +4927,6 @@ $("inviteForm")?.addEventListener("submit", submitInvite);
 $("logoutButton").addEventListener("click", logout);
 $("globalSearchForm").addEventListener("submit", submitGlobalSearch);
 
-function switchLanguage(event) {
-  const language = event.target.value === "en" ? "en" : "zh";
-  state.language = language;
-  localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
-  applyLanguage();
-  // Re-render the active surface so labels generated from API contracts and
-  // role-specific dropdowns use the same language immediately.
-  if (state.auth.user && !$('workspaceShell').hidden) setView(state.view);
-}
-
-$("languageSelect")?.addEventListener("change", switchLanguage);
 const languageObserver = new MutationObserver(() => {
   if (!i18nApplying) applyLanguage();
 });

@@ -20,7 +20,7 @@ buildcostiq-web = "gui.server:main"
 include = ["core*", "plugins*", "adapters*", "gui*"]
 
 [tool.setuptools.package-data]
-gui = ["static/*.html", "static/*.css", "static/*.js"]
+gui = ["static/*.html", "static/*.css", "static/*.js", "static/*.png", "static/*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

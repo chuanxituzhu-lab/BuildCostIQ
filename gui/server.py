@@ -57,6 +57,7 @@ from adapters.role_intelligence import ROLE_DEPARTMENT_HEADS, role_intelligence_
 from adapters.event_intake import event_intake_snapshot
 from adapters.evidence_intake import evidence_intake_snapshot
 from adapters.search import build_evidence_answer, search_local_evidence
+from domains.business_workflows import BusinessWorkflowError, BusinessWorkflowService
 from core import (
     DIMENSIONS,
     OUTCOME_ALLOWED_TRANSITIONS,
@@ -391,23 +392,23 @@ def _redact_sensitive(value: Any, actor: Mapping[str, Any] | None) -> Any:
 
 
 _ROLE_WORKSPACE_VIEWS: dict[str, set[str]] = {
-    "project_manager": {"overview", "dashboard", "search", "events", "p09", "coordination", "personnel"},
-    "cost_manager": {"overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "evidence", "review", "p09", "coordination", "basis", "dashboard", "control"},
-    "cost_estimator": {"overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "evidence", "coordination", "basis"},
+    "project_manager": {"overview", "dashboard", "search", "events", "business-workflows", "p09", "coordination", "personnel"},
+    "cost_manager": {"overview", "search", "contract", "boq", "drawings", "baseline", "plan", "changes", "events", "business-workflows", "evidence", "review", "p09", "coordination", "basis", "dashboard", "control"},
+    "cost_estimator": {"overview", "search", "contract", "boq", "baseline", "plan", "changes", "events", "business-workflows", "evidence", "coordination", "basis"},
     # Operational roles stay on their own work surfaces.  Cross-project
     # search is intentionally reserved for management/cost roles and the
     # document controller; field and material roles use their assigned P01–P08
     # surfaces, Core events, evidence, and coordination only.
-    "technical_lead": {"overview", "drawings", "changes", "events", "evidence", "coordination"},
-    "production_manager": {"overview", "drawings", "changes", "events", "evidence", "coordination", "dashboard"},
-    "site_engineer": {"overview", "drawings", "events", "evidence", "coordination"},
-    "surveyor": {"overview", "drawings", "events", "evidence", "coordination"},
-    "quality_officer": {"overview", "drawings", "events", "evidence", "coordination"},
-    "lab_testing_officer": {"overview", "drawings", "events", "evidence", "coordination"},
-    "document_controller": {"overview", "search", "contract", "drawings", "evidence", "coordination"},
-    "safety_officer": {"overview", "drawings", "changes", "events", "evidence", "coordination"},
-    "procurement_officer": {"overview", "contract", "events", "evidence", "coordination"},
-    "warehouse_officer": {"overview", "events", "evidence", "coordination"},
+    "technical_lead": {"overview", "drawings", "changes", "events", "business-workflows", "evidence", "coordination"},
+    "production_manager": {"overview", "drawings", "changes", "events", "business-workflows", "evidence", "coordination", "dashboard"},
+    "site_engineer": {"overview", "drawings", "events", "business-workflows", "evidence", "coordination"},
+    "surveyor": {"overview", "drawings", "events", "business-workflows", "evidence", "coordination"},
+    "quality_officer": {"overview", "drawings", "events", "business-workflows", "evidence", "coordination"},
+    "lab_testing_officer": {"overview", "drawings", "events", "business-workflows", "evidence", "coordination"},
+    "document_controller": {"overview", "search", "contract", "drawings", "business-workflows", "evidence", "coordination"},
+    "safety_officer": {"overview", "drawings", "changes", "events", "business-workflows", "evidence", "coordination"},
+    "procurement_officer": {"overview", "contract", "events", "business-workflows", "evidence", "coordination"},
+    "warehouse_officer": {"overview", "events", "business-workflows", "evidence", "coordination"},
     "administrative_officer": {"overview", "coordination", "personnel"},
 }
 
@@ -823,6 +824,8 @@ def _project(payload: object, actor: Mapping[str, Any] | None = None) -> dict[st
     existed = PROJECT_WORKSPACE.load(project_id) is not None
     state = PROJECT_WORKSPACE.create(project_id, name)
     if actor and not existed:
+        AUTH_STORE.ensure_project_membership(project_id)
+        AUTH_STORE.add_user_to_project(project_id, str(actor.get("id", "")))
         state = PROJECT_WORKSPACE.append_audit(project_id, "project.created", actor, project_id, {"name": name})
     return state
 
@@ -1353,6 +1356,8 @@ def _workspace(project_id: str) -> dict[str, Any]:
         state["collaboration"] = {"tasks": [], "decisions": []}
     else:
         collaboration.setdefault("tasks", [])
+
+
         collaboration.setdefault("decisions", [])
     changed = False
     # Migrate events created before the Outcome projection was introduced.
@@ -1406,6 +1411,90 @@ def _workspace(project_id: str) -> dict[str, Any]:
     if changed:
         state = PROJECT_WORKSPACE.save(state)
     return state
+
+
+_AGENT_OPS_PLAN_FIELDS = {
+    "project_id",
+    "run_id",
+    "workflow_id",
+    "module_id",
+    "target_type",
+    "target_id",
+    "payload_summary",
+    "evidence_refs",
+    "result_version_refs",
+    "checkpoint_ref",
+    "idempotency_key",
+    "data_classification",
+    "agent_ops_state",
+}
+
+
+def _require_project_member(actor: Mapping[str, Any], project_id: str) -> None:
+    user_id = str(actor.get("id", "")).strip()
+    if not user_id or not AUTH_STORE.is_project_member(project_id, user_id):
+        raise PermissionError("当前账号不属于该项目名册")
+
+
+def _agent_ops_plan_record(payload: object, actor: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Agent Ops 计划记录必须是 JSON 对象")
+    unexpected = set(payload) - _AGENT_OPS_PLAN_FIELDS
+    if unexpected:
+        raise ValueError(f"计划记录包含不受支持的字段：{', '.join(sorted(unexpected))}")
+    project_id = str(payload.get("project_id", "")).strip()
+    if not project_id:
+        raise ValueError("计划记录缺少项目编号")
+    state = PROJECT_WORKSPACE.load(project_id)
+    if state is None:
+        raise FileNotFoundError("项目尚未建立")
+    if str((state.get("project") or {}).get("id", "")) != project_id:
+        raise ValueError("项目存储路径与项目编号不一致")
+    _require_project_member(actor, project_id)
+    required = ("run_id", "workflow_id", "module_id", "target_type", "target_id", "payload_summary", "idempotency_key", "agent_ops_state")
+    missing = [field for field in required if not str(payload.get(field, "")).strip()]
+    if missing:
+        raise ValueError(f"计划记录缺少字段：{', '.join(missing)}")
+    event = PROJECT_WORKSPACE.append_execution_event(
+        project_id,
+        {
+            "run_id": payload["run_id"],
+            "workflow_id": payload["workflow_id"],
+            "module_id": payload["module_id"],
+            "event_type": "AGENT_OPS_PLAN_RECORDED",
+            "actor_type": "human",
+            "actor_id": str(actor.get("id", "")),
+            "target_type": payload["target_type"],
+            "target_id": payload["target_id"],
+            "payload_summary": payload["payload_summary"],
+            "evidence_refs": payload.get("evidence_refs", []),
+            "result_version_refs": payload.get("result_version_refs", []),
+            "checkpoint_ref": payload.get("checkpoint_ref", ""),
+            "idempotency_key": payload["idempotency_key"],
+            "data_classification": payload.get("data_classification", "Restricted"),
+            "agent_ops_state": payload["agent_ops_state"],
+        },
+    )
+    return {"event": event}
+
+
+def _agent_ops_ledger(project_id: str, actor: Mapping[str, Any]) -> dict[str, Any]:
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        raise ValueError("缺少项目编号")
+    state = PROJECT_WORKSPACE.load(project_id)
+    if state is None:
+        raise FileNotFoundError("项目尚未建立")
+    if str((state.get("project") or {}).get("id", "")) != project_id:
+        raise ValueError("项目存储路径与项目编号不一致")
+    _require_project_member(actor, project_id)
+    snapshot = PROJECT_WORKSPACE.execution_ledger_snapshot(project_id)
+    return {
+        "project_id": project_id,
+        "verification": {key: snapshot[key] for key in ("valid", "event_count", "last_event_hash")},
+        "agent_ops_plan_states": snapshot["agent_ops_plan_states"],
+        "events": snapshot["events"],
+    }
 
 
 def _event_public(event: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -2816,9 +2905,11 @@ def _health() -> dict[str, Any]:
         "deployment": DEPLOYMENT_CONFIG.public(),
         "review_capability": "P08",
         "business_capabilities": [f"P{i:02d}" for i in range(1, 10)],
+        "new_workflow_capabilities": [f"S{i:02d}" for i in (1, 2, 3, 4, 5, 6, 7, 8, 9)],
+        "business_workflow_runtime": {"professional_modules": 8, "foundation": "S06", "mode": "role_gated_human_workflows", "state_recovery": "verified_local_ledger_replay", "specialist_automation": "existing_local_tools_or_human_review"},
         "dependencies": {"external_runtime": False, "project_dependency": "openpyxl+pypdf+markitdown"},
         "privacy": {"default_mode": "local_only", "external_send": "explicit_consent_required"},
-        "release_highlights": "v0.8.0-rc9：造价七道审计闸门、开工前清标与成本策划、人材机汇总和材料质量证据匹配",
+        "release_highlights": "新版 01–09 岗位流程入口、S06 业务审批与专业验收、退回补正、交接签收及本地账本重放；专业算法仍按现有工具与人工复核边界运行",
     }
 
 
@@ -2913,7 +3004,9 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             self._write_text(b"Not found", "text/plain; charset=utf-8", 404)
             return
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
-        self._write_text(candidate.read_bytes(), f"{content_type}; charset=utf-8")
+        if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
+            content_type = f"{content_type}; charset=utf-8"
+        self._write_text(candidate.read_bytes(), content_type)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         parsed = urlsplit(self.path)
@@ -2923,6 +3016,32 @@ class BuildCostHandler(BaseHTTPRequestHandler):
                 self._write_json({"user": _require_actor(self.headers)})
             except PermissionError as exc:
                 self._write_json({"error": str(exc)}, 401)
+        elif path == "/api/agent-ops/ledger":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0]
+                self._write_json(_agent_ops_ledger(project_id, actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, 422)
+        elif path == "/api/business-workflows":
+            try:
+                actor = _require_actor(self.headers, "view_workspace")
+                project_id = parse_qs(parsed.query).get("project_id", [""])[0].strip()
+                if not project_id:
+                    raise ValueError("缺少项目编号")
+                _require_project_member(actor, project_id)
+                result = BusinessWorkflowService(PROJECT_WORKSPACE).snapshot(project_id, actor=actor)
+                self._write_json(_redact_sensitive(result, actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            except (BusinessWorkflowError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
         elif path == "/api/personnel":
             try:
                 _require_actor(self.headers, "manage_personnel")
@@ -3139,6 +3258,38 @@ class BuildCostHandler(BaseHTTPRequestHandler):
             try:
                 self._write_json(_invite_accept(self._read_json()))
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/agent-ops/plan":
+            try:
+                actor = _require_actor(self.headers, "edit_business_data")
+                self._write_json(_agent_ops_plan_record(self._read_json(), actor), 201)
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._write_json({"error": str(exc)}, 422)
+            return
+        if path == "/api/business-workflows":
+            try:
+                actor = _require_actor(self.headers)
+                payload = self._read_json()
+                if not isinstance(payload, dict):
+                    raise ValueError("流程操作必须是 JSON 对象")
+                project_id = str(payload.get("project_id", "")).strip()
+                if not project_id:
+                    raise ValueError("缺少项目编号")
+                if PROJECT_WORKSPACE.load(project_id) is None:
+                    raise FileNotFoundError("项目尚未建立")
+                _require_project_member(actor, project_id)
+                result = BusinessWorkflowService(PROJECT_WORKSPACE).apply(project_id, actor, payload)
+                self._write_json(_redact_sensitive(result, actor))
+            except PermissionError as exc:
+                self._write_json({"error": str(exc)}, 403)
+            except FileNotFoundError as exc:
+                self._write_json({"error": str(exc)}, 404)
+            except (UnicodeDecodeError, json.JSONDecodeError, BusinessWorkflowError, ValueError) as exc:
                 self._write_json({"error": str(exc)}, 422)
             return
         if path == "/api/search":

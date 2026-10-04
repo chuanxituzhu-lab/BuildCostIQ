@@ -356,6 +356,10 @@ class LocalAuthStore:
     def _project_has_user(self, project_id: str, user_id: str) -> bool:
         return str(user_id) in set(self.ensure_project_membership(project_id))
 
+    def is_project_member(self, project_id: str, user_id: str) -> bool:
+        """Return whether a user belongs to the existing project roster."""
+        return self._project_has_user(project_id, user_id)
+
     @staticmethod
     def _invite_status(invite: Mapping[str, Any], now: datetime | None = None) -> str:
         status = str(invite.get("status", "ACTIVE")).upper()
@@ -541,8 +545,8 @@ class LocalAuthStore:
 
     @staticmethod
     def _password_record(password: str, salt: bytes | None = None) -> dict[str, str]:
-        if len(password) < 6:
-            raise ValueError("密码至少需要 6 位")
+        if len(password) < 8:
+            raise ValueError("密码至少需要 8 位")
         salt = salt or secrets.token_bytes(16)
         digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 210_000)
         return {"salt": salt.hex(), "hash": digest.hex(), "iterations": "210000"}
